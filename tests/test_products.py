@@ -103,36 +103,76 @@ def test_grade_products_have_options(products):
 
 
 def test_all_tsv_products_present(products, cmo_dir):
-    """시트에 있는 상품명이 products.json 에서 조용히 빠지면 여기서 잡는다.
+    """시트에 있는 (매체, 상품명) 조합이 products.json 에서 조용히 빠지면 여기서 잡는다.
 
     build_products 의 스킵 규칙(매체/상품명 공백, 가격·원가·프로세스 전부 공백)이
     나중에 시트가 갱신되면서 진짜 상품 행을 걸러버릴 수 있다. 26행(커뮤니티외
     먹스타PPL), 51행(먹스타 기자단 패키지)이 실제로 이렇게 걸렸었고
     overrides.json 의 "_추가" 목록으로 되살렸다 — 회귀를 막는 가드 테스트다.
 
+    반드시 (매체, 상품명) 튜플로 비교한다. 상품명만 비교하면 동명이품에서
+    한쪽이 조용히 빠져도 짝이 되는 이름이 남아 있어 테스트가 무력화된다.
+    TSV 에 이미 이런 동명이품이 3쌍 있다: SA(네이버/구글), DA(네이버/구글),
+    리뷰작업(구글/카카오).
+
     제외 목록:
-    - "디자인팀 / 영상사업부 / 개발팀 연계": 52행. 매체="기타", 가격·원가·
+    - ("기타", "디자인팀 / 영상사업부 / 개발팀 연계"): 52행. 가격·원가·
       프로세스 칸이 전부 비어 있는 진짜 비상품 행(다른 팀 연계 안내문)이라
       build_products 가 의도적으로 건너뛴다.
+
+    매체 칸이 통째로 빈 행(51행, "먹스타 기자단 패키지")은 TSV 만 봐서는
+    (매체, 상품명) 튜플을 만들 수 없다 — 그게 애초에 이 행이 스킵되던
+    원인이다. 이런 행은 overrides.json 의 "_추가" 목록에 그 상품명으로
+    명시적으로 등록돼 있고, 그게 실제로 products.json 에 존재할 때만
+    통과시킨다. "매체 칸이 비었으면 이름만 맞아도 봐준다"는 식으로
+    풀면 안 된다 — 그러면 카카오-리뷰작업처럼 이미 동명이품이 있는
+    상품의 매체 칸이 나중에 빈 채로 새로 생겨도, 짝(구글-리뷰작업)의
+    이름이 남아 있어 조용히 통과해버린다(직접 재현해서 확인함, 아래
+    "회귀 가드 확인" 참고). `_추가` 로 명시 등록된 이름만 예외로 인정해야
+    이 사각지대가 막힌다.
     """
-    EXCLUDED_NAMES = {
-        "디자인팀 / 영상사업부 / 개발팀 연계",
+    EXCLUDED_PAIRS = {
+        ("기타", "디자인팀 / 영상사업부 / 개발팀 연계"),
     }
 
     tsv_path = cmo_dir / "data" / "_source" / "products.tsv"
     lines = [ln for ln in tsv_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    tsv_names = set()
+
+    tsv_pairs = set()      # (매체, 상품명) — 매체 칸이 채워진 행만
+    tsv_name_only = set()  # 매체 칸이 빈 행의 상품명 — _추가 등록 여부로만 검사
     for ln in lines[2:]:  # 0=안내문, 1=머리글
         cells = ln.split("\t")
         if len(cells) < 2:
             continue
-        name = cells[1].strip()
-        if name:
-            tsv_names.add(name)
+        media, name = cells[0].strip(), cells[1].strip()
+        if not name:
+            continue
+        if media:
+            tsv_pairs.add((media, name))
+        else:
+            tsv_name_only.add(name)
 
+    tsv_pairs -= EXCLUDED_PAIRS
+
+    product_pairs = {(p["매체"], p["상품명"]) for p in products}
     product_names = {p["상품명"] for p in products}
-    missing = (tsv_names - EXCLUDED_NAMES) - product_names
-    assert not missing, f"TSV에는 있지만 products.json에는 없는 상품: {missing}"
+
+    missing_pairs = tsv_pairs - product_pairs
+    assert not missing_pairs, f"TSV에는 있지만 products.json에는 없는 (매체,상품명): {missing_pairs}"
+
+    overrides_path = cmo_dir / "data" / "overrides.json"
+    overrides = json.loads(overrides_path.read_text(encoding="utf-8"))
+    added_names = {item["상품명"] for item in overrides.get("_추가", [])}
+
+    unrecovered = tsv_name_only - added_names
+    assert not unrecovered, (
+        f"매체 칸이 빈 TSV 상품인데 overrides._추가로 복구되지 않았다: {unrecovered}"
+    )
+
+    still_missing = (tsv_name_only & added_names) - product_names
+    assert not still_missing, (
+        f"overrides._추가에 등록됐지만 products.json에 실제로 없다: {still_missing}"
+    )
 
 
 def test_added_product_gijadan_package_is_pinned(products):
