@@ -4,14 +4,7 @@
   let addHandler = () => {};
   let allProducts = [];
 
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
+  const escapeHtml = window.Util.escapeHtml;
 
   function priceLabel(p) {
     if (p.가격유형 === "고정") return `${p.정가.toLocaleString()}원`;

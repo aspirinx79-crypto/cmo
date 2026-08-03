@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 
 import pytest
 from playwright.sync_api import sync_playwright
@@ -258,9 +259,14 @@ def test_budget_change_is_reflected_in_board_items(page_at):
 
 # --- 등급선택·직접입력 상품 (page_at 의 고정 fixture 에는 없다) ---
 
+# 등급선택 상품(포털-언론송출)의 실제 시트 레코드는 최상위 정가·실비가 채워져
+# 있다(등급 목록이 생기기 전에 쓰던 값이 남아 있는 것으로 보인다). 여기 None
+# 을 쓰면, 누가 나중에 "가격유형" 분기보다 앞에 `if (p.정가) {...}` 같은
+# 지름길을 넣어도 이 값이 falsy 라 그 지름길이 활성화되지 않아 테스트가 못
+# 잡는다. 일부러 등급 목록의 어떤 값과도 겹치지 않는 값으로 채운다.
 GRADE_AND_MANUAL_PRODUCTS = [
     {"id": "포털-언론송출", "매체": "포털", "상품명": "언론송출",
-     "가격유형": "등급선택", "정가": None, "실비": None, "최소수량": 1, "단위": "건",
+     "가격유형": "등급선택", "정가": 999999, "실비": 999999, "최소수량": 1, "단위": "건",
      "중요도": "상", "판매중지": False, "고지사항": "", "프로세스": "",
      "등급": [
          {"이름": "일반~B급", "정가": 150000, "실비": 100000},
@@ -326,3 +332,101 @@ def test_manual_price_input_is_reflected_in_board_items(page_with_grade_and_manu
     match = next(i for i in items if i["상품id"] == "네이버-플레이스_트래픽")
     assert match["정가"] == 500000
     assert match["실비"] == 200000
+
+
+def test_grade_selection_updates_line_total_not_top_level_price(page_with_grade_and_manual):
+    """등급선택 상품도 최상위 정가를 갖는다(포털-언론송출 999999로 일부러
+    맞춰 둔 값). 가격유형 분기보다 앞서 최상위 정가를 읽는 지름길이 생기면
+    줄별 합계가 999,999 로 나와 여기서 잡힌다."""
+    page = page_with_grade_and_manual
+    page.click('.add-btn[data-id="포털-언론송출"]')
+    card = page.locator('.board-card[data-id="포털-언론송출"]')
+    card.locator(".grade-select").select_option("A급")
+    page.wait_for_timeout(300)
+    total = card.locator(".line-total").inner_text()
+    assert "300,000" in total
+    assert "999,999" not in total
+
+
+# --- Important 1: /api/summary 실패가 화면에 안 나타나면 사장님 앞에서
+#     숫자가 안 바뀌는데 이유를 알 수 없다 ---
+
+BROKEN_GRADE_PRODUCT = [
+    {"id": "포털-빈등급", "매체": "포털", "상품명": "등급 없는 상품",
+     "가격유형": "등급선택", "정가": 100000, "실비": 50000, "최소수량": 1, "단위": "건",
+     "중요도": "상", "판매중지": False, "고지사항": "", "프로세스": "",
+     "등급": []},  # 손편집 시트에서 등급 목록이 비면 실제로 이런 모양이 된다
+]
+
+
+@pytest.fixture
+def page_with_broken_grade(tmp_data, cmo_dir):
+    (tmp_data / "products.json").write_text(
+        json.dumps(BROKEN_GRADE_PRODUCT, ensure_ascii=False), encoding="utf-8")
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app")
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(url)
+        page.wait_for_selector(".product-row")
+        yield page
+        browser.close()
+    httpd.shutdown()
+
+
+def test_summary_api_failure_shows_warning(page_with_broken_grade):
+    """등급 목록이 빈 등급선택 상품을 담으면 add()가 등급을 null 로 잡고,
+    그 null 로 /api/summary 를 부르면 서버가 400 을 낸다. try/catch 가
+    없으면 promise 가 조용히 깨지고 #warnings 는 계속 비어 있다."""
+    page = page_with_broken_grade
+    page.click('.add-btn[data-id="포털-빈등급"]')
+    page.wait_for_function(
+        "document.querySelector('#warnings').textContent.trim().length > 0",
+        timeout=5000,
+    )
+    warning_text = page.locator("#warnings").inner_text()
+    assert warning_text.strip() != ""
+
+
+# --- Important 2: 담기 클릭이 초기 로딩 중 유실될 수 있다 ---
+# drawer.js 와 board.js 는 각자 /api/products 를 독립적으로 fetch 한다.
+# drawer 의 fetch 가 board 보다 먼저 끝나면 .add-btn 이 그려지고 클릭
+# 핸들러가 붙는데, 그 핸들러가 부르는 addHandler 는 board 의 fetch 가
+# 끝나야 add 로 교체된다. board.js 가 onAdd 등록을 자기 fetch 뒤로 미루면
+# 그 사이의 클릭은 기본 no-op 으로 들어가 소리 없이 사라진다.
+# 두 번째 /api/products 요청(=board 의 fetch, drawer 가 먼저 실행되므로
+# 첫 요청은 항상 drawer 의 것이다)만 인위적으로 늦춰서 그 창을 실제로
+# 만들고, 그 안에서 누른 클릭이 결국 카드가 되는지 확인한다.
+
+def test_add_click_during_slow_board_load_still_creates_card(tmp_data, cmo_dir):
+    (tmp_data / "products.json").write_text(
+        json.dumps(PRODUCTS, ensure_ascii=False), encoding="utf-8")
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app")
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+
+    calls = {"n": 0}
+
+    def delay_second_call(route):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            time.sleep(0.5)
+        route.continue_()
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.route("**/api/products", delay_second_call)
+        page.goto(url)
+        page.wait_for_selector('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+        # 이 시점에서 drawer 의 fetch 는 끝났지만(버튼이 보인다) board 의
+        # fetch 는 아직 진행 중이다(0.5초 지연). 바로 클릭한다.
+        page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+        page.wait_for_selector(
+            '.board-card[data-id="네이버-블로그_일반_체험단"]', timeout=5000)
+        assert page.locator(
+            '.board-card[data-id="네이버-블로그_일반_체험단"]').count() == 1
+        browser.close()
+    httpd.shutdown()

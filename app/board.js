@@ -4,19 +4,16 @@
 (function () {
   const state = new Map();   // 상품id → item
   let products = [];
+  let productsLoaded = false;
+  let pendingAdds = [];       // products 로딩이 끝나기 전에 눌린 담기 클릭
   let changeHandler = () => {};
 
   const won = (n) => `${Number(n || 0).toLocaleString()}원`;
+  const escapeHtml = window.Util.escapeHtml;
 
-  // 상품 데이터는 상무님이 손으로 편집하는 시트에서 온다 — 괄호·슬래시·따옴표가
-  // 이미 많다. innerHTML 에 꽂기 전에는 반드시 이 함수를 거친다.
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+  function warn(message) {
+    const el = document.getElementById("warnings");
+    if (el) el.textContent = message;
   }
 
   function product(id) {
@@ -115,7 +112,16 @@
   async function refresh() {
     const 계약가 = Number(document.getElementById("contract-price").value || 0);
     const items = itemsArray();
-    const result = await window.API.summary(items, 계약가);
+
+    let result;
+    try {
+      result = await window.API.summary(items, 계약가);
+    } catch (err) {
+      // 알 수 없는 등급 이름 등으로 서버가 400 을 내면 여기로 온다.
+      // 조용히 멈추면 화면 숫자가 안 바뀌는데 이유를 알 수 없다.
+      warn(`합계를 계산하지 못했습니다: ${err.message}`);
+      return;
+    }
 
     // 줄별 금액도 같은 응답에 들어 있다. 항목마다 다시 부르지 않는다.
     for (const line of result.줄별) {
@@ -123,11 +129,11 @@
       if (card) card.querySelector(".line-total").textContent = won(line.정가);
     }
 
-    document.getElementById("warnings").textContent = result.경고.join(" · ");
+    warn(result.경고.join(" · "));
     changeHandler(result, items);
   }
 
-  function add(id) {
+  function addNow(id) {
     if (state.has(id)) return;
     const p = product(id);
     if (!p || p.판매중지) return;
@@ -141,6 +147,14 @@
     });
     draw();
     refresh();
+  }
+
+  function add(id) {
+    // 상품 목록이 아직 안 실렸으면(드로어보다 늦게 끝나는 fetch) 클릭을 버리지
+    // 않고 쌓아 둔다 — 미팅 자리에서 담기를 눌렀는데 아무 일도 안 일어나는 건
+    // 안내도 없이 넘길 수 있는 결함이 아니다.
+    if (!productsLoaded) { pendingAdds.push(id); return; }
+    addNow(id);
   }
 
   function load(items) {
@@ -158,8 +172,23 @@
   };
 
   document.addEventListener("DOMContentLoaded", async () => {
-    products = await window.API.products();
+    // 이 두 줄은 아래 await 앞에 있어야 한다. drawer.js 도 자기 상품목록을
+    // 독립적으로 fetch 하는데, 그게 먼저 끝나 .add-btn 이 그려지고 나면
+    // 클릭이 곧장 addHandler 로 간다. onAdd 등록이 fetch 완료 뒤로 밀리면
+    // 그 사이의 클릭은 기본 no-op 으로 들어가 소리 없이 사라진다.
     window.Drawer.onAdd(add);
     document.getElementById("contract-price").addEventListener("change", refresh);
+
+    try {
+      products = await window.API.products();
+    } catch (err) {
+      warn(`상품 목록을 불러오지 못했습니다: ${err.message}`);
+      return;
+    }
+
+    productsLoaded = true;
+    const queued = pendingAdds;
+    pendingAdds = [];
+    queued.forEach(addNow);
   });
 })();

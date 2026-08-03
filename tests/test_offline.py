@@ -1,7 +1,7 @@
 """미팅 장소에 인터넷이 없어도 도구가 온전히 돌아야 한다."""
 import re
 
-SOURCES = ("index.html", "app.css", "api.js", "drawer.js", "board.js", "summary.js")
+SOURCES = ("index.html", "app.css", "util.js", "api.js", "drawer.js", "board.js", "summary.js")
 URL_RE = re.compile(r'https?://[^\s"\')]+')
 NAMESPACE_RE = re.compile(r'^https?://(www\.)?w3\.org/')
 
