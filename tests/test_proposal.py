@@ -95,9 +95,12 @@ def test_payload_omits_absolute_revenue_by_default():
 
 
 def test_payload_carries_differentiators():
+    """차별점 카피에 두 가지 요지가 살아 있는지만 본다: (1) 주간 보고 주기
+    — 브리프 원문 카피는 "매주" 라는 표기를 쓰므로 "주간" 이 아니라 "매주" 를
+    찾는다 (표기가 아니라 의도를 검사), (2) 다음 달로 이어가는 개선 사이클."""
     payload = build_payload(CLIENT, PLAN, PRODUCTS)
     joined = " ".join(payload["차별점"])
-    assert "주간" in joined and "다음 달" in joined
+    assert "매주" in joined and "다음 달" in joined
 
 
 def test_blocked_when_manual_price_missing():
