@@ -1,3 +1,5 @@
+import pytest
+
 from cmo.lib.schedule import parse_steps, weekly_plan
 
 EXPERIENCE = {
@@ -67,3 +69,33 @@ def test_weekly_plan_no_day_info_goes_to_week_one():
 def test_weekly_plan_ignores_unknown_product():
     plan = weekly_plan([TOOLS], [{"상품id": "없는-상품"}])
     assert all(w["항목"] == [] for w in plan)
+
+
+# 시트 원문이 일수 사이에 '/' 없이 공백만 써서(예: "10일 모집 10일 체험 10일 포스팅")
+# parse_steps 가 세 단계를 하나로 뭉쳐 첫 일수만 읽는 상품이 있었다. overrides.json 이
+# 이 두 상품의 프로세스 표기를 '/' 로 정규화했다 (소요일수는 그대로 30). 실제
+# products.json 을 써서 정규화가 적용됐는지, 그리고 회귀하지 않는지 검증한다.
+@pytest.mark.parametrize("product_id", [
+    "네이버-블로그_프리미엄_체험단",
+    "인스타-인스타_체험단",
+])
+def test_weekly_plan_spreads_normalized_experience_products_across_weeks(products, product_id):
+    plan = weekly_plan(products, [{"상품id": product_id}])
+    weeks_with_items = [w["주차"] for w in plan if w["항목"]]
+    assert len(weeks_with_items) > 1, (
+        f"{product_id} 의 단계가 1주차에만 몰려 있다 — overrides.json 정규화가 안 먹었다."
+    )
+
+
+def test_parse_steps_day_sum_matches_소요일수_for_every_product(products):
+    """프로세스가 있는 모든 상품에서, parse_steps 가 낸 단계별 일수의 합이
+    import_tsv.py 가 계산한 소요일수(parse_days)와 같아야 한다. 어긋나면
+    구분자 표기 문제(공백만 쓰고 '/' 가 없는 등)로 단계가 뭉쳐 일정표가
+    실제보다 짧게 표시된다는 신호다."""
+    mismatches = [
+        (p["id"], sum(s["일수"] for s in parse_steps(p["프로세스"])), p["소요일수"])
+        for p in products
+        if p.get("프로세스")
+    ]
+    mismatches = [m for m in mismatches if m[1] != m[2]]
+    assert mismatches == []
