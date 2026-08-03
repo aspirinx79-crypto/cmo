@@ -1,1 +1,63 @@
-<h1>CMO 기획 도구</h1>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>CMO 기획 도구</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header id="topbar">
+    <select id="client-select"><option value="">고객사 선택…</option></select>
+    <input id="month" type="month" value="2026-09">
+    <label class="contract">계약가(월)
+      <input id="contract-price" type="number" step="10000" value="1000000">
+    </label>
+    <span id="warnings"></span>
+  </header>
+
+  <main>
+    <section id="drawer">
+      <input id="search" type="search" placeholder="상품 검색">
+      <div id="drawer-list"></div>
+    </section>
+
+    <section id="board">
+      <div id="preset-bar">
+        <select id="preset-select"><option value="">프리셋 불러오기…</option></select>
+      </div>
+      <div id="board-list"></div>
+    </section>
+
+    <section id="summary">
+      <dl id="public-figures">
+        <dt>제안 정가 합계</dt><dd id="list-total">0</dd>
+        <dt>계약가(월)</dt><dd id="contract-total">0</dd>
+      </dl>
+      <p id="multiplier">—</p>
+
+      <div id="internal">
+        <div class="internal-head">
+          <span>내부전용</span>
+          <button id="hide-internal" type="button">가리기</button>
+        </div>
+        <dl>
+          <dt>실비 합계</dt><dd id="cost-total">0</dd>
+          <dt>마진</dt><dd id="margin">0</dd>
+          <dt>마진율</dt><dd id="margin-rate">—</dd>
+        </dl>
+      </div>
+
+      <div id="actions">
+        <button id="save-plan" type="button">저장</button>
+        <button id="copy-next" type="button">다음 달로 복제</button>
+        <button id="make-proposal" type="button">제안서 만들기</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="api.js"></script>
+  <script src="drawer.js"></script>
+  <script src="board.js"></script>
+  <script src="summary.js"></script>
+</body>
+</html>
