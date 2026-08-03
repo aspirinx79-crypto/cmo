@@ -104,3 +104,78 @@ def test_plan_copy_refuses_existing_target(tmp_data):
 def test_missing_client_raises(tmp_data):
     with pytest.raises(FileNotFoundError):
         Store(tmp_data).client_read("없는가게")
+
+
+# --- 경로 검증 (path traversal / 빈 슬러그 방어) ---
+
+def test_slugify_symbols_only_raises():
+    with pytest.raises(ValueError):
+        slugify("///")
+    with pytest.raises(ValueError):
+        slugify("***")
+    with pytest.raises(ValueError):
+        slugify("   ")
+
+
+def test_slugify_still_keeps_valid_korean_names():
+    """회귀: 정상 한국어 이름은 여전히 통과한다."""
+    assert slugify("하루인 인계점") == "하루인_인계점"
+    assert slugify("함바그또카레야") == "함바그또카레야"
+
+
+def test_client_write_rejects_path_traversal_slug(tmp_data):
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.client_write("../탈출", CLIENT)
+
+
+def test_client_read_rejects_path_traversal_slug(tmp_data):
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.client_read("../탈출")
+
+
+def test_client_write_rejects_absolute_slug(tmp_data):
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.client_write("C:/Users/attacker/evil", CLIENT)
+
+
+def test_client_write_rejects_bare_drive_letter_slug(tmp_data):
+    """구분자 없이 드라이브 문자만 있는 경우도 절대 경로로 간주해 막는다."""
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.client_write("C:", CLIENT)
+
+
+def test_client_write_rejects_empty_slug(tmp_data):
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.client_write("", CLIENT)
+
+
+def test_plan_read_rejects_dotdot_month(tmp_data):
+    store = Store(tmp_data)
+    store.client_write("하루인_인계점", CLIENT)
+    with pytest.raises(ValueError):
+        store.plan_read("하루인_인계점", "..")
+
+
+def test_plan_write_rejects_dotdot_month(tmp_data):
+    store = Store(tmp_data)
+    store.client_write("하루인_인계점", CLIENT)
+    with pytest.raises(ValueError):
+        store.plan_write("하루인_인계점", "..", PLAN)
+
+
+def test_rejected_slug_does_not_escape_data_dir(tmp_data):
+    """경로 조각 검증에서 거부되면, 그 값으로 조합됐을 경로 바깥/안 어디에도 파일이 생기면 안 된다."""
+    store = Store(tmp_data)
+    slug = "../../탈출_마커"
+    escaped_target = (tmp_data / "clients" / slug).resolve()
+    with pytest.raises(ValueError):
+        store.client_write(slug, CLIENT)
+    assert not escaped_target.exists()
+    assert not (escaped_target / "client.json").exists()
+    # 정상 clients 폴더 내부에도 새 항목이 생기지 않았는지 확인
+    assert list((tmp_data / "clients").iterdir()) == []

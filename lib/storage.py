@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 
 FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|]+')
+_PATH_SEP_RE = re.compile(r'[\\/]')
+_DRIVE_RE = re.compile(r'^[A-Za-z]:')
 
 
 class PlanExists(Exception):
@@ -18,7 +20,26 @@ def slugify(name: str) -> str:
     cleaned = FORBIDDEN_RE.sub("_", (name or "").strip())
     cleaned = cleaned.replace(" ", "_")
     cleaned = re.sub(r"_+", "_", cleaned)
-    return cleaned.strip("_")
+    cleaned = cleaned.strip("_")
+    if not cleaned:
+        raise ValueError(f"슬러그를 만들 수 없는 이름입니다: {name!r}")
+    return cleaned
+
+
+def _validate_segment(value: str, label: str) -> str:
+    """slug/month 가 경로 조각 하나로만 쓰이도록 검증한다.
+
+    상위 폴더 이동(`..`)이나 절대 경로로 self.data 바깥을 가리키지 못하게 막는다.
+    """
+    if not value:
+        raise ValueError(f"{label} 값이 비어 있습니다: {value!r}")
+    if value in (".", ".."):
+        raise ValueError(f"{label} 값으로 '.' 또는 '..' 을 쓸 수 없습니다: {value!r}")
+    if _PATH_SEP_RE.search(value):
+        raise ValueError(f"{label} 값에 경로 구분자를 포함할 수 없습니다: {value!r}")
+    if _DRIVE_RE.match(value) or Path(value).is_absolute():
+        raise ValueError(f"{label} 값에 절대 경로를 쓸 수 없습니다: {value!r}")
+    return value
 
 
 def _read(path: Path) -> dict | list:
@@ -46,6 +67,7 @@ class Store:
 
     # --- 고객사 ---
     def _client_dir(self, slug: str) -> Path:
+        slug = _validate_segment(slug, "slug")
         return self.data / "clients" / slug
 
     def clients(self) -> list[dict]:
@@ -72,6 +94,7 @@ class Store:
 
     # --- 월 기획안 ---
     def _plan_path(self, slug: str, month: str) -> Path:
+        month = _validate_segment(month, "month")
         return self._client_dir(slug) / "plans" / f"{month}.json"
 
     def plan_months(self, slug: str) -> list[str]:
