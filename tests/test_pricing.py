@@ -64,6 +64,18 @@ def test_grade_unknown_option_raises():
         line_amount(GRADE, {"상품id": GRADE["id"], "등급": "SSS급", "수량": 1})
 
 
+def test_unknown_price_kind_raises_without_leaking_amount():
+    """오타·미지원 가격유형은 조용히 0원이 아니라 시끄럽게 실패해야 한다."""
+    typo = {**FIXED, "가격유형": "예산배수"}
+    with pytest.raises(ValueError) as exc_info:
+        line_amount(typo, {"상품id": typo["id"], "수량": 10, "정가": 999999, "실비": 888888})
+    message = str(exc_info.value)
+    assert typo["상품명"] in message
+    assert "예산배수" in message
+    assert "999999" not in message
+    assert "888888" not in message
+
+
 def test_summary_core_numbers():
     """스펙의 예시: 정가 150만 / 계약가 100만 / 실비 40만."""
     products = [FIXED, MANUAL]

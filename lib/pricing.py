@@ -32,8 +32,10 @@ def line_amount(product: dict, item: dict) -> dict:
         qty = int(item.get("수량") or 1)
         return {"정가": grade["정가"] * qty, "실비": grade["실비"] * qty}
 
-    # 직접입력
-    return {"정가": int(item.get("정가") or 0), "실비": int(item.get("실비") or 0)}
+    if kind == "직접입력":
+        return {"정가": int(item.get("정가") or 0), "실비": int(item.get("실비") or 0)}
+
+    raise ValueError(f"{product['상품명']}: 알 수 없는 가격유형 {kind!r}")
 
 
 def summarize(products: list[dict], items: list[dict], 계약가: int) -> dict:
