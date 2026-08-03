@@ -4,6 +4,15 @@
   let addHandler = () => {};
   let allProducts = [];
 
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function priceLabel(p) {
     if (p.가격유형 === "고정") return `${p.정가.toLocaleString()}원`;
     if (p.가격유형 === "예산배율") return `예산 ×${p.예산배율}`;
@@ -32,16 +41,16 @@
       const group = document.createElement("details");
       group.className = "media-group";
       group.open = true;
-      group.innerHTML = `<summary>${media} (${items.length})</summary>`;
+      group.innerHTML = `<summary>${escapeHtml(media)} (${items.length})</summary>`;
 
       for (const p of items) {
         const row = document.createElement("div");
         row.className = "product-row" + (p.판매중지 ? " discontinued" : "");
         row.dataset.id = p.id;
         row.innerHTML =
-          `<span class="name">${p.상품명}</span>` +
+          `<span class="name">${escapeHtml(p.상품명)}</span>` +
           `<span class="price">${priceLabel(p)}</span>` +
-          `<button class="add-btn" data-id="${p.id}"${p.판매중지 ? " disabled" : ""}>+</button>`;
+          `<button class="add-btn" data-id="${escapeHtml(p.id)}"${p.판매중지 ? " disabled" : ""}>+</button>`;
         group.appendChild(row);
       }
       list.appendChild(group);
@@ -68,6 +77,11 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("search").addEventListener("input", (e) => filter(e.target.value));
-    render(await window.API.products());
+    try {
+      render(await window.API.products());
+    } catch (err) {
+      const warnings = document.getElementById("warnings");
+      if (warnings) warnings.textContent = `상품 목록을 불러오지 못했습니다: ${err.message}`;
+    }
   });
 })();

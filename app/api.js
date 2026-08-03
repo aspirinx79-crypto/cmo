@@ -2,7 +2,12 @@
 (function () {
   async function get(path) {
     const res = await fetch(path);
-    if (!res.ok) throw new Error(`${path} → ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = new Error(detail.오류 || `${path} → ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     return res.json();
   }
 
