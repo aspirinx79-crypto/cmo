@@ -4,6 +4,11 @@
 '₩ 30,000', '협의', '예산별', '예산의 1.3배', '셀럽별 상이'가 한 열에 섞여 있다.
 여기서 계산 가능한 4유형으로 접는다. 자동으로 못 접는 예외는
 overrides.json 에 손으로 적고, 규칙에 우겨넣지 않는다.
+
+시트 행 자체가 결측(매체 공백, 가격·원가·프로세스 전부 공백 등)이라
+스킵 규칙에 걸려 통째로 사라지는 상품은 overrides.json 의 "_추가" 목록에
+완전한 상품 dict 로 적는다. build_products 가 판매중지 상품과 같은 방식으로
+그대로 append 한다 — 스킵 규칙 자체는 건드리지 않는다.
 """
 import json
 import re
@@ -139,6 +144,11 @@ def build_products(tsv: str, overrides: dict) -> list[dict]:
             "소요일수": 0, "중요도": "하",
             "판매중지": True,
         })
+
+    for extra in overrides.get("_추가", []):
+        p = dict(extra)
+        p.pop("메모", None)
+        products.append(p)
 
     return products
 

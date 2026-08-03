@@ -100,3 +100,50 @@ def test_grade_products_have_options(products):
             assert len(p["등급"]) >= 2, f"{p['id']}: 등급 옵션이 부족하다"
             for g in p["등급"]:
                 assert {"이름", "정가", "실비"} <= set(g)
+
+
+def test_all_tsv_products_present(products, cmo_dir):
+    """시트에 있는 상품명이 products.json 에서 조용히 빠지면 여기서 잡는다.
+
+    build_products 의 스킵 규칙(매체/상품명 공백, 가격·원가·프로세스 전부 공백)이
+    나중에 시트가 갱신되면서 진짜 상품 행을 걸러버릴 수 있다. 26행(커뮤니티외
+    먹스타PPL), 51행(먹스타 기자단 패키지)이 실제로 이렇게 걸렸었고
+    overrides.json 의 "_추가" 목록으로 되살렸다 — 회귀를 막는 가드 테스트다.
+
+    제외 목록:
+    - "디자인팀 / 영상사업부 / 개발팀 연계": 52행. 매체="기타", 가격·원가·
+      프로세스 칸이 전부 비어 있는 진짜 비상품 행(다른 팀 연계 안내문)이라
+      build_products 가 의도적으로 건너뛴다.
+    """
+    EXCLUDED_NAMES = {
+        "디자인팀 / 영상사업부 / 개발팀 연계",
+    }
+
+    tsv_path = cmo_dir / "data" / "_source" / "products.tsv"
+    lines = [ln for ln in tsv_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    tsv_names = set()
+    for ln in lines[2:]:  # 0=안내문, 1=머리글
+        cells = ln.split("\t")
+        if len(cells) < 2:
+            continue
+        name = cells[1].strip()
+        if name:
+            tsv_names.add(name)
+
+    product_names = {p["상품명"] for p in products}
+    missing = (tsv_names - EXCLUDED_NAMES) - product_names
+    assert not missing, f"TSV에는 있지만 products.json에는 없는 상품: {missing}"
+
+
+def test_added_product_gijadan_package_is_pinned(products):
+    """overrides._추가로 되살린 상품의 정가가 바뀌지 않았는지 고정한다."""
+    p = next(p for p in products if p["id"] == "인스타-먹스타_기자단_패키지")
+    assert p["가격유형"] == "고정"
+    assert p["정가"] == 1800000
+
+
+def test_sangsaeng_party_cost_is_pinned(products):
+    """'대략 3000000(3600000)' 을 수동 판정한 값이 바뀌지 않았는지 고정한다."""
+    p = next(p for p in products if p["id"] == "IMC-상생_먹스타_파티")
+    assert p["실비"] == 3000000
+    assert p["실비_내부이체"] == 3600000
