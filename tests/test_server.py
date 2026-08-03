@@ -139,3 +139,79 @@ def test_malformed_json_body_returns_400(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(req)
     assert exc.value.code == 400
+
+
+def _raw_get(base, raw_path):
+    """urllib 의 URL 정규화를 우회하기 위해 소켓 요청 줄을 직접 만든다.
+
+    ../ 같은 경로 조각을 urlopen 에 그대로 넘기면 클라이언트가
+    자체적으로 정규화해버려 서버가 받는 실제 바이트를 확인할 수 없다.
+    """
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(base)
+    with socket.create_connection((parts.hostname, parts.port), timeout=5) as sock:
+        request = (
+            f"GET {raw_path} HTTP/1.1\r\n"
+            f"Host: {parts.hostname}\r\n"
+            "Connection: close\r\n\r\n"
+        ).encode("latin-1")
+        sock.sendall(request)
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    raw = b"".join(chunks)
+    header_block, _, body = raw.partition(b"\r\n\r\n")
+    status_line = header_block.split(b"\r\n", 1)[0]
+    status = int(status_line.split(b" ")[1])
+    return status, body
+
+
+def test_static_dotdot_slash_path_cannot_read_data_dir(server):
+    status, body = _raw_get(server, "/../data/products.json")
+    assert status != 200
+    assert b"\xeb\xb8\x94\xeb\xa1\x9c\xea\xb7\xb8" not in body  # UTF-8 "블로그"
+
+
+def test_static_percent_encoded_dotdot_cannot_read_data_dir(server):
+    status, body = _raw_get(server, "/%2e%2e%2fdata%2fproducts.json")
+    assert status != 200
+    assert b"\xeb\xb8\x94\xeb\xa1\x9c\xea\xb7\xb8" not in body
+
+
+def test_static_backslash_dotdot_cannot_read_data_dir(server):
+    status, body = _raw_get(server, "/..\\data\\products.json")
+    assert status != 200
+    assert b"\xeb\xb8\x94\xeb\xa1\x9c\xea\xb7\xb8" not in body
+
+
+def test_static_cannot_escape_into_sibling_dir_sharing_name_prefix(tmp_data, tmp_path):
+    """app_dir 경계 검사가 문자열 접두사가 아니라 실제 부모 관계인지 확인한다.
+
+    app_dir 이름과 앞글자가 같은 형제 디렉토리(app_secret)가 있어도
+    거기 담긴 파일을 정적 서빙으로 읽을 수 없어야 한다. 문자열
+    startswith 비교였다면 이 테스트는 막지 못하고 통과(200 + 내용 누출)했을 것이다.
+    """
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "index.html").write_text("<h1>ok</h1>", encoding="utf-8")
+
+    sibling = tmp_path / "app_secret"
+    sibling.mkdir()
+    (sibling / "secret.txt").write_text("TOP-SECRET-MARKER", encoding="utf-8")
+
+    httpd = serve(0, Store(tmp_data), app_dir)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        status, body = _raw_get(base, "/../app_secret/secret.txt")
+        assert status != 200
+        assert b"TOP-SECRET-MARKER" not in body
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=5)

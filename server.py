@@ -50,8 +50,10 @@ def make_handler(store: Store, app_dir: Path):
 
         def _static(self, path: str):
             name = "index.html" if path in ("/", "") else path.lstrip("/")
+            root = app_dir.resolve()
             target = (app_dir / name).resolve()
-            if not str(target).startswith(str(app_dir.resolve())) or not target.exists():
+            inside_root = target == root or root in target.parents
+            if not inside_root or not target.exists():
                 self.send_error(404)
                 return
             data = target.read_bytes()
