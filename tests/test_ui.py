@@ -334,6 +334,46 @@ def test_manual_price_input_is_reflected_in_board_items(page_with_grade_and_manu
     assert match["실비"] == 200000
 
 
+# --- 가리기가 구성판(가운데 단)의 직접입력 실비까지 가리는지 (리뷰 Important 1) ---
+# #hide-internal 토글은 원래 #internal(오른쪽 단)만 가렸다. 직접입력 상품의
+# 실비 입력칸은 구성판 카드 안에 있어서, 그 상태로는 사장님 쪽으로 화면을
+# 돌려도 실비가 평문으로 보였다.
+
+def test_hiding_conceals_manual_cost_on_board_card(page_with_grade_and_manual):
+    page = page_with_grade_and_manual
+    page.click('.add-btn[data-id="네이버-플레이스_트래픽"]')
+    card = page.locator('.board-card[data-id="네이버-플레이스_트래픽"]')
+    card.locator(".manual-list-price").fill("500000")
+    card.locator(".manual-list-price").dispatch_event("change")
+    card.locator(".manual-cost").fill("200000")
+    card.locator(".manual-cost").dispatch_event("change")
+    page.wait_for_timeout(300)
+
+    # 가리기 전: 실제로 보이는 것부터 확인한다 — 이게 없으면 아래 "안
+    # 보인다" 단언이 셀렉터가 틀려도 우연히 통과할 수 있다.
+    assert card.locator(".manual-cost").is_visible()
+    assert "200,000" in page.locator("body").inner_text()
+
+    page.click("#hide-internal")
+    assert not card.locator(".manual-cost").is_visible()
+    # 화면 전체 텍스트에서도 실비 금액 문자열 자체가 사라져야 한다.
+    assert "200,000" not in page.locator("body").inner_text()
+    # 카드 전체가 사라진 게 아니라 실비만 가려졌다 — 정가(공개 정보)는
+    # 여전히 보인다.
+    assert card.locator(".manual-list-price").is_visible()
+
+    # 가려진 동안에도 계산에 쓰이는 실제 상태값(window.Board.items())은
+    # 그대로다 — 렌더만 감췄을 뿐 데이터를 지운 게 아니다.
+    items = page.evaluate("window.Board.items()")
+    match = next(i for i in items if i["상품id"] == "네이버-플레이스_트래픽")
+    assert match["실비"] == 200000
+    assert match["정가"] == 500000
+
+    page.click("#hide-internal")
+    assert card.locator(".manual-cost").is_visible()
+    assert "200,000" in page.locator("body").inner_text()
+
+
 def test_grade_selection_updates_line_total_not_top_level_price(page_with_grade_and_manual):
     """등급선택 상품도 최상위 정가를 갖는다(포털-언론송출 999999로 일부러
     맞춰 둔 값). 가격유형 분기보다 앞서 최상위 정가를 읽는 지름길이 생기면
@@ -478,9 +518,33 @@ def test_hide_button_conceals_internal_figures(page_at):
 
 
 def test_hide_button_toggles_back(page_at):
+    """빈 구성 상태로 시작하면 #cost-total 이 애초에 "0원"이라, 클릭
+    핸들러가 아예 없어도 이 단언은 통과해버린다(리뷰에서 지적된 문제 —
+    브리프 원문 그대로 두면 공허한 테스트다). 항목을 먼저 담아 실제
+    금액이 들어간 상태에서 가리기→(가려진 채로 재계산)→보기를 거쳐야
+    토글이 진짜로 동작하는지 알 수 있다."""
+    page_at.fill("#contract-price", "1000000")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("50")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    assert "400,000" in page_at.locator("#cost-total").inner_text()
+
     page_at.click("#hide-internal")
+    assert not page_at.locator("#cost-total").is_visible()
+
+    # Minor(리뷰): 가려진 상태에서 재계산이 일어나도(수량 변경) 계속
+    # 가려져 있어야 한다.
+    card.locator(".qty-input").fill("60")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    assert not page_at.locator("#cost-total").is_visible()
+    assert "480,000" not in page_at.locator("#summary").inner_text()
+
     page_at.click("#hide-internal")
     assert page_at.locator("#cost-total").is_visible()
+    assert "480,000" in page_at.locator("#cost-total").inner_text()
 
 
 def test_budget_overrun_is_allowed_not_blocked(page_at):

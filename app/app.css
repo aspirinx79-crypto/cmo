@@ -99,3 +99,13 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
   max-height: 4.5em; overflow-y: auto; overflow-wrap: break-word;
   padding-right: 4px;
 }
+
+/* 가리기: #internal(오른쪽 단)뿐 아니라 구성판(가운데 단)의 직접입력 실비도
+   같이 숨긴다. 직접입력 상품은 정가·실비를 상무님이 손으로 입력하는데,
+   그 실비 입력칸이 구성판 카드 안에 있어서 오른쪽 단만 가려서는 원가가
+   화면에 그대로 남는다. visibility/opacity 가 아니라 display:none 으로
+   렌더 트리에서 빼야 선택·복사·인쇄로도 안 샌다 — 오른쪽 단과 같은 강도.
+   라벨("실비" 텍스트)까지 함께 지우려고 입력칸의 부모 label 을 통째로 뺀다. */
+body.hide-internal label:has(> .manual-cost) {
+  display: none;
+}

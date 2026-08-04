@@ -101,9 +101,13 @@
 
     document.getElementById("hide-internal").addEventListener("click", () => {
       const box = document.getElementById("internal");
-      box.classList.toggle("hidden");
+      const hidden = box.classList.toggle("hidden");
+      // #internal(오른쪽 단)만 가리는 걸로는 부족하다 — 직접입력 상품의
+      // 실비는 구성판(가운데 단)의 .manual-cost 입력칸에 산다. body 에도
+      // 같은 상태를 반영해 app.css 가 두 곳을 한 번에 가리게 한다.
+      document.body.classList.toggle("hide-internal", hidden);
       document.getElementById("hide-internal").textContent =
-        box.classList.contains("hidden") ? "보기" : "가리기";
+        hidden ? "보기" : "가리기";
     });
 
     document.getElementById("save-plan").addEventListener("click", save);
