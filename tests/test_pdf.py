@@ -7,7 +7,7 @@ import fitz
 import pytest
 
 from cmo.build_proposal import build
-from cmo.lib.proposal import build_payload
+from cmo.lib.proposal import INTERNAL_STEP_WORDS, build_payload
 
 PRODUCTS = [
     {"id": "네이버-블로그_일반_체험단", "매체": "네이버", "상품명": "블로그 일반 체험단",
@@ -36,11 +36,12 @@ def pdf_text(tmp_path_factory):
     out = tmp_path_factory.mktemp("pdf") / "제안서.pdf"
     build(payload, out)
     doc = fitz.open(out)
-    text = "".join(doc[i].get_text() for i in range(doc.page_count))
+    page_texts = [doc[i].get_text() for i in range(doc.page_count)]
+    text = "".join(page_texts)
     pages = doc.page_count
     rect = doc[0].rect
     doc.close()
-    return {"text": text, "pages": pages, "rect": rect}
+    return {"text": text, "쪽별": page_texts, "pages": pages, "rect": rect}
 
 
 def test_pdf_is_a4_portrait(pdf_text):
@@ -83,6 +84,19 @@ def test_notices_are_printed(pdf_text):
 def test_schedule_is_printed(pdf_text):
     assert "1주차" in pdf_text["text"] and "4주차" in pdf_text["text"]
     assert "모집" in pdf_text["text"]
+
+
+def test_no_internal_wording_on_the_schedule_page(pdf_text):
+    """일정표 쪽에 직함·단톡방·외주 구조가 인쇄되면 안 된다.
+
+    PDF 전체가 아니라 일정표 쪽만 본다 — "저희가 다른 점" 쪽의 차별점 카피는
+    "단톡방으로 바로 소통합니다" 를 일부러 쓴다(고객에게 파는 강점이지 내부
+    유출이 아니다). 문제가 난 곳은 프로세스 원문이 그대로 실리는 일정표다.
+    """
+    page = next((t for t in pdf_text["쪽별"] if "실행 일정" in t), None)
+    assert page is not None, "일정표 쪽을 찾지 못했다"
+    for word in INTERNAL_STEP_WORDS:
+        assert word not in page, f"일정표에 내부 문구 '{word}' 가 인쇄됐다"
 
 
 def test_differentiators_are_printed(pdf_text):

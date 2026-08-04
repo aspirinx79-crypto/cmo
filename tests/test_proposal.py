@@ -1,8 +1,16 @@
+import copy
 import json
 
 import pytest
 
-from cmo.lib.proposal import FORBIDDEN_KEYS, ProposalBlocked, build_payload
+from cmo.lib import proposal
+from cmo.lib.proposal import (
+    FORBIDDEN_KEYS,
+    INTERNAL_STEP_WORDS,
+    ProposalBlocked,
+    build_payload,
+)
+from cmo.lib.schedule import weekly_plan
 
 PRODUCTS = [
     {"id": "네이버-블로그_일반_체험단", "매체": "네이버", "상품명": "블로그 일반 체험단",
@@ -112,3 +120,116 @@ def test_blocked_when_manual_price_missing():
 def test_client_without_snapshot_still_builds():
     payload = build_payload({**CLIENT, "스냅샷": []}, PLAN, PRODUCTS)
     assert payload["지표"]["블로그리뷰"] is None
+
+
+# --- 일정표의 내부 문구 걸러내기 ---
+# 실제로 만든 PDF 의 고객용 일정표에 "언론송출 — 컨펌된 원고 및 사진 김대한
+# 대표에게 전달", "SA — 상위대행사 이관", "리뷰작업 — 실장님께 알바풀 전달"
+# 같은 줄이 그대로 실려 나갔다. 사장님에게 우리 내부 사람 이름·단톡방·외주
+# 구조를 보여주는 문서가 됐다.
+
+# products.json 원문에서 그대로 가져온, 실제로 새어 나갔던 프로세스들.
+LEAKY_PRODUCTS = [
+    {"id": "포털-언론송출", "매체": "포털", "상품명": "언론송출",
+     "가격유형": "고정", "정가": 150000, "실비": 100000, "최소수량": 1, "단위": "건",
+     "고지사항": "", "판매중지": False,
+     "프로세스": "컨펌된 원고 및 사진 김대한 대표에게 전달"},
+    {"id": "네이버-서비스툴관리", "매체": "네이버", "상품명": "서비스툴관리",
+     "가격유형": "고정", "정가": 300000, "실비": 0, "최소수량": 1, "단위": "개월",
+     "고지사항": "", "판매중지": False, "프로세스": "단톡방 소통"},
+    {"id": "네이버-SA", "매체": "네이버", "상품명": "SA",
+     "가격유형": "고정", "정가": 500000, "실비": 300000, "최소수량": 1, "단위": "개월",
+     "고지사항": "", "판매중지": False,
+     "프로세스": "상위대행사 이관->소재 세팅->통계보며 보고 및 피드백->관리"},
+    {"id": "해외-중국_체험단", "매체": "해외", "상품명": "중국 체험단",
+     "가격유형": "고정", "정가": 400000, "실비": 250000, "최소수량": 1, "단위": "건",
+     "고지사항": "", "판매중지": False, "프로세스": "레뷰차이나측 소통"},
+    {"id": "구글-리뷰작업", "매체": "구글", "상품명": "리뷰작업",
+     "가격유형": "고정", "정가": 200000, "실비": 120000, "최소수량": 1, "단위": "건",
+     "고지사항": "", "판매중지": False, "프로세스": "실장님께 알바풀 전달"},
+    {"id": "네이버-플레이스_상위노출_일_보장", "매체": "네이버",
+     "상품명": "플레이스 상위노출 일 보장",
+     "가격유형": "고정", "정가": 600000, "실비": 400000, "최소수량": 1, "단위": "일",
+     "고지사항": "", "판매중지": False, "프로세스": "홍인표이사와 소통"},
+    # 고객이 체감하는 단계만으로 이루어진 상품 — 필터가 이걸 건드리면 안 된다.
+    {"id": "네이버-블로그_일반_체험단", "매체": "네이버", "상품명": "블로그 일반 체험단",
+     "가격유형": "고정", "정가": 30000, "실비": 8000, "최소수량": 5, "단위": "팀",
+     "고지사항": "", "판매중지": False,
+     "프로세스": ("클라이언트에게 양식 받기->5-7일 모집/1일 선정/1일 명단발표/"
+                "14-20일 체험,포스팅/ 2영업일 후 보고서")},
+]
+LEAKY_PLAN = {
+    "월": "2026-09", "계약가": 1000000, "진단메모": "",
+    "항목": [{"상품id": p["id"], "수량": 1} for p in LEAKY_PRODUCTS],
+}
+
+
+def _schedule_blob(payload: dict) -> str:
+    return json.dumps(payload["일정"], ensure_ascii=False)
+
+
+def test_schedule_drops_internal_wording():
+    """제안서 일정표 어디에도 직함·단톡방·외주 구조가 남으면 안 된다."""
+    payload = build_payload(CLIENT, LEAKY_PLAN, LEAKY_PRODUCTS)
+    blob = _schedule_blob(payload)
+    for word in INTERNAL_STEP_WORDS:
+        assert word not in blob, f"제안서 일정표에 내부 문구 '{word}' 가 남아 있다"
+    for phrase in ("김대한", "홍인표", "상위대행사 이관", "알바풀", "레뷰차이나"):
+        assert phrase not in blob, f"제안서 일정표에 '{phrase}' 가 남아 있다"
+
+
+def test_schedule_keeps_client_facing_steps():
+    """거르는 김에 고객이 봐야 할 단계까지 지우면 일정표가 빈 종이가 된다."""
+    payload = build_payload(CLIENT, LEAKY_PLAN, LEAKY_PRODUCTS)
+    blob = _schedule_blob(payload)
+    for word in ("모집", "선정", "명단발표", "체험", "포스팅", "보고서", "세팅"):
+        assert word in blob, f"고객이 봐야 하는 단계 '{word}' 가 걸러졌다"
+
+
+def test_weekly_plan_still_returns_the_raw_process_wording():
+    """구성판 내부 화면은 프로세스 원문을 그대로 봐야 한다 — 상무님은 실제
+    진행 절차를 다 봐야 하기 때문이다. 필터를 schedule.weekly_plan() 안으로
+    옮기면 여기서 잡힌다."""
+    raw = json.dumps(weekly_plan(LEAKY_PRODUCTS, LEAKY_PLAN["항목"]),
+                     ensure_ascii=False)
+    assert "김대한 대표에게 전달" in raw
+    assert "단톡방 소통" in raw
+    assert "상위대행사 이관" in raw
+    assert "실장님께 알바풀 전달" in raw
+
+
+def test_schedule_filter_does_not_mutate_what_weekly_plan_returned(monkeypatch):
+    """필터가 받은 리스트를 제자리에서 고치면, 같은 반환값을 내부 화면과
+    나눠 쓰는 호출자가 생기는 날 조용히 원문을 잃는다. 사본을 만들어야 한다.
+
+    weekly_plan 은 호출할 때마다 새 리스트를 만들기 때문에 그냥 두 번 불러
+    비교하면 무엇을 해도 통과한다(공허하다). build_payload 가 실제로 받는
+    바로 그 객체를 쥐고 확인한다."""
+    handed = weekly_plan(LEAKY_PRODUCTS, LEAKY_PLAN["항목"])
+    original = copy.deepcopy(handed)
+    monkeypatch.setattr(proposal, "weekly_plan", lambda *a, **k: handed)
+
+    payload = build_payload(CLIENT, LEAKY_PLAN, LEAKY_PRODUCTS)
+
+    assert handed == original, "build_payload 가 weekly_plan 의 반환값을 제자리에서 고쳤다"
+    assert "김대한" not in _schedule_blob(payload)
+
+
+def _item_for(product: dict) -> dict:
+    """실제 상품 하나를 기획안 항목 한 줄로 만든다 (가격유형별 최소 입력)."""
+    item = {"상품id": product["id"], "수량": 1, "예산": 1000000, "정가": 100000}
+    grades = product.get("등급") or []
+    if grades:
+        item["등급"] = grades[0]["이름"]
+    return item
+
+
+def test_no_internal_wording_across_every_real_product(products):
+    """products.json 의 상품 전부를 한 기획안에 담아도 일정표가 깨끗해야 한다.
+    시트가 손편집이라 새 프로세스 문구가 언제든 들어온다."""
+    plan = {"월": "2026-09", "계약가": 1000000, "진단메모": "",
+            "항목": [_item_for(p) for p in products]}
+    payload = build_payload(CLIENT, plan, products)
+    blob = _schedule_blob(payload)
+    for word in INTERNAL_STEP_WORDS:
+        assert word not in blob, f"제안서 일정표에 내부 문구 '{word}' 가 남아 있다"
