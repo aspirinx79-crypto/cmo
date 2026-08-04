@@ -5,6 +5,29 @@
   let currentSummary = null;
   let currentItems = [];
 
+  // 가리기의 유일한 수단을 app.css 의 `:has()` 규칙 하나에 걸지 않는다.
+  // `:has()` 를 모르는 브라우저는 그 규칙 자체를 파싱 단계에서 통째로
+  // 버린다 — 조용히, 콘솔 오류도 없이. 결과는 "미팅 중 사장님에게 원가가
+  // 그대로 보인다" 다. 확률이 낮아도 실패는 닫히는 쪽이어야 하므로, JS 로
+  // `hidden` 속성을 직접 세운다(`hidden` 은 UA 기본 스타일시트가
+  // `display: none` 을 주므로 CSS 지원 여부와 무관하게 어느 브라우저에서나
+  // 먹는다). CSS 규칙은 그대로 둔다 — 렌더 즉시 걸려 깜빡임이 없고, 이
+  // JS 는 CSS 가 안 먹을 때의 안전망이다.
+  //
+  // 구성판이 다시 그려질 때마다(항목 추가/삭제/수량 변경 등) board.js 가
+  // 카드 마크업을 통째로 새로 만들어 이 속성이 날아간다. board.js 는 카드를
+  // 다시 그린 뒤 반드시 refresh() → onChange(paint) 로 이어지므로, paint()
+  // 를 재적용 지점으로 쓴다.
+  function applyBoardConcealment() {
+    const hide = document.body.classList.contains("hide-internal");
+    document.querySelectorAll(".manual-cost").forEach((input) => {
+      const label = input.closest("label");
+      if (!label) return;
+      if (hide) label.setAttribute("hidden", "");
+      else label.removeAttribute("hidden");
+    });
+  }
+
   function paint(result, items) {
     currentSummary = result;
     currentItems = items;
@@ -22,6 +45,8 @@
       result.혜택배율 === null
         ? "—"
         : `${result.혜택배율.toFixed(1)}배 — ${won(result.정가합)} 상당을 ${won(계약가)}에`;
+
+    applyBoardConcealment();
   }
 
   function currentPlan() {
@@ -106,6 +131,9 @@
       // 실비는 구성판(가운데 단)의 .manual-cost 입력칸에 산다. body 에도
       // 같은 상태를 반영해 app.css 가 두 곳을 한 번에 가리게 한다.
       document.body.classList.toggle("hide-internal", hidden);
+      // 토글 자체는 구성판을 다시 그리지 않으므로(카드 개수·값이 안
+      // 바뀐다) paint() 가 저절로 안 불린다 — 여기서 직접 적용한다.
+      applyBoardConcealment();
       document.getElementById("hide-internal").textContent =
         hidden ? "보기" : "가리기";
     });

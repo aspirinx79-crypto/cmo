@@ -374,6 +374,49 @@ def test_hiding_conceals_manual_cost_on_board_card(page_with_grade_and_manual):
     assert "200,000" in page.locator("body").inner_text()
 
 
+def test_manual_cost_stays_hidden_even_without_the_css_has_rule(page_with_grade_and_manual):
+    """은닉의 유일한 수단이 app.css 의
+    `body.hide-internal label:has(> .manual-cost) { display: none; }`
+    하나뿐이면 위험하다 — `:has()` 를 모르는 브라우저는 이 규칙을 파싱
+    단계에서 통째로 버린다. 조용히, 콘솔 오류도 없이. 그 상황을 흉내 내려고
+    로드된 스타일시트에서 실제로 이 규칙을 지운 뒤에도(=CSS 미지원 브라우저와
+    동등한 상태) summary.js 가 JS로 건 hidden 속성이 은닉을 유지하는지
+    확인한다."""
+    page = page_with_grade_and_manual
+    page.click('.add-btn[data-id="네이버-플레이스_트래픽"]')
+    card = page.locator('.board-card[data-id="네이버-플레이스_트래픽"]')
+    card.locator(".manual-cost").fill("123456")
+    card.locator(".manual-cost").dispatch_event("change")
+    page.wait_for_timeout(300)
+
+    removed = page.evaluate(
+        """
+        () => {
+          let removed = 0;
+          for (const sheet of document.styleSheets) {
+            let rules;
+            try { rules = sheet.cssRules; } catch (e) { continue; }
+            for (let i = rules.length - 1; i >= 0; i--) {
+              if (rules[i].cssText && rules[i].cssText.includes("manual-cost")) {
+                sheet.deleteRule(i);
+                removed++;
+              }
+            }
+          }
+          return removed;
+        }
+        """
+    )
+    assert removed >= 1, "지울 CSS 규칙을 못 찾았다 — 이 테스트가 실제로 흉내를 못 냈다"
+
+    page.click("#hide-internal")
+    assert not card.locator(".manual-cost").is_visible(), (
+        "CSS 규칙이 없는데도(:has() 미지원 흉내) 실비가 안 보여야 한다 — "
+        "JS 안전망(hidden 속성)이 동작해야 한다"
+    )
+    assert "123,456" not in page.locator("body").inner_text()
+
+
 def test_grade_selection_updates_line_total_not_top_level_price(page_with_grade_and_manual):
     """등급선택 상품도 최상위 정가를 갖는다(포털-언론송출 999999로 일부러
     맞춰 둔 값). 가격유형 분기보다 앞서 최상위 정가를 읽는 지름길이 생기면
