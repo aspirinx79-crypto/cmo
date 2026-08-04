@@ -112,6 +112,19 @@ def make_handler(store: Store, app_dir: Path):
                                   int(body.get("계약가") or 0))
                     )
 
+                if path == "/api/proposal":
+                    from cmo.build_proposal import build
+                    from cmo.lib.proposal import ProposalBlocked, build_payload
+                    slug, month = body["slug"], body["월"]
+                    try:
+                        payload = build_payload(store.client_read(slug),
+                                                store.plan_read(slug, month),
+                                                store.products())
+                    except ProposalBlocked as exc:
+                        return self._json({"오류": str(exc)}, 400)
+                    out = CMO / "out" / f"{slug}_{month}_제안서.pdf"
+                    return self._json({"경로": str(build(payload, out))})
+
                 m = CLIENT_RE.match(path)
                 if m:
                     store.client_write(m.group(1), body)

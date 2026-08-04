@@ -39,5 +39,6 @@
     copyPlan: (slug, month, 대상월) =>
       post(`/api/clients/${encodeURIComponent(slug)}/plans/${month}/copy`, { 대상월 }),
     summary: (항목, 계약가) => post("/api/summary", { 항목, 계약가 }),
+    proposal: (slug, 월) => post("/api/proposal", { slug, 월 }),
   };
 })();

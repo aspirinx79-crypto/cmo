@@ -141,6 +141,18 @@
     document.getElementById("save-plan").addEventListener("click", save);
     document.getElementById("copy-next").addEventListener("click", copyNext);
 
+    document.getElementById("make-proposal").addEventListener("click", async () => {
+      if (!slug()) { alert("고객사를 먼저 선택하십시오."); return; }
+      const month = document.getElementById("month").value;
+      try {
+        await window.API.savePlan(slug(), month, currentPlan(), true);
+        const r = await window.API.proposal(slug(), month);
+        alert(`제안서를 만들었습니다.\n${r.경로}`);
+      } catch (err) {
+        alert(`제안서 생성 실패: ${err.message}`);
+      }
+    });
+
     document.getElementById("client-select").addEventListener("change", async (e) => {
       if (!e.target.value) return;
       try {

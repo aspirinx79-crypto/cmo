@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>제안서</title>
+  <style>
+    @font-face {
+      font-family: "Pretendard";
+      src: url("../app/fonts/PretendardVariable.woff2") format("woff2-variations");
+      font-weight: 100 900; font-display: block;
+    }
+    @page { size: A4 portrait; margin: 16mm 14mm; }
+    * { box-sizing: border-box; }
+    body { font-family: "Pretendard", sans-serif; color: #14181f; font-size: 11pt; margin: 0; }
+    section { page-break-after: always; }
+    section:last-child { page-break-after: auto; }
+    h1 { font-size: 26pt; margin: 0 0 6mm; }
+    h2 { font-size: 15pt; border-bottom: 2px solid #3E8AFF; padding-bottom: 2mm; margin: 0 0 5mm; }
+    .cover { height: 240mm; display: flex; flex-direction: column; justify-content: center; }
+    .cover .month { color: #3E8AFF; font-size: 14pt; font-weight: 700; }
+    .cover .company { margin-top: 20mm; color: #6b7280; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 3mm 2mm; text-align: left; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.total td { font-weight: 800; border-top: 2px solid #14181f; border-bottom: none; }
+    .headline { margin-top: 6mm; padding: 5mm; background: #eef4ff;
+                border-left: 4px solid #3E8AFF; font-size: 14pt; font-weight: 800; }
+    .metrics { display: flex; gap: 6mm; margin: 5mm 0; }
+    .metric { flex: 1; padding: 4mm; background: #f8fafc; border-radius: 3mm; }
+    .metric .label { color: #6b7280; font-size: 9pt; }
+    .metric .value { font-size: 18pt; font-weight: 800; }
+    ul { margin: 0; padding-left: 5mm; }
+    li { margin-bottom: 2mm; }
+    .week { margin-bottom: 4mm; }
+    .week h3 { margin: 0 0 1mm; font-size: 11pt; color: #3E8AFF; }
+    .fine { color: #6b7280; font-size: 9pt; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div class="month" id="c-month"></div>
+    <h1 id="c-name"></h1>
+    <div id="c-where"></div>
+    <div class="company">
+      (주)상생어벤져스컴퍼니 · SSAvengers Group<br>
+      서울특별시 강남구 압구정로2길 60, MG타워 6F · 1551-0723
+    </div>
+  </section>
+
+  <section>
+    <h2>매장 진단</h2>
+    <div id="d-basic"></div>
+    <div class="metrics" id="d-metrics"></div>
+    <p id="d-memo"></p>
+  </section>
+
+  <section>
+    <h2>실행 구성</h2>
+    <table>
+      <thead><tr><th>매체</th><th>항목</th><th>수량</th><th class="num">정가</th></tr></thead>
+      <tbody id="t-body"></tbody>
+    </table>
+    <div class="headline" id="t-headline"></div>
+  </section>
+
+  <section>
+    <h2>1개월차 실행 일정</h2>
+    <div id="s-weeks"></div>
+  </section>
+
+  <section>
+    <h2>고지사항</h2>
+    <ul id="n-list"></ul>
+  </section>
+
+  <section>
+    <h2>저희가 다른 점</h2>
+    <ul id="x-list"></ul>
+  </section>
+
+  <script src="../app/util.js"></script>
+  <script>
+    // build_proposal.py 가 window.PAYLOAD 를 주입한 뒤 render() 를 부른다
+    function render() {
+      const P = window.PAYLOAD;
+      const esc = window.Util.escapeHtml;
+      const won = (n) => Number(n || 0).toLocaleString() + "원";
+
+      document.getElementById("c-month").textContent = P.월 + " 마케팅 제안";
+      document.getElementById("c-name").textContent = P.매장명;
+      document.getElementById("c-where").textContent = [P.지역, P.업종].filter(Boolean).join(" · ");
+
+      document.getElementById("d-basic").textContent =
+        [P.업종, P.지역, P.평수 ? P.평수 + "평" : null].filter(Boolean).join(" · ");
+
+      const M = P.지표, cards = [];
+      if (M.블로그리뷰 !== null && M.블로그리뷰 !== undefined)
+        cards.push({ label: "블로그 리뷰", value: M.블로그리뷰 + "건" });
+      if (M.방문자리뷰 !== null && M.방문자리뷰 !== undefined)
+        cards.push({ label: "방문자 리뷰", value: M.방문자리뷰 + "건" });
+      for (const r of (M.순위 || []))
+        cards.push({ label: "「" + r.키워드 + "」", value: r.순위 + "위" });
+      if (M.상권순위) cards.push({ label: "동일 상권 내", value: M.상권순위 });
+
+      document.getElementById("d-metrics").innerHTML = cards.map((c) =>
+        `<div class="metric"><div class="label">${esc(c.label)}</div>
+         <div class="value">${esc(c.value)}</div></div>`).join("");
+
+      document.getElementById("d-memo").textContent = P.진단 || "";
+
+      document.getElementById("t-body").innerHTML =
+        P.구성.map((c) =>
+          `<tr><td>${esc(c.매체)}</td><td>${esc(c.상품명)}</td><td>${esc(c.수량표시)}</td>
+           <td class="num">${won(c.정가)}</td></tr>`).join("") +
+        `<tr class="total"><td colspan="3">정가 합계</td>
+         <td class="num">${won(P.정가합)}</td></tr>` +
+        `<tr class="total"><td colspan="3">월 계약가</td>
+         <td class="num">${won(P.계약가)}</td></tr>`;
+
+      document.getElementById("t-headline").textContent = P.혜택배율문구;
+
+      document.getElementById("s-weeks").innerHTML = P.일정.map((w) =>
+        `<div class="week"><h3>${esc(w.주차)}주차</h3>
+         <ul>${(w.항목.length ? w.항목 : ["—"]).map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`
+      ).join("");
+
+      document.getElementById("n-list").innerHTML =
+        P.고지사항.map((n) => `<li>${esc(n)}</li>`).join("");
+      document.getElementById("x-list").innerHTML =
+        P.차별점.map((n) => `<li>${esc(n)}</li>`).join("");
+    }
+  </script>
+</body>
+</html>
