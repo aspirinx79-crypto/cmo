@@ -233,3 +233,40 @@ def test_no_internal_wording_across_every_real_product(products):
     blob = _schedule_blob(payload)
     for word in INTERNAL_STEP_WORDS:
         assert word not in blob, f"제안서 일정표에 내부 문구 '{word}' 가 남아 있다"
+
+
+# --- 목록 조정 (수정 라운드 2) ---
+# `소통`·`전달` 을 뺐다. 진짜 유출 줄은 전부 다른 단어에도 걸려 이 둘이 막고
+# 있는 게 없는데, 대신 고객에게 보여줘야 할 줄을 죽이고 있었다.
+# `입금요청` 을 넣었다. 유출이라서가 아니라 문서 격 때문이다.
+
+def _schedule_of(products: list[dict], *ids: str) -> list[dict]:
+    """실제 카탈로그에서 상품 몇 개만 골라 기획안을 만들고 고객용 일정표를 낸다."""
+    chosen = [p for p in products if p["id"] in ids]
+    assert len(chosen) == len(ids), f"카탈로그에 없는 id 가 있다: {ids}"
+    plan = {"월": "2026-09", "계약가": 1000000, "진단메모": "",
+            "항목": [_item_for(p) for p in chosen]}
+    return build_payload(CLIENT, plan, products)["일정"]
+
+
+def _lines(weeks: list[dict]) -> list[str]:
+    return [line for week in weeks for line in week["항목"]]
+
+
+def test_client_facing_communication_and_shooting_survive(products):
+    """`클라이언트 소통 및 디자인 컨펌` 은 고객'과의' 소통이라 오히려 보여줄
+    약속이고, `유튜버 전달 및 촬영` 은 카탈로그에서 `촬영` 이 든 유일한 줄이다.
+    `소통`·`전달` 로 겹쳐 막느라 이 둘을 죽이면 안 된다."""
+    lines = _lines(_schedule_of(products, "네이버-카페_월_배너광고", "유튜브-유튜버_PPL"))
+    assert any("클라이언트 소통 및 디자인 컨펌" in line for line in lines)
+    assert any("촬영" in line for line in lines), "카탈로그에서 촬영이 통째로 사라졌다"
+    # 같은 상품의 진짜 유출 줄은 여전히 막힌다 — 필터를 통째로 푼 게 아니다.
+    assert not any("대행가" in line for line in lines)
+
+
+def test_payment_request_step_is_dropped(products):
+    """제안서의 실행 일정 마지막 줄이 '입금요청' 이면 안 된다."""
+    lines = _lines(_schedule_of(products, "IMC-CMO_서비스"))
+    assert not any("입금요청" in line for line in lines)
+    assert any("예산 선정" in line for line in lines)
+    assert any("월별 관리" in line for line in lines)
