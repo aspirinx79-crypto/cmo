@@ -270,3 +270,61 @@ def test_payment_request_step_is_dropped(products):
     assert not any("입금요청" in line for line in lines)
     assert any("예산 선정" in line for line in lines)
     assert any("월별 관리" in line for line in lines)
+
+
+# --- 단계가 전부 걸린 상품의 대체 줄 (수정 라운드 2) ---
+# 프로세스가 한 줄뿐이고 그 한 줄이 내부 문구인 상품이 16개다. 그런 상품만
+# 판 달은 제안서 일정 쪽이 빈 종이가 됐다. 돈을 냈는데 일정표에 자기가 산 게
+# 안 보이면 안 된다. 내부 절차는 감추되 "이 상품이 이 달에 돌아간다" 는
+# 사실은 남긴다.
+
+def test_fully_filtered_product_shows_a_progress_line(products):
+    """`네이버-서비스툴관리` 는 프로세스가 "단톡방 소통" 한 줄이라 전부 걸린다."""
+    lines = _lines(_schedule_of(products, "네이버-서비스툴관리"))
+    assert lines == ["서비스툴관리 — 진행"], f"기대와 다르다: {lines}"
+
+
+def test_progress_line_sits_in_the_week_the_first_step_was_in(products):
+    """대체 줄은 아무 데나가 아니라 그 상품의 첫 단계가 놓였을 주차에 들어간다.
+    4주에 걸치는 상품과 같이 담아도 주차가 밀리지 않아야 한다."""
+    ids = ("네이버-서비스툴관리", "네이버-블로그_일반_체험단")
+    chosen = [p for p in products if p["id"] in ids]
+    raw = weekly_plan(products, [_item_for(p) for p in chosen])
+    expected = next(w["주차"] for w in raw
+                    if any(line.startswith("서비스툴관리 — ") for line in w["항목"]))
+
+    weeks = _schedule_of(products, *ids)
+    placed = [w["주차"] for w in weeks if "서비스툴관리 — 진행" in w["항목"]]
+    assert placed == [expected], f"{expected}주차에 있어야 하는데 {placed} 에 있다"
+
+
+def test_progress_line_is_suppressed_when_the_product_name_is_internal(products):
+    """상품명 자체에 금칙어가 든 상품은 대체 줄도 내보내지 않는다. 실패는
+    닫히는 쪽으로.
+
+    `커뮤니티-전국_대학생_동아리_단톡_침투` 는 상품명에 `단톡` 이 들어 있다.
+    지금은 프로세스가 비어 있어 일정표에 안 나오지만 시트는 손편집이라
+    언제든 채워진다. 그날 상품명으로 `단톡` 이 새어 나가면 안 된다."""
+    catalog = [dict(p) for p in products]
+    target = next(p for p in catalog
+                  if p["id"] == "커뮤니티-전국_대학생_동아리_단톡_침투")
+    target["프로세스"] = "실장님께 명단 전달"
+
+    lines = _lines(_schedule_of(catalog, target["id"]))
+    assert lines == [], f"상품명에 금칙어가 있는데 줄이 나갔다: {lines}"
+
+
+def test_product_without_a_process_gets_no_progress_line(products):
+    """걸러서 사라진 것과 애초에 단계가 없던 것은 다른 경우다. 프로세스가 빈
+    상품(`네이버-플레이스_트래픽`)은 원래도 일정표에 안 나왔고 지금도 안 나온다."""
+    lines = _lines(_schedule_of(products, "네이버-플레이스_트래픽"))
+    assert lines == [], f"프로세스가 없는 상품에 줄이 생겼다: {lines}"
+
+
+def test_partially_filtered_product_gets_no_progress_line(products):
+    """`네이버-SA` 는 `상위대행사 이관` 만 걸리고 세 줄이 남는다. 남은 줄이
+    있으면 대체 줄을 덧붙이지 않는다 — 같은 상품이 두 번 나오게 된다."""
+    lines = _lines(_schedule_of(products, "네이버-SA"))
+    assert "SA — 진행" not in lines
+    assert any("소재 세팅" in line for line in lines)
+    assert not any("이관" in line for line in lines)

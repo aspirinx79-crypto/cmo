@@ -89,6 +89,22 @@ def _quantity_label(product: dict, item: dict) -> str:
     return f"{grade} {qty}{unit}" if grade else f"{qty}{unit}"
 
 
+LINE_SEP = " — "
+FALLBACK_STEP = "진행"
+
+
+def _is_internal(text: str) -> bool:
+    return any(word in text for word in INTERNAL_STEP_WORDS)
+
+
+def _product_of(line: str) -> str:
+    """일정표 한 줄에서 상품명을 떼어 낸다.
+
+    `schedule.weekly_plan()` 이 f"{상품명} — {단계}" 로 만든다. 앞부분만 본다.
+    """
+    return line.split(LINE_SEP, 1)[0]
+
+
 def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
     """일정표에서 내부 문구가 든 단계를 뺀 사본을 만든다.
 
@@ -98,17 +114,45 @@ def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
 
     검사는 렌더된 줄("상품명 — 단계") 전체를 대상으로 한다. 상품명에도 내부
     문구가 들어 있을 수 있어서(시트가 손편집이다) 단계 부분만 보면 새어 나간다.
-    한 상품의 단계가 전부 걸러지면 그 상품은 일정표에 안 나온다. 빈 주차는 빈
-    채로 둔다 — 서식이 '—' 로 렌더한다.
+
+    한 상품의 단계가 **전부** 걸러지면 그 상품의 첫 단계가 놓였을 주차에
+    "{상품명} — 진행" 한 줄을 대신 넣는다. 프로세스가 한 줄뿐이고 그게 내부
+    문구인 상품이 여럿이라, 그런 상품만 판 달은 일정 쪽이 통째로 빈 종이가
+    됐다. 돈을 낸 사람이 자기가 산 게 일정표에 없는 걸 보면 안 된다. 내부
+    절차는 안 보이고 "이 상품이 이 달에 돌아간다" 는 사실만 남는다.
+
+    대체 줄에도 같은 필터를 건다. 상품명 자체에 금칙어가 든 상품이 있어서
+    (예: "전국 대학생 동아리 단톡 침투") 대체 줄이 새 유출 경로가 될 수 있다.
+    실패는 닫히는 쪽으로 — 그런 상품은 대체 줄도 안 나간다.
+
+    프로세스가 아예 비어 원래부터 일정표에 없던 상품에는 대체 줄을 만들지
+    않는다. 걸러서 사라진 것과 애초에 단계가 없던 것은 다른 경우다. 여기는
+    `weekly_plan()` 이 낸 줄만 보므로 그런 상품은 자연히 대상이 아니다.
+
+    빈 주차는 빈 채로 둔다 — 서식이 '—' 로 렌더한다.
     """
-    return [
-        {
-            "주차": week["주차"],
-            "항목": [line for line in week["항목"]
-                    if not any(word in line for word in INTERNAL_STEP_WORDS)],
-        }
-        for week in weeks
-    ]
+    kept: dict[str, int] = {}
+    for week in weeks:
+        for line in week["항목"]:
+            name = _product_of(line)
+            kept[name] = kept.get(name, 0) + (0 if _is_internal(line) else 1)
+
+    seen: set[str] = set()
+    out = []
+    for week in weeks:
+        items = []
+        for line in week["항목"]:
+            name = _product_of(line)
+            first = name not in seen
+            seen.add(name)
+            if not _is_internal(line):
+                items.append(line)
+            elif first and kept[name] == 0:
+                fallback = f"{name}{LINE_SEP}{FALLBACK_STEP}"
+                if not _is_internal(fallback):
+                    items.append(fallback)
+        out.append({"주차": week["주차"], "항목": items})
+    return out
 
 
 def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
