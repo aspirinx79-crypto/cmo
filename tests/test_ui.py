@@ -430,3 +430,270 @@ def test_add_click_during_slow_board_load_still_creates_card(tmp_data, cmo_dir):
             '.board-card[data-id="네이버-블로그_일반_체험단"]').count() == 1
         browser.close()
     httpd.shutdown()
+
+
+# --- ③ 요약과 저장 ---
+
+def test_summary_shows_list_total_and_multiplier(page_at):
+    page_at.fill("#contract-price", "1000000")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("50")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    assert "1,500,000" in page_at.locator("#list-total").inner_text()
+    assert "1.5배" in page_at.locator("#multiplier").inner_text()
+
+
+def test_summary_shows_margin_internally(page_at):
+    page_at.fill("#contract-price", "1000000")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("50")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    assert "400,000" in page_at.locator("#cost-total").inner_text()
+    assert "60" in page_at.locator("#margin-rate").inner_text()
+
+
+def test_hide_button_conceals_internal_figures(page_at):
+    page_at.fill("#contract-price", "1000000")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("50")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    # 가리기 전: 실비 금액 문자열이 실제로 화면에 보인다는 것부터 확인한다.
+    # (이 확인이 없으면 아래 "안 보인다" 단언이 애초에 셀렉터가 틀려도 통과해버린다.)
+    assert page_at.locator("#cost-total").is_visible()
+    assert "400,000" in page_at.locator("#cost-total").inner_text()
+
+    page_at.click("#hide-internal")
+    internal = page_at.locator("#internal")
+    assert "hidden" in (internal.get_attribute("class") or "")
+    assert not page_at.locator("#cost-total").is_visible()
+    # 화면 전체 텍스트에서도 실비 금액 문자열 자체가 사라져야 한다 —
+    # 클래스만 바뀌고 CSS 가 실제로 감추지 않는 경우까지 잡는다.
+    assert "400,000" not in page_at.locator("#summary").inner_text()
+
+
+def test_hide_button_toggles_back(page_at):
+    page_at.click("#hide-internal")
+    page_at.click("#hide-internal")
+    assert page_at.locator("#cost-total").is_visible()
+
+
+def test_budget_overrun_is_allowed_not_blocked(page_at):
+    """넘쳐도 막지 않는다. 표시만 한다."""
+    page_at.fill("#contract-price", "100000")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("100")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    assert "3,000,000" in page_at.locator("#list-total").inner_text()
+    assert page_at.locator("#margin").inner_text().startswith("-")
+
+
+def test_zero_contract_price_does_not_show_nan_or_infinity(page_at):
+    """계약가가 0이면 혜택배율·마진율은 null 이다. null/NaN/Infinity 가
+    사장님 눈앞에 그대로 뜨면 안 된다."""
+    page_at.fill("#contract-price", "0")
+    page_at.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page_at.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page_at.wait_for_timeout(400)
+    # 먼저 화면이 실제로 다시 그려졌다는 증거부터 확인한다 — 이게 없으면
+    # summary.js 가 아무것도 안 해도(초기 HTML의 "—" 가 그대로 남아) 아래
+    # "나쁜 문자열이 없다" 단언이 공허하게 통과해버린다.
+    assert "300,000" in page_at.locator("#list-total").inner_text()
+    multiplier_text = page_at.locator("#multiplier").inner_text()
+    margin_rate_text = page_at.locator("#margin-rate").inner_text()
+    assert multiplier_text.strip() == "—", multiplier_text
+    assert margin_rate_text.strip() == "—", margin_rate_text
+    for bad in ("NaN", "Infinity", "null", "undefined"):
+        assert bad not in multiplier_text, multiplier_text
+        assert bad not in margin_rate_text, margin_rate_text
+
+
+def test_save_without_client_selected_warns_not_silent(page_at):
+    dialogs = []
+    page_at.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page_at.click("#save-plan")
+    page_at.wait_for_timeout(150)
+    assert dialogs, "고객사 미선택 저장이 아무 반응도 없다"
+    assert "고객사" in dialogs[-1]
+
+
+def test_copy_without_client_selected_warns_not_silent(page_at):
+    dialogs = []
+    page_at.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page_at.click("#copy-next")
+    page_at.wait_for_timeout(150)
+    assert dialogs, "고객사 미선택 복제가 아무 반응도 없다"
+    assert "고객사" in dialogs[-1]
+
+
+CLIENT_SLUG = "테스트고객사"
+
+
+@pytest.fixture
+def page_with_client(tmp_data, cmo_dir):
+    (tmp_data / "products.json").write_text(
+        json.dumps(PRODUCTS, ensure_ascii=False), encoding="utf-8")
+    client_dir = tmp_data / "clients" / CLIENT_SLUG
+    client_dir.mkdir(parents=True)
+    (client_dir / "client.json").write_text(
+        json.dumps({"이름": "테스트 고객사", "상태": "진행중"}, ensure_ascii=False),
+        encoding="utf-8")
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app")
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(url)
+        page.wait_for_selector(".product-row")
+        yield page
+        browser.close()
+    httpd.shutdown()
+
+
+def test_saving_same_month_twice_prompts_overwrite_not_silent(page_with_client):
+    """같은 달에 두 번 저장하면 서버가 두 번째 요청에 409 를 낸다. 조용히
+    성공한 척하거나 조용히 실패하면 안 되고, 사용자에게 명시적으로 물어야 한다."""
+    page = page_with_client
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-09")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append((d.type, d.message)), d.accept()))
+
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+    assert dialogs and dialogs[-1][0] == "alert", dialogs
+    assert "저장" in dialogs[-1][1]
+
+    dialogs.clear()
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+    assert dialogs, "두 번째 저장이 아무 반응 없이 조용히 지나갔다"
+    assert any(t == "confirm" and "이미 있습니다" in m for t, m in dialogs), dialogs
+
+
+def test_declining_overwrite_confirm_keeps_original_plan(page_with_client):
+    """덮어쓰기 확인창에서 취소하면 실제로 원본이 그대로 남아야 한다."""
+    page = page_with_client
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-09")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+    # 첫 저장의 성공 alert 는 수락, 두 번째 저장의 덮어쓰기 confirm 은
+    # 취소한다. page.once 와 page.on 을 같이 걸면 리스너 두 개가 같은
+    # 다이얼로그를 두고 경합해 "already handled" 오류가 난다 — 카운터
+    # 하나로 순서를 구분한다.
+    dialog_count = {"n": 0}
+
+    def handle_dialog(dialog):
+        dialog_count["n"] += 1
+        if dialog_count["n"] == 1:
+            dialog.accept()
+        else:
+            dialog.dismiss()
+
+    page.on("dialog", handle_dialog)
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+
+    # 두 번째 저장 전에 화면 값을 바꿔 둔다 — 취소했을 때 이 값이 저장되지
+    # 않아야(=원본이 안 바뀌어야) 진짜로 취소가 동작한 것이다.
+    page.fill("#contract-price", "9999999")
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+
+    saved = page.evaluate(
+        f"window.API.plan('{CLIENT_SLUG}', '2026-09').then(p => p.계약가)"
+    )
+    assert saved == 1000000, "취소했는데 원본이 덮어써졌다"
+
+
+def test_copy_to_next_month_carries_items_and_updates_month_field(page_with_client):
+    page = page_with_client
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-09")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+    page.on("dialog", lambda d: d.accept())
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+
+    page.click("#copy-next")
+    page.wait_for_timeout(300)
+    assert page.locator("#month").input_value() == "2026-10"
+    assert page.locator(
+        '.board-card[data-id="네이버-블로그_일반_체험단"]').count() == 1
+
+
+def test_copy_without_existing_plan_warns_not_silent(page_with_client):
+    """이번 달에 저장된 기획안이 없는데 복제를 누르면 서버가 404 를 낸다.
+    조용히 넘어가면 상무님은 복제가 됐는지 안 됐는지 알 길이 없다."""
+    page = page_with_client
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.wait_for_timeout(150)
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page.click("#copy-next")
+    page.wait_for_timeout(300)
+    assert dialogs, "없는 달 복제가 아무 반응도 없다"
+    assert "복제" in dialogs[-1]
+
+
+# --- 고지사항이 길어도 카드가 화면을 잡아먹으면 안 된다 (app.css, CSS 만으로) ---
+
+LONG_NOTICE_PRODUCT = [
+    {"id": "네이버-서비스툴관리", "매체": "네이버", "상품명": "서비스툴관리",
+     "가격유형": "고정", "정가": 50000, "실비": 20000, "최소수량": 1, "단위": "건",
+     "중요도": "상", "판매중지": False, "고지사항": "약관 문구 " * 300, "프로세스": ""},
+]
+
+
+@pytest.fixture
+def page_with_long_notice(tmp_data, cmo_dir):
+    (tmp_data / "products.json").write_text(
+        json.dumps(LONG_NOTICE_PRODUCT, ensure_ascii=False), encoding="utf-8")
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app")
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(url)
+        page.wait_for_selector(".product-row")
+        yield page
+        browser.close()
+    httpd.shutdown()
+
+
+def test_long_notice_does_not_take_over_the_card(page_with_long_notice):
+    page = page_with_long_notice
+    page.click('.add-btn[data-id="네이버-서비스툴관리"]')
+    card = page.locator('.board-card[data-id="네이버-서비스툴관리"]')
+    notice_box = card.locator(".notice").bounding_box()
+    assert notice_box is not None
+    assert notice_box["height"] < 150, (
+        f"고지사항이 카드 절반을 차지한다: {notice_box}")

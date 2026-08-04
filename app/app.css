@@ -91,4 +91,11 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .card-body input, .card-body select { width: 120px; padding: 4px 6px;
   border: 1px solid var(--line); border-radius: 5px; text-align: right; }
 .line-total { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
-.notice { color: var(--danger); font-size: 12px; margin-top: 4px; }
+/* 고지사항은 시트 원문 그대로 온다 — 어떤 상품은 1,000자를 넘어 카드가
+   화면 절반을 차지한다. 법적 문구라 잘라내지 않고, 높이만 제한해 스크롤로
+   읽게 한다(내용 손실 없이 카드 크기만 통제). */
+.notice {
+  color: var(--danger); font-size: 12px; margin-top: 4px;
+  max-height: 4.5em; overflow-y: auto; overflow-wrap: break-word;
+  padding-right: 4px;
+}
