@@ -92,6 +92,26 @@ def _quantity_label(product: dict, item: dict) -> str:
 LINE_SEP = " — "
 FALLBACK_STEP = "진행"
 
+# 시트 작성자 메모의 시작 표시.
+#
+# 상무님은 시트의 프로세스 열에 본인용 메모를 `_` 뒤에 붙여 쓴다. 실제로 나간
+# PDF 에 이 줄들이 그대로 찍혔다:
+#   블로그 일반 체험단 — 2영업일 후 보고서 (약 1달 기간) _융통성 있게
+#   블로그 프리미엄 체험단 — 10일 포스팅 원칙_융통성 있게
+# 사장님은 "융통성 있게" 를 "일정 대충 하겠다는 거네" 로 읽는다. 금칙어와는
+# 다른 종류라(유출이 아니라 어투다) `INTERNAL_STEP_WORDS` 에 안 걸렸다.
+#
+# 카탈로그 전수 확인: `_` 가 든 단계는 3개이고 세 개 모두 `_융통성 있게` —
+# 작성자 메모율 100%다. 그래서 `_` 뒤는 통째로 뗀다.
+#
+# 괄호는 **떼지 않는다.** 카탈로그 전체에서 괄호가 든 단계는
+# `2영업일 후 보고서 (약 1달 기간)` 한 줄뿐이고, 내용이 "얼마나 걸리냐" 라는
+# 기간 정보다. 일정표는 바로 그 질문에 답하는 표다. 표본 하나로 "괄호는 뗀다"
+# 는 일반 규칙을 세우면 나중에 들어올 `(주말 제외)` 같은 고객에게 필요한
+# 괄호까지 같이 죽는다. 판단은 상무님 영역이니 뒤집을 일이 있으면 보고할 것
+# (뒤집는다면 `_without_author_note` 에 괄호 제거 한 줄을 더하면 된다).
+AUTHOR_NOTE_MARK = "_"
+
 
 def _is_internal(text: str) -> bool:
     return any(word in text for word in INTERNAL_STEP_WORDS)
@@ -103,6 +123,20 @@ def _product_of(line: str) -> str:
     `schedule.weekly_plan()` 이 f"{상품명} — {단계}" 로 만든다. 앞부분만 본다.
     """
     return line.split(LINE_SEP, 1)[0]
+
+
+def _without_author_note(line: str) -> str:
+    """줄에서 시트 작성자 메모를 뗀 사본. 뗀 뒤 단계가 비면 빈 문자열.
+
+    **상품명(왼쪽)은 건드리지 않는다.** `1세대 블로거 _케케케라인 12팀` 처럼
+    상품명 자체에 `_` 가 든 상품이 실제로 있어서, 줄 전체에서 `_` 를 자르면
+    상품명이 잘려 나간다. 첫 `" — "` 로 나눠 오른쪽만 손댄다.
+    """
+    name, sep, step = line.partition(LINE_SEP)
+    if not sep:
+        return line
+    step = step.split(AUTHOR_NOTE_MARK, 1)[0].strip()
+    return f"{name}{LINE_SEP}{step}" if step else ""
 
 
 def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
@@ -129,13 +163,23 @@ def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
     않는다. 걸러서 사라진 것과 애초에 단계가 없던 것은 다른 경우다. 여기는
     `weekly_plan()` 이 낸 줄만 보므로 그런 상품은 자연히 대상이 아니다.
 
+    시트 작성자 메모(`_` 뒤)는 단계 부분에서만 떼어 낸다. 메모를 떼고 나서
+    단계가 통째로 비면 그 줄은 걸린 것과 똑같이 취급한다 — `{상품명} — ` 처럼
+    꼬리 잘린 줄을 내보내느니 위의 대체 줄 경로로 넘긴다.
+
+    내부 문구 검사는 **원문 줄**에 건다. 메모를 떼는 건 문구를 다듬는 일이지
+    방어선을 넓히는 일이 아니다. 금칙어가 메모 안에 있었더라도 그 줄은 안
+    내보낸다 — 실패는 닫히는 쪽으로.
+
     빈 주차는 빈 채로 둔다 — 서식이 '—' 로 렌더한다.
     """
     kept: dict[str, int] = {}
     for week in weeks:
         for line in week["항목"]:
             name = _product_of(line)
-            kept[name] = kept.get(name, 0) + (0 if _is_internal(line) else 1)
+            shown = _without_author_note(line)
+            survives = bool(shown) and not _is_internal(line)
+            kept[name] = kept.get(name, 0) + (1 if survives else 0)
 
     seen: set[str] = set()
     out = []
@@ -145,8 +189,9 @@ def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
             name = _product_of(line)
             first = name not in seen
             seen.add(name)
-            if not _is_internal(line):
-                items.append(line)
+            shown = _without_author_note(line)
+            if shown and not _is_internal(line):
+                items.append(shown)
             elif first and kept[name] == 0:
                 fallback = f"{name}{LINE_SEP}{FALLBACK_STEP}"
                 if not _is_internal(fallback):

@@ -328,3 +328,87 @@ def test_partially_filtered_product_gets_no_progress_line(products):
     assert "SA — 진행" not in lines
     assert any("소재 세팅" in line for line in lines)
     assert not any("이관" in line for line in lines)
+
+
+# --- 시트 작성자 메모 떼기 (수정 라운드 3, J) ---
+# 실제로 나간 PDF 에 이런 줄이 찍혔다:
+#   블로그 일반 체험단 — 2영업일 후 보고서 (약 1달 기간) _융통성 있게
+#   블로그 프리미엄 체험단 — 10일 포스팅 원칙_융통성 있게
+# "융통성 있게" 는 상무님이 시트에 남긴 본인용 메모다. 사장님은 이걸
+# "일정 대충 하겠다는 거네" 로 읽는다. 금칙어와는 다른 종류라 안 걸렸다.
+
+
+def _catalog_with_process(products: list[dict], pid: str, process: str):
+    """실제 카탈로그를 얕게 복사해 상품 하나의 프로세스만 갈아 끼운다."""
+    catalog = [dict(p) for p in products]
+    target = next(p for p in catalog if p["id"] == pid)
+    target["프로세스"] = process
+    return catalog, target
+
+
+def test_author_note_after_underscore_is_stripped(products):
+    """`10일 포스팅 원칙_융통성 있게` 는 `10일 포스팅 원칙` 까지만 나간다."""
+    lines = _lines(_schedule_of(products, "네이버-블로그_프리미엄_체험단"))
+    assert "블로그 프리미엄 체험단 — 10일 포스팅 원칙" in lines, lines
+    assert not any("융통성" in line for line in lines), lines
+
+
+def test_no_author_note_survives_in_any_step(products):
+    """카탈로그 전부를 한 기획안에 담아도 단계 쪽에 `_` 가 남으면 안 된다.
+    상품명(왼쪽)은 검사 대상이 아니다 — 상품명에 `_` 가 든 상품이 실제로 있다."""
+    plan = {"월": "2026-09", "계약가": 1000000, "진단메모": "",
+            "항목": [_item_for(p) for p in products]}
+    payload = build_payload(CLIENT, plan, products)
+    for line in _lines(payload["일정"]):
+        step = line.split(" — ", 1)[1]
+        assert "_" not in step, f"단계에 시트 작성자 메모가 남았다: {line}"
+
+
+def test_duration_note_in_parentheses_is_kept(products):
+    """`(약 1달 기간)` 은 작성자 메모가 아니라 고객이 궁금해하는 기간 정보다.
+    카탈로그 전체에서 괄호가 든 단계는 이 한 줄뿐이고 내용이 기간이라 남긴다.
+    떼는 건 `_` 뒤 메모뿐이다."""
+    lines = _lines(_schedule_of(products, "네이버-블로그_일반_체험단"))
+    assert "블로그 일반 체험단 — 2영업일 후 보고서 (약 1달 기간)" in lines, lines
+
+
+def test_underscore_in_the_product_name_is_untouched(products):
+    """`1세대 블로거 _케케케라인 12팀` 은 **상품명 자체**에 `_` 가 있다.
+    메모를 뗀다고 줄 전체에서 `_` 를 자르면 상품명이 잘려 나간다.
+
+    지금 카탈로그에서 이 상품의 유일한 단계는 `단톡 통해…` 라 통째로 걸리고
+    대체 줄로 바뀌어 메모 제거 경로를 아예 안 탄다. 상품명이 잘릴 수 있는
+    자리는 **살아남은 단계를 렌더할 때**뿐이라, 시트에 고객용 단계가 들어온
+    날을 가정해 프로세스를 갈아 끼우고 그 경로를 지나가게 한다."""
+    catalog, target = _catalog_with_process(
+        products, "네이버-1세대_블로거__케케케라인_12팀", "직접 포스팅")
+    lines = _lines(_schedule_of(catalog, target["id"]))
+    assert set(lines) == {"1세대 블로거 _케케케라인 12팀 — 직접 포스팅"}, lines
+
+
+def test_step_that_is_only_an_author_note_falls_back_to_the_progress_line(products):
+    """메모를 떼고 나니 단계가 통째로 비면, 걸러진 것과 같이 취급해
+    기존 대체 줄(`{상품명} — 진행`) 경로로 넘어간다. `{상품명} — ` 같은
+    꼬리 잘린 줄이 제안서에 나가면 안 된다."""
+    catalog, target = _catalog_with_process(products, "네이버-푸드블로그", "_융통성 있게")
+    lines = _lines(_schedule_of(catalog, target["id"]))
+    assert set(lines) == {"푸드블로그 — 진행"}, lines
+
+
+def test_emptied_step_does_not_add_a_progress_line_when_others_survive(products):
+    """살아남은 단계가 있으면 대체 줄을 붙이지 않는다 — 빈 단계가 생겼다고
+    같은 상품을 두 번 보여주면 안 된다."""
+    catalog, target = _catalog_with_process(
+        products, "네이버-푸드블로그", "직접 포스팅->_융통성 있게")
+    lines = _lines(_schedule_of(catalog, target["id"]))
+    assert set(lines) == {"푸드블로그 — 직접 포스팅"}, lines
+
+
+def test_stripping_the_note_does_not_unblock_an_internal_line(products):
+    """메모를 떼는 건 문구를 다듬는 일이지 방어선을 넓히는 일이 아니다.
+    금칙어가 메모 안에 있었더라도 그 줄은 원문 기준으로 막힌다 — 실패는
+    닫히는 쪽으로."""
+    catalog, target = _catalog_with_process(
+        products, "네이버-푸드블로그", "가이드 준비 _실장님께 알바풀 전달")
+    lines = _lines(_schedule_of(catalog, target["id"]))
+    assert set(lines) == {"푸드블로그 — 진행"}, lines
