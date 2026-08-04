@@ -63,24 +63,37 @@
     return document.getElementById("client-select").value;
   }
 
+  // 저장 계약 — 저장 버튼과 제안서 만들기가 같이 쓴다.
+  //
+  // force=false 로 먼저 시도한다. 서버가 409 를 내면(그 달 기획안이 이미
+  // 있다) 사용자에게 묻고, 승낙했을 때만 force=true 로 덮어쓴다. 묻지 않고
+  // 덮어쓰면 지난달에 확정해 둔 기획안이 소리 없이 사라진다.
+  //
+  // 반환: {saved: true, overwritten: bool} 또는 {saved: false} (사용자가 거절).
+  // 저장 자체가 실패하면 예외를 그대로 던진다 — 부르는 쪽이 문맥에 맞는
+  // 메시지를 붙인다.
+  async function savePlanAskingToOverwrite(plan) {
+    try {
+      await window.API.savePlan(slug(), plan.월, plan, false);
+      return { saved: true, overwritten: false };
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      if (!confirm(`${plan.월} 기획안이 이미 있습니다. 덮어쓸까요?\n지난 기록이 사라집니다.`)) {
+        return { saved: false, overwritten: false };
+      }
+      await window.API.savePlan(slug(), plan.월, plan, true);
+      return { saved: true, overwritten: true };
+    }
+  }
+
   async function save() {
     if (!slug()) { alert("고객사를 먼저 선택하십시오."); return; }
     const plan = currentPlan();
     try {
-      await window.API.savePlan(slug(), plan.월, plan, false);
-      alert(`${plan.월} 기획안을 저장했습니다.`);
+      const r = await savePlanAskingToOverwrite(plan);
+      if (!r.saved) return;
+      alert(r.overwritten ? "덮어썼습니다." : `${plan.월} 기획안을 저장했습니다.`);
     } catch (err) {
-      if (err.status === 409) {
-        if (confirm(`${plan.월} 기획안이 이미 있습니다. 덮어쓸까요?\n지난 기록이 사라집니다.`)) {
-          try {
-            await window.API.savePlan(slug(), plan.월, plan, true);
-            alert("덮어썼습니다.");
-          } catch (err2) {
-            alert(`저장 실패: ${err2.message}`);
-          }
-        }
-        return;
-      }
       alert(`저장 실패: ${err.message}`);
     }
   }
@@ -143,11 +156,17 @@
 
     document.getElementById("make-proposal").addEventListener("click", async () => {
       if (!slug()) { alert("고객사를 먼저 선택하십시오."); return; }
-      const month = document.getElementById("month").value;
+      const plan = currentPlan();
       try {
-        await window.API.savePlan(slug(), month, currentPlan(), true);
-        const r = await window.API.proposal(slug(), month);
-        alert(`제안서를 만들었습니다.\n${r.경로}`);
+        // 제안서는 저장된 기획안을 읽어서 만든다. 그래서 먼저 저장해야
+        // 하는데, 그 저장도 저장 버튼과 같은 계약을 따른다. 사용자가
+        // 덮어쓰기를 거절하면 PDF 도 만들지 않는다 — 거절했는데도 제안서가
+        // 나오면 그 제안서는 화면에 있는 구성이 아니라 예전 기획안으로
+        // 만들어진 물건이라, 들고 나간 사람이 속는다.
+        const r = await savePlanAskingToOverwrite(plan);
+        if (!r.saved) return;
+        const made = await window.API.proposal(slug(), plan.월);
+        alert(`제안서를 만들었습니다.\n${made.경로}`);
       } catch (err) {
         alert(`제안서 생성 실패: ${err.message}`);
       }

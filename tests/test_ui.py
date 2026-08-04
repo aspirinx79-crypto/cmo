@@ -735,6 +735,115 @@ def test_declining_overwrite_confirm_keeps_original_plan(page_with_client):
     assert saved == 1000000, "취소했는데 원본이 덮어써졌다"
 
 
+# --- 제안서 만들기도 저장 계약을 따라야 한다 ---
+# '제안서 만들기' 는 PDF 를 만들기 전에 현재 구성판을 저장한다. 그 저장이
+# force=true 로 무조건 덮어쓰면, 지난달에 확정해 둔 기획안이 확인 한 번 없이
+# 사라진다. 저장 버튼은 이미 409 → confirm 계약을 지키고 있다 — 같아야 한다.
+
+def _save_first_plan(page):
+    """2026-09 기획안을 한 번 저장해 둔다(이후 저장은 409 가 난다)."""
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-09")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+    page.once("dialog", lambda d: d.accept())   # 첫 저장 성공 alert
+    page.click("#save-plan")
+    page.wait_for_timeout(300)
+
+
+def test_make_proposal_asks_before_overwriting_and_aborts_when_declined(page_with_client):
+    """덮어쓰기를 거절하면 기존 기획안이 그대로 남고, PDF 도 만들지 않는다."""
+    page = page_with_client
+    _save_first_plan(page)
+
+    # 실제 PDF 생성(무거운 Playwright 호출)까지 가지 않게 가로챈다. 동시에
+    # "제안서를 만들려고 했는지" 를 세는 계기판이 된다.
+    proposal_calls = {"n": 0}
+
+    def count_and_fulfill(route):
+        proposal_calls["n"] += 1
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"\\uacbd\\ub85c": "fake.pdf"}')
+
+    page.route("**/api/proposal", count_and_fulfill)
+
+    dialogs = []
+
+    def decline(dialog):
+        dialogs.append((dialog.type, dialog.message))
+        dialog.dismiss()
+
+    page.on("dialog", decline)
+    page.fill("#contract-price", "9999999")   # 덮어쓰면 이 값이 남는다
+    page.click("#make-proposal")
+    page.wait_for_timeout(500)
+
+    assert any(t == "confirm" for t, _ in dialogs), (
+        f"덮어쓰기를 묻지 않고 그냥 덮어썼다: {dialogs}")
+    assert proposal_calls["n"] == 0, "덮어쓰기를 거절했는데 제안서를 만들었다"
+    saved = page.evaluate(
+        f"window.API.plan('{CLIENT_SLUG}', '2026-09').then(p => p.계약가)")
+    assert saved == 1000000, "덮어쓰기를 거절했는데 원본이 덮어써졌다"
+
+
+def test_make_proposal_proceeds_after_accepting_overwrite(page_with_client):
+    """거절이 아니라 수락하면 원래대로 저장하고 제안서까지 만든다."""
+    page = page_with_client
+    _save_first_plan(page)
+
+    proposal_calls = {"n": 0}
+
+    def count_and_fulfill(route):
+        proposal_calls["n"] += 1
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"\\uacbd\\ub85c": "fake.pdf"}')
+
+    page.route("**/api/proposal", count_and_fulfill)
+    page.on("dialog", lambda d: d.accept())
+    page.fill("#contract-price", "9999999")
+    page.click("#make-proposal")
+    page.wait_for_timeout(500)
+
+    assert proposal_calls["n"] == 1, "덮어쓰기를 수락했는데 제안서를 안 만들었다"
+    saved = page.evaluate(
+        f"window.API.plan('{CLIENT_SLUG}', '2026-09').then(p => p.계약가)")
+    assert saved == 9999999, "덮어쓰기를 수락했는데 저장이 안 됐다"
+
+
+def test_make_proposal_on_a_fresh_month_does_not_ask(page_with_client):
+    """저장된 게 없는 달이면 물을 것도 없다 — 확인창 없이 바로 만든다."""
+    page = page_with_client
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-11")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+
+    proposal_calls = {"n": 0}
+
+    def count_and_fulfill(route):
+        proposal_calls["n"] += 1
+        route.fulfill(status=200, content_type="application/json",
+                      body='{"\\uacbd\\ub85c": "fake.pdf"}')
+
+    page.route("**/api/proposal", count_and_fulfill)
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append((d.type, d.message)), d.accept()))
+    page.click("#make-proposal")
+    page.wait_for_timeout(500)
+
+    assert proposal_calls["n"] == 1, f"제안서를 만들지 않았다: {dialogs}"
+    assert not any(t == "confirm" for t, _ in dialogs), (
+        f"덮어쓸 게 없는데 확인창을 띄웠다: {dialogs}")
+
+
 def test_copy_to_next_month_carries_items_and_updates_month_field(page_with_client):
     page = page_with_client
     page.select_option("#client-select", CLIENT_SLUG)
