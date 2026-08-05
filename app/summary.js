@@ -134,6 +134,37 @@
 
   window.Summary = { currentPlan };
 
+  /* 프리셋 드롭다운. 실집행에서 반복된 조합을 한 번에 올린다.
+     불러온 뒤에는 그냥 구성판의 항목이라, 빼고 더하는 데 제약이 없다.
+
+     프리셋을 못 읽어도 도구는 열려야 한다. 여기서 예외가 새면
+     DOMContentLoaded 가 통째로 죽어서 고객사 목록까지 안 뜬다 —
+     미팅 자리에서 도구가 빈 화면으로 열리는 게 최악이다. */
+  async function loadPresets() {
+    const select = document.getElementById("preset-select");
+    if (!select) return;
+    let presets;
+    try {
+      presets = await window.API.presets();
+    } catch (err) {
+      const el = document.getElementById("warnings");
+      if (el) el.textContent = `프리셋을 불러오지 못했습니다: ${err.message}`;
+      return;
+    }
+    presets.forEach((p, i) => {
+      const option = document.createElement("option");
+      option.value = String(i);
+      // 출처를 같이 보여준다. "어느 매장에서 실제로 돌린 조합인지" 가
+      // 사장님 앞에서 근거가 된다. 출처 없는 프리셋은 시드가 막는다.
+      option.textContent = `${p.이름} (${p.출처})`;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", (e) => {
+      if (e.target.value === "") return;
+      window.Board.load(presets[Number(e.target.value)].항목);
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", async () => {
     window.Board.onChange(paint);
 
@@ -187,6 +218,7 @@
       }
     });
 
+    await loadPresets();
     await loadClients();
   });
 })();

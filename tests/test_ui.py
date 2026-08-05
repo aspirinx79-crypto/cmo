@@ -913,3 +913,79 @@ def test_long_notice_does_not_take_over_the_card(page_with_long_notice):
     assert notice_box is not None
     assert notice_box["height"] < 150, (
         f"고지사항이 카드 절반을 차지한다: {notice_box}")
+
+
+# --- 프리셋 드롭다운 ---
+# 프리셋은 "실제로 돌려 본 조합" 이다. 미팅에서 백지부터 짜지 않으려고 만들었다.
+# 출처를 라벨에 같이 띄운다 — 사장님 앞에서 "어느 매장에서 돌린 조합인지" 가
+# 근거가 되고, 근거 없는 조합은 그냥 우리 취향이다.
+
+SEED_PRESETS = [
+    {"이름": "기본형 — 플레이스·체험단·먹스타",
+     "출처": "미친양꼬치 대학로점 2026-06",
+     "설명": "가장 많이 쓰인 조합",
+     "항목": [{"상품id": "네이버-블로그_일반_체험단", "수량": 10},
+              {"상품id": "메타-타겟광고", "예산": 200000}]},
+]
+
+
+@pytest.fixture
+def page_with_presets(tmp_data, cmo_dir):
+    (tmp_data / "products.json").write_text(
+        json.dumps(PRODUCTS, ensure_ascii=False), encoding="utf-8")
+    for i, preset in enumerate(SEED_PRESETS, 1):
+        (tmp_data / "presets" / f"{i:02d}.json").write_text(
+            json.dumps(preset, ensure_ascii=False), encoding="utf-8")
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app")
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(url)
+        page.wait_for_selector(".product-row")
+        yield page
+        browser.close()
+    httpd.shutdown()
+
+
+def test_preset_dropdown_lists_presets_with_their_source(page_with_presets):
+    page = page_with_presets
+    # <option> 은 닫힌 <select> 안에서 Playwright 기준 "hidden" 이다.
+    # 보이는지가 아니라 붙었는지를 기다린다.
+    page.wait_for_selector('#preset-select option[value="0"]', state="attached")
+    label = page.locator('#preset-select option[value="0"]').inner_text()
+    assert "기본형" in label
+    assert "미친양꼬치 대학로점 2026-06" in label, (
+        f"출처가 라벨에 없다: {label!r}")
+
+
+def test_choosing_a_preset_loads_it_onto_the_board(page_with_presets):
+    page = page_with_presets
+    # <option> 은 닫힌 <select> 안에서 Playwright 기준 "hidden" 이다.
+    # 보이는지가 아니라 붙었는지를 기다린다.
+    page.wait_for_selector('#preset-select option[value="0"]', state="attached")
+    assert page.locator(".board-card").count() == 0
+
+    page.select_option("#preset-select", "0")
+    page.wait_for_timeout(300)
+
+    ids = page.locator(".board-card").evaluate_all(
+        "els => els.map(e => e.dataset.id)")
+    assert ids == ["네이버-블로그_일반_체험단", "메타-타겟광고"], ids
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    assert card.locator(".qty-input").input_value() == "10"
+
+
+def test_app_still_opens_when_presets_cannot_be_read(page_at):
+    """프리셋을 못 읽어도 고객사 목록과 서랍은 떠야 한다.
+
+    미팅 자리에서 도구가 빈 화면으로 열리는 게 최악이다. 프리셋 로딩이
+    DOMContentLoaded 를 통째로 죽이면 그렇게 된다.
+    """
+    page = page_at
+    page.route("**/api/presets", lambda route: route.fulfill(status=500))
+    page.reload()
+    page.wait_for_selector(".product-row")
+    assert page.locator(".product-row").count() == 3
+    assert page.locator("#client-select").is_visible()
