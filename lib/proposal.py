@@ -141,6 +141,41 @@ AUTHOR_NOTE_MARK = "_"
 # 목록 조정은 상무님 판단 영역이다. 임의로 고치지 말고 보고할 것.
 ONGOING_STEP_WORDS = ("관리", "운영", "보고 및 피드백", " 진행")
 
+# 고지사항에서 걸러낼 내부 문구. 일정표와 목록이 **다르다**.
+#
+# 실제로 만든 PDF 6쪽(고지사항)에 "상위대행사에 마크업 필수" 가 그대로
+# 찍혀 있었다. 네이버 SA·DA, 구글 SA·DA, 유튜브 구글애즈 다섯 상품이 같은
+# 문구를 달고 있다. 한 줄로 두 가지를 알려주는 문장이다 — 우리가 재하청을
+# 준다는 것과, 그 위에 마크업을 붙인다는 것. 마진을 숨기는 방어선을 세 겹
+# 쳐 놓고 정작 "마크업 필수" 를 제안서에 인쇄하고 있었다.
+#
+# 목록이 일정표보다 좁은 이유:
+#   프로세스 열은 상무님이 **실무용**으로 쓴 문장이라 직함·내부 채널이
+#   그대로 나온다. 고지사항은 반대로 **처음부터 고객에게 보여주려고** 쓴
+#   칸이다. 그래서 같은 단어라도 뜻이 다르다 — `서비스툴관리` 의 고지사항에
+#   든 "대표키워드 변경" 은 사람 직함이 아니라 검색어를 말하고,
+#   "단톡에서 얘기해주시면 담당자가 변경" 은 고객에게 하는 약속이다.
+#   일정표 목록을 그대로 가져다 쓰면 이 칸이 통째로 죽는다.
+#
+# 그래서 여기서는 외주 구조와 돈 얘기만 막는다. 직함(`대표`·`이사`·`실장`)과
+# `단톡`·`컨트롤` 은 **일부러 뺐다** — 카탈로그 전수 확인 결과 고지사항에서
+# 이 단어들이 나오는 건 서비스툴관리 한 건뿐이고 전부 고객용 문장이었다.
+#
+# 목록 조정은 상무님 판단 영역이다. 임의로 고치지 말고 보고할 것.
+NOTICE_INTERNAL_WORDS = (
+    # 외주 구조
+    "상위대행사", "대행가", "이관", "외주", "알바풀", "레뷰",
+    # 돈
+    "마크업", "마진", "실비", "원가", "입금요청",
+)
+
+# 고지사항은 ` / ` 로 절을 나눠 쓴다. 절 단위로 거른다.
+#
+# 통째로 버리면 안 된다 — `블로그 프리미엄 체험단` 의 고지사항이
+# "레뷰 충전식으로 진행 / 공정위 문구 고지" 인데, 앞 절 하나 때문에 통째로
+# 지우면 법으로 알려야 하는 공정위 고지까지 우리가 지운 셈이 된다.
+NOTICE_SEP = "/"
+
 
 def _is_internal(text: str) -> bool:
     return any(word in text for word in INTERNAL_STEP_WORDS)
@@ -194,6 +229,21 @@ def _place(out: list[dict], index: int, line: str) -> None:
     for week in range(index, last + 1):
         if line not in out[week]["항목"]:
             out[week]["항목"].append(line)
+
+
+def _client_facing_notice(notice: str) -> str:
+    """고지사항에서 내부 절을 뺀 사본. 남는 절이 없으면 빈 문자열.
+
+    절 단위로 거른다(`NOTICE_SEP`). 한 절이 걸렸다고 고지사항을 통째로
+    버리면 같이 적힌 법적 고지까지 사라진다.
+
+    빈 문자열을 돌려주면 `build_payload` 가 그 고지사항을 아예 안 싣는다.
+    """
+    kept = [
+        part.strip() for part in notice.split(NOTICE_SEP)
+        if part.strip() and not any(w in part for w in NOTICE_INTERNAL_WORDS)
+    ]
+    return " / ".join(kept)
 
 
 def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
@@ -280,7 +330,7 @@ def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
             "수량표시": _quantity_label(product, item),
             "정가": amount["정가"],
         })
-        notice = (product.get("고지사항") or "").strip()
+        notice = _client_facing_notice((product.get("고지사항") or "").strip())
         if notice and notice not in notices:
             notices.append(notice)
 

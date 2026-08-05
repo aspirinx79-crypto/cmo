@@ -493,3 +493,56 @@ def test_identical_lines_are_not_duplicated_within_a_week(products):
     for week in weeks:
         assert len(week["항목"]) == len(set(week["항목"])), \
             f"{week['주차']}주차에 같은 줄이 두 번 있다: {week['항목']}"
+
+
+# --- 고지사항에도 내부 문구가 산다 ---
+# 일정표만 막고 끝낼 일이 아니었다. 실제 PDF 6쪽(고지사항)에
+# "상위대행사에 마크업 필수" 가 그대로 찍혀 있었다 — 네이버/구글 SA·DA 와
+# 유튜브 구글애즈 다섯 상품이 같은 문구를 달고 있다. 재하청 구조와 우리가
+# 마크업을 붙인다는 사실을 한 줄로 알려주는 문장이라, 마진 유출이나 다름없다.
+#
+# 다만 고지사항은 프로세스와 달리 **원래 고객에게 보여주려고 쓴 칸**이다.
+# 그래서 직함·단톡 같은 단어를 여기서 그대로 막으면 안 된다 — 서비스툴관리의
+# 고지사항에 든 "대표키워드 변경", "단톡에서 얘기해주시면 담당자가 변경" 은
+# 고객이 봐야 할 약속이다. 외주 구조·마진 어휘만 막는다.
+
+def _notices_of(products, *ids):
+    client = {"이름": "가게", "스냅샷": []}
+    plan = {"월": "2026-09", "계약가": 1000000,
+            "항목": [{"상품id": i, "수량": 1, "정가": 100000, "실비": 1000,
+                     "예산": 100000, "수량표시": "1식"} for i in ids]}
+    return build_payload(client, plan, products)["고지사항"]
+
+
+def test_notice_does_not_reveal_upstream_agency_or_markup(products):
+    """실제 카탈로그로 검사한다. 이 문구가 있는 상품이 다섯 개다."""
+    ids = [p["id"] for p in products
+           if "상위대행사" in (p.get("고지사항") or "")]
+    assert ids, "카탈로그가 바뀌었다 — 이 테스트의 전제를 다시 보라"
+    for notice in _notices_of(products, *ids):
+        assert "상위대행사" not in notice, f"재하청 구조가 새 나갔다: {notice}"
+        assert "마크업" not in notice, f"마크업이 새 나갔다: {notice}"
+
+
+def test_notice_drops_only_the_internal_clause_not_the_whole_notice(products):
+    """'레뷰 충전식으로 진행 / 공정위 문구 고지' 는 뒤쪽만 남아야 한다.
+
+    공정위 문구 고지는 법적으로 알려야 하는 내용이다. 앞 절 하나 때문에
+    통째로 버리면 지켜야 할 고지를 우리가 지운 셈이 된다.
+    """
+    notices = _notices_of(products, "네이버-블로그_프리미엄_체험단")
+    joined = " ".join(notices)
+    assert "레뷰" not in joined, f"외주처 이름이 남았다: {joined}"
+    assert "공정위" in joined, f"공정위 고지까지 사라졌다: {joined}"
+
+
+def test_notice_keeps_customer_facing_words_that_look_internal(products):
+    """서비스툴관리의 고지사항은 통째로 살아야 한다.
+
+    '대표키워드'·'단톡에서 얘기해주시면' 은 고객에게 하는 약속이다.
+    일정표 필터를 그대로 가져다 쓰면 이 칸이 통째로 죽는다.
+    """
+    notices = _notices_of(products, "네이버-서비스툴관리")
+    joined = " ".join(notices)
+    assert "대표키워드" in joined, f"고객용 고지가 죽었다: {joined}"
+    assert "단톡에서" in joined, f"고객용 고지가 죽었다: {joined}"
