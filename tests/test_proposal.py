@@ -279,14 +279,23 @@ def test_payment_request_step_is_dropped(products):
 # 사실은 남긴다.
 
 def test_fully_filtered_product_shows_a_progress_line(products):
-    """`네이버-서비스툴관리` 는 프로세스가 "단톡방 소통" 한 줄이라 전부 걸린다."""
-    lines = _lines(_schedule_of(products, "네이버-서비스툴관리"))
-    assert lines == ["서비스툴관리 — 진행"], f"기대와 다르다: {lines}"
+    """`네이버-서비스툴관리` 는 프로세스가 "단톡방 소통" 한 줄이라 전부 걸린다.
+
+    대체 줄 `— 진행` 은 "이 상품이 이 달에 돌아간다" 는 뜻이라 한 달 내내
+    도는 단계로 본다(수정 라운드 3, K). 그래서 1~4주차에 모두 선다."""
+    weeks = _schedule_of(products, "네이버-서비스툴관리")
+    assert [w["항목"] for w in weeks] == [["서비스툴관리 — 진행"]] * 4, weeks
 
 
-def test_progress_line_sits_in_the_week_the_first_step_was_in(products):
-    """대체 줄은 아무 데나가 아니라 그 상품의 첫 단계가 놓였을 주차에 들어간다.
-    4주에 걸치는 상품과 같이 담아도 주차가 밀리지 않아야 한다."""
+def test_progress_line_starts_where_the_first_step_was_and_runs_on(products):
+    """대체 줄은 그 상품의 첫 단계가 놓였던 주차에서 시작해 4주차까지 이어진다.
+    4주에 걸치는 상품과 같이 담아도 시작 주차가 밀리지 않아야 한다.
+
+    **이 테스트가 구별하지 못하는 것을 분명히 해 둔다**: `weekly_plan()` 은
+    항목마다 커서를 0으로 되돌리므로(`schedule.py:38`) 어떤 상품이든 첫 단계는
+    언제나 1주차다. 따라서 여기서 뽑은 `expected` 는 늘 1이고, 이 테스트는
+    "첫 단계의 주차를 계산했다" 와 "1주차로 하드코딩했다" 를 갈라내지 못한다.
+    갈라내는 것은 대체 줄이 **엉뚱한 주차**(예: 마지막 주차)에 놓이는 경우다."""
     ids = ("네이버-서비스툴관리", "네이버-블로그_일반_체험단")
     chosen = [p for p in products if p["id"] in ids]
     raw = weekly_plan(products, [_item_for(p) for p in chosen])
@@ -295,7 +304,8 @@ def test_progress_line_sits_in_the_week_the_first_step_was_in(products):
 
     weeks = _schedule_of(products, *ids)
     placed = [w["주차"] for w in weeks if "서비스툴관리 — 진행" in w["항목"]]
-    assert placed == [expected], f"{expected}주차에 있어야 하는데 {placed} 에 있다"
+    assert placed == list(range(expected, 5)), \
+        f"{expected}주차부터 4주차까지 있어야 하는데 {placed} 에 있다"
 
 
 def test_progress_line_is_suppressed_when_the_product_name_is_internal(products):
@@ -412,3 +422,74 @@ def test_stripping_the_note_does_not_unblock_an_internal_line(products):
         products, "네이버-푸드블로그", "가이드 준비 _실장님께 알바풀 전달")
     lines = _lines(_schedule_of(catalog, target["id"]))
     assert set(lines) == {"푸드블로그 — 진행"}, lines
+
+
+# --- '관리'류 단계를 매주 반복 표시 (수정 라운드 3, K) ---
+# 실제로 만든 PDF 에서 1주차 14줄 / 2주차 3줄 / **3주차 0줄** / 4주차 1줄이
+# 나왔다. 85개 단계 중 74개에 기간 정보가 없어 전부 1주차로 몰린 탓이다.
+# 상무님 결정: "관리·운영·진행처럼 한 달 내내 하는 단계는 1~4주차에 모두
+# 표시하고, 나머지 기간 없는 단계만 1주차에 둔다."
+
+def _weeks_holding(weeks: list[dict], line: str) -> list[int]:
+    """그 줄이 정확히 들어 있는 주차 번호들."""
+    return [w["주차"] for w in weeks if line in w["항목"]]
+
+
+def test_ongoing_steps_repeat_through_the_whole_month(products):
+    """`관리`·`통계보며 보고 및 피드백` 은 한 달 내내 도는 단계라 매 주에 선다.
+    1회성인 `소재 세팅` 은 자기 주차에만 남는다."""
+    weeks = _schedule_of(products, "네이버-SA")
+    assert _weeks_holding(weeks, "SA — 관리") == [1, 2, 3, 4], weeks
+    assert _weeks_holding(weeks, "SA — 통계보며 보고 및 피드백") == [1, 2, 3, 4], weeks
+    assert _weeks_holding(weeks, "SA — 소재 세팅") == [1], weeks
+
+
+def test_one_off_steps_do_not_repeat(products):
+    """`파티진행` 은 하루짜리 행사다. 1~4주차에 매주 세워 두면 거짓말이 된다.
+    키워드를 `" 진행"`(앞 공백 포함)으로 잡는 이유가 바로 이 줄이다 —
+    `배너 진행`·`소재 비즈톡 진행` 은 잡고 `파티진행` 은 안 잡는다."""
+    weeks = _schedule_of(products, "IMC-상생_먹스타_파티")
+    assert _weeks_holding(weeks, "상생 먹스타 파티 — 파티진행") == [1], weeks
+    assert _weeks_holding(weeks, "상생 먹스타 파티 — 미팅 및 실사") == [1], weeks
+
+
+def test_ongoing_check_looks_at_the_step_not_the_product_name(products):
+    """반복 여부는 **단계**만 보고 정한다. 상품명까지 보면 `운영대행 — 미팅`
+    (상품명에 `운영`)처럼 하루짜리 단계가 매주 반복돼 거짓말이 된다."""
+    weeks = _schedule_of(products, "인스타-운영대행")
+    assert _weeks_holding(weeks, "운영대행 — 운영대행") == [1, 2, 3, 4], weeks
+    assert _weeks_holding(weeks, "운영대행 — 미팅") == [1], weeks
+    assert _weeks_holding(weeks, "운영대행 — 컨셉 및 기획 회의") == [1], weeks
+
+
+def test_repeated_lines_are_still_filtered_for_internal_wording(products):
+    """반복으로 늘어난 줄에도 내부 문구 필터가 그대로 걸려야 한다.
+
+    `1세대 블로거 _케케케라인 12팀` 의 유일한 단계 `단톡 통해 일정 조율 및
+    진행` 은 반복 키워드(`" 진행"`)에도 걸리고 금칙어(`단톡`)에도 걸린다.
+    필터를 반복보다 뒤에 걸면 `단톡` 이 네 번 인쇄된다."""
+    weeks = _schedule_of(products, "네이버-1세대_블로거__케케케라인_12팀")
+    blob = json.dumps(weeks, ensure_ascii=False)
+    assert "단톡" not in blob, blob
+    assert _weeks_holding(weeks, "1세대 블로거 _케케케라인 12팀 — 진행") == [1, 2, 3, 4], weeks
+
+
+def test_a_realistic_plan_fills_every_week(products):
+    """K 가 고치는 실제 증상. 이 구성으로 만든 PDF 의 3주차가 통째로 비어
+    "3주차엔 아무것도 안 하네" 로 읽혔다."""
+    weeks = _schedule_of(products,
+                         "네이버-블로그_일반_체험단", "네이버-서비스툴관리",
+                         "포털-언론송출", "네이버-SA", "유튜브-유튜버_PPL",
+                         "IMC-CMO_서비스")
+    for week in weeks:
+        assert week["항목"], f"{week['주차']}주차가 비었다: {weeks}"
+
+
+def test_identical_lines_are_not_duplicated_within_a_week(products):
+    """`네이버-SA` 와 `구글-SA` 는 상품명·단계가 글자까지 같다. 같은 주에 같은
+    줄이 두 번 찍히면 고객 눈에는 그냥 중복 오타다. 반복까지 하면 네 주 내내
+    두 줄씩 늘어난다."""
+    weeks = _schedule_of(products, "네이버-SA", "구글-SA")
+    for week in weeks:
+        assert len(week["항목"]) == len(set(week["항목"])), \
+            f"{week['주차']}주차에 같은 줄이 두 번 있다: {week['항목']}"

@@ -112,9 +112,48 @@ FALLBACK_STEP = "진행"
 # (뒤집는다면 `_without_author_note` 에 괄호 제거 한 줄을 더하면 된다).
 AUTHOR_NOTE_MARK = "_"
 
+# 한 달 내내 도는 단계 — 놓인 주차부터 4주차까지 매 주에 반복해 보여준다.
+#
+# `schedule.weekly_plan()` 은 프로세스 문장에 적힌 일수로만 주차를 잡는데,
+# 카탈로그 85개 단계 중 74개에 일수가 없고 항목마다 커서가 0으로 리셋된다
+# (`schedule.py:38`). 그래서 실제로 만든 PDF 가 1주차 14줄 / 2주차 3줄 /
+# **3주차 0줄** / 4주차 1줄로 나왔다. 사장님 눈에는 "3주차엔 아무것도 안 하네"
+# 다. 상무님 결정: "관리·운영·진행처럼 한 달 내내 하는 단계는 1~4주차에 모두
+# 표시하고, 나머지 기간 없는 단계만 1주차에 둔다."
+#
+#   `관리` — `관리`(SA·DA·구글애즈 5개 상품), `수시 관리`, `월별 관리`.
+#      광고 계정 운용은 월 단위로 계속 돈다.
+#   `운영` — `운영대행`. 한 달 내내 계정을 돌리는 게 상품 자체다.
+#   `보고 및 피드백` — `통계보며 보고 및 피드백`(5개 상품). 통계는 매주 본다.
+#      `보고` 만 쓰면 `파워매체 — 게시 및 보고`(1회 게시 후 보고)까지 걸린다.
+#   `" 진행"` — **앞 공백이 핵심이다.** `배너 진행`(2개)·`소재 비즈톡 진행`,
+#      그리고 단계가 전부 걸린 상품의 대체 줄 `{상품명} — 진행` 을 잡는다.
+#      앞 공백이 있어야 `상생 먹스타 파티 — 파티진행` 을 **일부러 안 잡는다** —
+#      파티는 하루짜리 행사라 1~4주차에 매주 세워 두면 거짓말이 된다.
+#
+# 검사는 **단계 부분에만** 건다(상품명 제외, `_is_ongoing` 참고). 렌더된 줄
+# 전체로 검사하면 `운영대행 — 미팅`(상품명에 `운영`) 같은 하루짜리 단계가
+# 매주 반복돼 역시 거짓말이 된다.
+#
+# 안 걸리는 것도 전수로 확인했다: `타겟광고 — 타겟광고`(상품명이 단계로 반복된
+# 경우)는 1주차에만 남는다 — 허용.
+#
+# 목록 조정은 상무님 판단 영역이다. 임의로 고치지 말고 보고할 것.
+ONGOING_STEP_WORDS = ("관리", "운영", "보고 및 피드백", " 진행")
+
 
 def _is_internal(text: str) -> bool:
     return any(word in text for word in INTERNAL_STEP_WORDS)
+
+
+def _is_ongoing(step: str) -> bool:
+    """이 단계가 한 달 내내 도는 종류인가. 단계만 본다 — 상품명은 안 본다.
+
+    단계 앞에 공백 하나를 붙여 검사한다. 렌더된 줄에서 단계 앞에는 언제나
+    `" — "` 의 공백이 오므로, `" 진행"` 처럼 앞 공백을 붙인 키워드가 단계의
+    첫 단어(대체 줄의 `진행`)에도 똑같이 걸린다.
+    """
+    return any(word in f" {step}" for word in ONGOING_STEP_WORDS)
 
 
 def _product_of(line: str) -> str:
@@ -123,6 +162,11 @@ def _product_of(line: str) -> str:
     `schedule.weekly_plan()` 이 f"{상품명} — {단계}" 로 만든다. 앞부분만 본다.
     """
     return line.split(LINE_SEP, 1)[0]
+
+
+def _step_of(line: str) -> str:
+    """일정표 한 줄에서 단계만 떼어 낸다. 상품명은 버린다."""
+    return line.partition(LINE_SEP)[2]
 
 
 def _without_author_note(line: str) -> str:
@@ -137,6 +181,19 @@ def _without_author_note(line: str) -> str:
         return line
     step = step.split(AUTHOR_NOTE_MARK, 1)[0].strip()
     return f"{name}{LINE_SEP}{step}" if step else ""
+
+
+def _place(out: list[dict], index: int, line: str) -> None:
+    """줄을 `index` 주차에 넣는다. 한 달 내내 도는 단계면 4주차까지 이어 붙인다.
+
+    같은 주에 글자까지 같은 줄이 두 번 들어가지 않게 한다. `네이버-SA` 와
+    `구글-SA` 처럼 상품명·단계가 똑같은 상품이 있어서, 둘을 같이 팔면 고객
+    눈에는 같은 줄이 두 번 찍힌 오타로 보인다(반복까지 하면 네 주 내내).
+    """
+    last = len(out) - 1 if _is_ongoing(_step_of(line)) else index
+    for week in range(index, last + 1):
+        if line not in out[week]["항목"]:
+            out[week]["항목"].append(line)
 
 
 def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
@@ -171,7 +228,12 @@ def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
     방어선을 넓히는 일이 아니다. 금칙어가 메모 안에 있었더라도 그 줄은 안
     내보낸다 — 실패는 닫히는 쪽으로.
 
-    빈 주차는 빈 채로 둔다 — 서식이 '—' 로 렌더한다.
+    한 달 내내 도는 단계(`ONGOING_STEP_WORDS`)는 놓인 주차부터 4주차까지
+    반복해 넣는다(`_place`). 반복은 **필터를 통과한 줄에만** 건다 — 걸린 줄은
+    애초에 `_place` 까지 오지 않으므로, 반복으로 늘어난 줄에도 내부 문구
+    필터가 그대로 적용된다.
+
+    남는 빈 주차는 빈 채로 둔다 — 서식이 '—' 로 렌더한다.
     """
     kept: dict[str, int] = {}
     for week in weeks:
@@ -182,21 +244,19 @@ def _client_facing_schedule(weeks: list[dict]) -> list[dict]:
             kept[name] = kept.get(name, 0) + (1 if survives else 0)
 
     seen: set[str] = set()
-    out = []
-    for week in weeks:
-        items = []
+    out: list[dict] = [{"주차": week["주차"], "항목": []} for week in weeks]
+    for index, week in enumerate(weeks):
         for line in week["항목"]:
             name = _product_of(line)
             first = name not in seen
             seen.add(name)
             shown = _without_author_note(line)
             if shown and not _is_internal(line):
-                items.append(shown)
+                _place(out, index, shown)
             elif first and kept[name] == 0:
                 fallback = f"{name}{LINE_SEP}{FALLBACK_STEP}"
                 if not _is_internal(fallback):
-                    items.append(fallback)
-        out.append({"주차": week["주차"], "항목": items})
+                    _place(out, index, fallback)
     return out
 
 
