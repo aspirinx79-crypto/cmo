@@ -1,2 +1,6 @@
 # 카톡 원문 — 개인정보 포함. 저장소에 올리지 않는다.
 data/_raw_kakao/
+
+# API 키 실값. 이름표는 .env.example 에만 둔다.
+.env
+.env.local
