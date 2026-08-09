@@ -3,7 +3,7 @@ import threading
 import time
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from cmo.lib.storage import Store
 from cmo.server import serve
@@ -1327,3 +1327,84 @@ def test_revenue_field_returns_when_unhidden(page_at, no_network):
     page_at.click("#edit-client")
     page_at.wait_for_selector("#client-panel:not([hidden])")
     assert page_at.locator("#f-revenue").is_visible()
+
+
+# ── 기존 매장 편집 ────────────────────────────────────────────
+# open(slug) 는 패널을 먼저 빈 값으로 연 뒤(fill({})), 서버 응답이 와야
+# 실제 값을 채운다(fill(await window.API.client(slug))). 그래서
+# "#client-panel:not([hidden])" 만 기다리면 패널은 보이지만 칸은 아직
+# 비어 있을 수 있다 — 그 직후 값을 단언하거나 입력하면 뒤이어 도착하는
+# fill() 이 덮어써 간헐적으로 깨진다. expect(...).to_have_value(...) 로
+# 데이터 도착 자체를 기다린 뒤에 단언/입력한다. 단언 내용 자체는 브리프
+# 그대로다 — 기다리는 대상만 고쳤다.
+
+def test_edit_button_prefills_saved_values(page_at, no_network):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.fill("#f-category", "고깃집")
+    page_at.fill("#f-size", "60")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    page_at.click("#panel-close")
+
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("하루인 인계점")
+    assert page_at.locator("#f-category").input_value() == "고깃집"
+    assert page_at.locator("#f-size").input_value() == "60"
+    assert "매장 정보" in page_at.locator("#panel-title").inner_text()
+
+
+def test_edit_panel_metrics_are_unlocked(page_at, no_network):
+    """이미 저장된 매장이니 지표칸이 처음부터 열려 있어야 한다."""
+    _register(page_at)
+    page_at.click("#panel-close")
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    # #metrics 자체(FIELDSET)는 Playwright 가 네이티브 비활성 태그로 치지
+    # 않아 is_disabled() 가 항상 False 다. 자손 입력칸 #f-revenue 로
+    # 확인한다 — 조상 fieldset 의 disabled 를 정확히 반영한다.
+    assert not page_at.locator("#f-revenue").is_disabled()
+
+
+def test_edit_keeps_snapshots(page_at, tmp_data, no_network):
+    """폼에 없는 스냅샷을 저장이 지우면 수집 이력이 사라진다."""
+    _register(page_at)
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#rank-rows .rank-input", "17")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+    page_at.click("#panel-close")
+
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("하루인 인계점")
+    page_at.fill("#f-category", "고깃집")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert len(saved["스냅샷"]) == 1
+    assert saved["업종"] == "고깃집"
+
+
+def test_edit_does_not_duplicate_dropdown_entries(page_at, no_network):
+    _register(page_at)
+    page_at.click("#panel-close")
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    options = page_at.locator("#client-select option").all_inner_texts()
+    assert options.count("하루인 인계점") == 1
+
+
+def test_edit_without_selection_warns(page_at):
+    page_at.on("dialog", lambda d: d.accept())
+    page_at.click("#edit-client")
+    page_at.wait_for_timeout(200)
+    assert not page_at.locator("#client-panel").is_visible()
