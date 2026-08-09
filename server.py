@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from cmo.lib.pricing import summarize
-from cmo.lib.storage import PlanExists, Store
+from cmo.lib.storage import ClientExists, PlanExists, Store
 
 CMO = Path(__file__).resolve().parent
 
@@ -164,6 +164,9 @@ def make_handler(store: Store, app_dir: Path):
                 if path == "/api/collect":
                     return self._collect(store, body)
 
+                if path == "/api/clients":
+                    return self._json({"slug": store.client_create(body)}, 201)
+
                 m = CLIENT_RE.match(path)
                 if m:
                     store.client_write(m.group(1), body)
@@ -184,6 +187,8 @@ def make_handler(store: Store, app_dir: Path):
                     except PlanExists as exc:
                         return self._json({"오류": str(exc)}, 409)
                     return self._json({"저장": f"{m.group(1)}/{m.group(2)}"})
+            except ClientExists as exc:
+                return self._json({"오류": str(exc)}, 409)
             except (ValueError, KeyError) as exc:
                 return self._json({"오류": str(exc)}, 400)
             except FileNotFoundError as exc:

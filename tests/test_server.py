@@ -215,3 +215,51 @@ def test_static_cannot_escape_into_sibling_dir_sharing_name_prefix(tmp_data, tmp
     finally:
         httpd.shutdown()
         thread.join(timeout=5)
+
+
+NEW_CLIENT = {
+    "이름": "우된장 교대본점", "플레이스URL": "", "업종": "", "지역": "",
+    "평수": None, "객단가": None, "계약시작": "2026-09", "상태": "진행중",
+    "추적키워드": [], "스냅샷": [], "메모": "",
+}
+
+
+def test_create_client_returns_201_with_slug(server):
+    status, body = _post(server, "/api/clients", NEW_CLIENT)
+    assert status == 201
+    assert body["slug"] == "우된장_교대본점"
+
+
+def test_created_client_is_readable(server):
+    _post(server, "/api/clients", NEW_CLIENT)
+    status, body = _get(server, "/api/clients/우된장_교대본점")
+    assert status == 200
+    assert body["이름"] == "우된장 교대본점"
+    assert body["slug"] == "우된장_교대본점"
+
+
+def test_created_client_appears_in_list(server):
+    _post(server, "/api/clients", NEW_CLIENT)
+    _, body = _get(server, "/api/clients")
+    assert [c["slug"] for c in body] == ["우된장_교대본점"]
+
+
+def test_create_client_without_name_returns_400(server):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/clients", {**NEW_CLIENT, "이름": "  "})
+    assert exc.value.code == 400
+
+
+def test_create_duplicate_client_returns_409(server):
+    _post(server, "/api/clients", NEW_CLIENT)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/clients", NEW_CLIENT)
+    assert exc.value.code == 409
+
+
+def test_editing_an_existing_client_still_overwrites(server):
+    """등록은 막지만 편집은 계속 덮어쓸 수 있어야 한다."""
+    _post(server, "/api/clients", NEW_CLIENT)
+    _post(server, "/api/clients/우된장_교대본점", {**NEW_CLIENT, "업종": "한식"})
+    _, body = _get(server, "/api/clients/우된장_교대본점")
+    assert body["업종"] == "한식"
