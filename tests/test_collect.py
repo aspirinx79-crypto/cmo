@@ -371,7 +371,8 @@ def test_collect_without_place_url_returns_readable_400(server, monkeypatch):
     status, body = _post_error(server, "/api/collect", {"slug": "URL없음"})
 
     assert status == 400
-    assert body["오류"] == "플레이스 URL이 없습니다. 고객사 정보에 먼저 등록하십시오."
+    assert "플레이스 URL이 없습니다" in body["오류"]
+    assert "플레이스 함께 수집" in body["오류"]
     assert calls == []
 
 
@@ -385,7 +386,7 @@ def test_collect_failure_returns_502_without_leaking_details(server, monkeypatch
     status, body = _post_error(server, "/api/collect", {"slug": "하루인_인계점"})
 
     assert status == 502
-    assert "수동" in body["오류"]
+    assert "플레이스 함께 수집" in body["오류"]
     assert SENSITIVE not in json.dumps(body, ensure_ascii=False)
 
 

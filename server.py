@@ -31,6 +31,13 @@ CONTENT_TYPES = {
     ".woff2": "font/woff2",
 }
 
+# 수집이 막혔을 때 사용자가 다음에 할 일을 메시지에 적는다. 막다른 길로
+# 끝나는 오류는 "도구가 고장났다"로 읽히고, 그러면 손으로 JSON 을 고치러
+# 간다 — 이 패널을 만든 이유가 사라진다.
+_ESCAPE = "「플레이스 함께 수집」을 끄고 다시 저장하면 손으로 넣은 값만 저장됩니다."
+ESCAPE_HATCH_NO_URL = f"플레이스 URL이 없습니다. 매장 정보에 먼저 등록하십시오. {_ESCAPE}"
+ESCAPE_HATCH_FAILED = f"플레이스 수집에 실패했습니다. {_ESCAPE}"
+
 
 def make_handler(store: Store, app_dir: Path):
     class Handler(BaseHTTPRequestHandler):
@@ -73,27 +80,30 @@ def make_handler(store: Store, app_dir: Path):
             순위·예상매출은 본문으로 받는다. 애드로그 엔드포인트가 아직
             추정값이고 오픈업은 자동 수집을 하지 않기 때문이다.
 
-            실패해도 400/404/502 로 사람이 읽을 수 있게 돌려준다 — 여기서
-            멈추면 미팅 자료를 손으로 채우면 그만이다.
+            `플레이스수집: false` 면 플레이스를 건너뛰고 손으로 넣은 값만
+            저장한다. 네이버가 화면을 바꾸는 날은 오는데, 그때 수집이
+            막힌다고 순위·매출까지 못 넣으면 신규 매장을 아예 등록할 수
+            없다. 실패는 빨간 줄 하나로 끝나야 한다.
+
+            세 출처는 한 스냅샷에 함께 묶인다. 나눠 저장하면 나중에 두
+            시점을 비교할 때 축이 어긋난다.
             """
             from cmo.lib.collect import append_snapshot, fetch_place, make_snapshot
 
             slug = body["slug"]                 # 없으면 KeyError → 400
             client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
 
-            url = (client.get("플레이스URL") or "").strip()
-            if not url:
-                return self._json(
-                    {"오류": "플레이스 URL이 없습니다. 고객사 정보에 먼저 등록하십시오."},
-                    400)
-
-            try:
-                place = fetch_place(url)
-            except Exception as exc:
-                # 예외 원문에는 URL·페이지 내용이 섞인다. 원문은 콘솔에만 남긴다.
-                print(f"[플레이스] {slug} 수집 실패: {exc!r}", file=sys.stderr)
-                return self._json(
-                    {"오류": "플레이스 수집에 실패했습니다. 수동으로 입력하십시오."}, 502)
+            place = {}
+            if body.get("플레이스수집", True):
+                url = (client.get("플레이스URL") or "").strip()
+                if not url:
+                    return self._json({"오류": ESCAPE_HATCH_NO_URL}, 400)
+                try:
+                    place = fetch_place(url)
+                except Exception as exc:
+                    # 예외 원문에는 URL·페이지 내용이 섞인다. 원문은 콘솔에만 남긴다.
+                    print(f"[플레이스] {slug} 수집 실패: {exc!r}", file=sys.stderr)
+                    return self._json({"오류": ESCAPE_HATCH_FAILED}, 502)
 
             snapshot = make_snapshot(place, body.get("순위") or [],
                                      body.get("예상매출"))

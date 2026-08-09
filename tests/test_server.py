@@ -263,3 +263,120 @@ def test_editing_an_existing_client_still_overwrites(server):
     _post(server, "/api/clients/우된장_교대본점", {**NEW_CLIENT, "업종": "한식"})
     _, body = _get(server, "/api/clients/우된장_교대본점")
     assert body["업종"] == "한식"
+
+
+def _fake_place(monkeypatch, calls):
+    from cmo.lib import collect
+
+    def fake(url, timeout_ms=15000):
+        calls.append(url)
+        return {"매장명": "우된장", "플레이스URL": url,
+                "방문자리뷰": 312, "블로그리뷰": 14, "저장수": 88}
+
+    monkeypatch.setattr(collect, "fetch_place", fake)
+
+
+def _boom_place(monkeypatch):
+    from cmo.lib import collect
+
+    def fake(url, timeout_ms=15000):
+        raise RuntimeError("네이버가 화면을 바꿨다")
+
+    monkeypatch.setattr(collect, "fetch_place", fake)
+
+
+MANUAL_BODY = {
+    "slug": "우된장_교대본점",
+    "순위": [{"키워드": "교대 된장찌개", "순위": 17}],
+    "예상매출": {"월매출": 42000000, "상권순위": "상위 40%",
+               "출처": "오픈업", "입력방식": "수동"},
+}
+
+
+def test_collect_without_flag_still_fetches_place(server, monkeypatch):
+    """기존 호출은 그대로 돌아야 한다. 키가 없으면 True 로 본다."""
+    calls = []
+    _fake_place(monkeypatch, calls)
+    _post(server, "/api/clients",
+                 {**NEW_CLIENT, "플레이스URL": "https://m.place.naver.com/restaurant/1"})
+
+    status, snapshot = _post(server, "/api/collect", MANUAL_BODY)
+
+    assert status == 200
+    assert len(calls) == 1
+    assert snapshot["플레이스"]["블로그리뷰"] == 14
+
+
+def test_collect_with_flag_false_skips_place(server, monkeypatch):
+    calls = []
+    _fake_place(monkeypatch, calls)
+    _post(server, "/api/clients",
+                 {**NEW_CLIENT, "플레이스URL": "https://m.place.naver.com/restaurant/1"})
+
+    status, snapshot = _post(server, "/api/collect",
+                             {**MANUAL_BODY, "플레이스수집": False})
+
+    assert status == 200
+    assert calls == [], "플레이스수집이 False 인데 네트워크를 탔다"
+    assert snapshot["플레이스"] == {"방문자리뷰": None, "블로그리뷰": None, "저장수": None}
+
+
+def test_collect_with_flag_false_keeps_manual_values(server, monkeypatch):
+    """플레이스를 건너뛰어도 손으로 넣은 값은 그대로 저장돼야 한다."""
+    _boom_place(monkeypatch)
+    _post(server, "/api/clients", NEW_CLIENT)
+
+    _post(server, "/api/collect", {**MANUAL_BODY, "플레이스수집": False})
+
+    _, client = _get(server, "/api/clients/우된장_교대본점")
+    snapshot = client["스냅샷"][0]
+    assert snapshot["순위"][0]["순위"] == 17
+    assert snapshot["예상매출"]["상권순위"] == "상위 40%"
+    assert snapshot["수집시각"]
+
+
+def test_collect_with_flag_false_works_without_place_url(server, monkeypatch):
+    """URL 이 없어도 수동 지표만으로 저장된다. 400 이 아니다."""
+    _boom_place(monkeypatch)
+    _post(server, "/api/clients", NEW_CLIENT)  # 플레이스URL 빈 문자열
+
+    status, _ = _post(server, "/api/collect", {**MANUAL_BODY, "플레이스수집": False})
+
+    assert status == 200
+
+
+def test_collect_failure_message_tells_how_to_escape(server, monkeypatch):
+    """502 메시지가 막다른 길로 끝나면 안 된다."""
+    _boom_place(monkeypatch)
+    _post(server, "/api/clients",
+                 {**NEW_CLIENT, "플레이스URL": "https://m.place.naver.com/restaurant/1"})
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/collect", MANUAL_BODY)
+
+    assert exc.value.code == 502
+    detail = json.loads(exc.value.read().decode("utf-8"))
+    assert "플레이스 함께 수집" in detail["오류"]
+
+
+def test_collect_missing_url_message_tells_how_to_escape(server, monkeypatch):
+    _fake_place(monkeypatch, [])
+    _post(server, "/api/clients", NEW_CLIENT)  # URL 빈 문자열
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/collect", MANUAL_BODY)
+
+    assert exc.value.code == 400
+    detail = json.loads(exc.value.read().decode("utf-8"))
+    assert "플레이스 함께 수집" in detail["오류"]
+
+
+def test_collect_appends_instead_of_replacing(server, monkeypatch):
+    _boom_place(monkeypatch)
+    _post(server, "/api/clients", NEW_CLIENT)
+
+    _post(server, "/api/collect", {**MANUAL_BODY, "플레이스수집": False})
+    _post(server, "/api/collect", {**MANUAL_BODY, "플레이스수집": False})
+
+    _, client = _get(server, "/api/clients/우된장_교대본점")
+    assert len(client["스냅샷"]) == 2
