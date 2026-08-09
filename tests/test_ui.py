@@ -1049,7 +1049,10 @@ def test_saving_with_name_only_succeeds(page_at):
     page_at.click("#new-client")
     page_at.fill("#f-name", "하루인 인계점")
     page_at.click("#save-client")
-    page_at.wait_for_selector("#metrics:not([disabled])")
+    # #metrics 잠금 해제(lock(false))는 동기라 reloadClients 가 끝나기
+    # 전에도 이미 풀려 있다. #client-msg.ok 는 reloadClients 가 끝난
+    # 뒤에만 찍히므로 이걸 기다려야 여기서 읽는 메시지가 확정된 값이다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
     assert "하루인 인계점" in page_at.locator("#client-msg").inner_text()
 
 
@@ -1057,7 +1060,11 @@ def test_saved_client_appears_in_dropdown(page_at):
     page_at.click("#new-client")
     page_at.fill("#f-name", "하루인 인계점")
     page_at.click("#save-client")
-    page_at.wait_for_selector("#metrics:not([disabled])")
+    # 드롭다운은 saveClient() 의 reloadClients(editingSlug) 가 채운다.
+    # #metrics 잠금 해제는 그보다 먼저(동기) 일어나므로 그것만 기다리면
+    # reloadClients 가 아직 안 끝난 채로 옵션을 읽어 간헐적으로 빈다.
+    # reloadClients 완료 뒤에만 찍히는 #client-msg.ok 를 기다린다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
     options = page_at.locator("#client-select option").all_inner_texts()
     assert "하루인 인계점" in options
 
@@ -1066,7 +1073,8 @@ def test_saved_client_is_selected_in_dropdown(page_at):
     page_at.click("#new-client")
     page_at.fill("#f-name", "하루인 인계점")
     page_at.click("#save-client")
-    page_at.wait_for_selector("#metrics:not([disabled])")
+    # 위와 같은 이유 — 선택값도 reloadClients 가 끝나야 확정된다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
     assert page_at.locator("#client-select").input_value() == "하루인_인계점"
 
 
@@ -1178,9 +1186,12 @@ def test_registering_new_client_clears_board(page_at, no_network):
     page_at.click("#new-client")
     page_at.fill("#f-name", "새 가게")
     page_at.click("#save-client")
-    page_at.wait_for_selector("#metrics:not([disabled])")
+    # 구성판을 비우는 Board.load([]) 는 reloadClients 안쪽, 네트워크 왕복
+    # 두 번 뒤에 실행된다. #metrics 잠금 해제만 기다리면 그 전에 읽는다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
 
-    assert page_at.locator(".board-card").count() == 0
+    # 단언도 폴링하는 쪽으로 — 인과적으로 옳은 대기 + 재시도하는 단언.
+    expect(page_at.locator(".board-card")).to_have_count(0)
 
 
 def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network):
@@ -1218,7 +1229,10 @@ def _register(page, name="하루인 인계점", keyword="인계동 삼겹살"):
         page.fill("#f-keyword", keyword)
         page.click("#add-keyword")
     page.click("#save-client")
-    page.wait_for_selector("#metrics:not([disabled])")
+    # #metrics 잠금 해제는 동기라 reloadClients 가 끝나기 전에 이미 풀린다.
+    # #client-msg.ok 는 reloadClients 완료 뒤에만 찍히므로 더 늦고 안전한
+    # 조건이고, 지표 칸이 열린 것도 함께 보장한다.
+    page.wait_for_selector("#client-msg.ok:not(:empty)")
 
 
 def test_rank_rows_follow_keywords(page_at):
