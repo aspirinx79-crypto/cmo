@@ -16,6 +16,10 @@ class PlanExists(Exception):
     """이미 있는 월 기획안을 덮어쓰려 했다."""
 
 
+class ClientExists(Exception):
+    """이미 있는 매장을 새로 만들려 했다."""
+
+
 def slugify(name: str) -> str:
     cleaned = FORBIDDEN_RE.sub("_", (name or "").strip())
     cleaned = cleaned.replace(" ", "_")
@@ -91,6 +95,20 @@ class Store:
 
     def client_write(self, slug: str, data: dict) -> None:
         _write(self._client_dir(slug) / "client.json", data)
+
+    def client_create(self, data: dict) -> str:
+        """이름에서 slug 를 만들어 새 폴더를 연다. 이미 있으면 거부한다.
+
+        덮어쓰기를 막는 이유는 plan_write 와 같다. 「우된장」을 두 번
+        등록하면 첫 매장에 쌓인 스냅샷 이력이 통째로 사라진다. 기존
+        매장을 고치는 건 client_write(편집) 쪽 일이다.
+        """
+        slug = slugify(data.get("이름", ""))
+        path = self._client_dir(slug) / "client.json"
+        if path.exists():
+            raise ClientExists(f"같은 이름의 매장이 이미 있습니다: {data.get('이름')}")
+        _write(path, {**data, "slug": slug})
+        return slug
 
     # --- 월 기획안 ---
     def _plan_path(self, slug: str, month: str) -> Path:

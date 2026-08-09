@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from cmo.lib.storage import PlanExists, Store, slugify
+from cmo.lib.storage import ClientExists, PlanExists, Store, slugify
 
 CLIENT = {
     "이름": "하루인 인계점", "업종": "고깃집", "지역": "수원 인계동",
@@ -179,3 +179,69 @@ def test_rejected_slug_does_not_escape_data_dir(tmp_data):
     assert not (escaped_target / "client.json").exists()
     # 정상 clients 폴더 내부에도 새 항목이 생기지 않았는지 확인
     assert list((tmp_data / "clients").iterdir()) == []
+
+
+NEW_CLIENT = {
+    "이름": "하루인 인계점", "플레이스URL": "", "업종": "", "지역": "",
+    "평수": None, "객단가": None, "계약시작": "2026-09", "상태": "진행중",
+    "추적키워드": [], "스냅샷": [], "메모": "",
+}
+
+
+def test_client_create_returns_slug(tmp_data):
+    store = Store(tmp_data)
+    assert store.client_create(NEW_CLIENT) == "하루인_인계점"
+
+
+def test_client_create_writes_slug_into_the_file(tmp_data):
+    """폴더 이름과 파일 안의 slug 가 어긋나면 화면이 못 찾는다."""
+    store = Store(tmp_data)
+    slug = store.client_create(NEW_CLIENT)
+    assert store.client_read(slug)["slug"] == "하루인_인계점"
+
+
+def test_client_create_keeps_korean_name(tmp_data):
+    store = Store(tmp_data)
+    slug = store.client_create({**NEW_CLIENT, "이름": "함바그또카레야"})
+    assert slug == "함바그또카레야"
+    assert store.client_read(slug)["이름"] == "함바그또카레야"
+
+
+def test_client_create_strips_forbidden_characters(tmp_data):
+    store = Store(tmp_data)
+    slug = store.client_create({**NEW_CLIENT, "이름": '미친양꼬치/방이점:2호*'})
+    assert slug == "미친양꼬치_방이점_2호"
+
+
+def test_client_create_refuses_duplicate(tmp_data):
+    store = Store(tmp_data)
+    store.client_create(NEW_CLIENT)
+    with pytest.raises(ClientExists):
+        store.client_create(NEW_CLIENT)
+
+
+def test_client_create_duplicate_does_not_touch_existing_snapshots(tmp_data):
+    """두 번째 등록이 첫 매장의 수집 이력을 지우면 안 된다."""
+    store = Store(tmp_data)
+    slug = store.client_create(NEW_CLIENT)
+    saved = store.client_read(slug)
+    saved["스냅샷"] = [{"수집시각": "2026-08-09T10:00:00", "플레이스": {"블로그리뷰": 14}}]
+    store.client_write(slug, saved)
+
+    with pytest.raises(ClientExists):
+        store.client_create({**NEW_CLIENT, "업종": "고깃집"})
+
+    after = store.client_read(slug)
+    assert len(after["스냅샷"]) == 1
+    assert after["업종"] == ""
+
+
+def test_client_create_empty_name_raises_value_error(tmp_data):
+    with pytest.raises(ValueError):
+        Store(tmp_data).client_create({**NEW_CLIENT, "이름": "   "})
+
+
+def test_client_create_shows_up_in_clients_list(tmp_data):
+    store = Store(tmp_data)
+    store.client_create(NEW_CLIENT)
+    assert [c["slug"] for c in store.clients()] == ["하루인_인계점"]
