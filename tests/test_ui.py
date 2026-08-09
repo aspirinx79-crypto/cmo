@@ -993,6 +993,24 @@ def test_app_still_opens_when_presets_cannot_be_read(page_at):
 
 # ── 매장 준비 패널 ────────────────────────────────────────────────
 
+@pytest.fixture
+def no_network_t4(monkeypatch):
+    """cmo.lib.collect.fetch_place 를 예외로 갈아끼운다. 이 아래 테스트들은
+    지표 저장(#save-metrics)까지 가지 않지만, 실수로 그 경로를 타더라도
+    실제 Playwright 브라우저를 새로 띄워 네트워크에 나가지 않게 막는
+    안전장치다.
+
+    이름을 no_network 가 아니라 no_network_t4 로 둔 이유: Task 5 에서 같은
+    역할의 fixture 를 no_network 라는 이름으로 추가할 예정이라, 이름이
+    겹치면 나중에 그 fixture 정의가 이걸 덮어써 버린다."""
+    import cmo.lib.collect as collect
+
+    def _boom(url, timeout_ms=15000):
+        raise RuntimeError("이 테스트에서는 네트워크 접근이 막혀 있다")
+
+    monkeypatch.setattr(collect, "fetch_place", _boom)
+
+
 def test_panel_is_closed_at_start(page_at):
     assert not page_at.locator("#client-panel").is_visible()
 
@@ -1018,9 +1036,14 @@ def test_meeting_screen_survives_panel(page_at):
 
 
 def test_metrics_are_locked_before_saving(page_at):
-    """수집은 저장된 매장을 서버가 읽어야 돌아간다. 순서를 화면이 보여준다."""
+    """수집은 저장된 매장을 서버가 읽어야 돌아간다. 순서를 화면이 보여준다.
+
+    #metrics 자체가 아니라 그 안의 입력칸(#f-revenue)을 본다 — Playwright
+    의 is_disabled() 는 FIELDSET 을 네이티브 비활성 태그로 치지 않아
+    fieldset 자신을 물으면 disabled 속성이 있어도 항상 False 를 돌려준다.
+    자손 입력칸은 조상 fieldset 의 disabled 를 정확히 반영한다."""
     page_at.click("#new-client")
-    assert page_at.locator("#metrics").is_disabled()
+    assert page_at.locator("#f-revenue").is_disabled()
 
 
 def test_saving_with_name_only_succeeds(page_at):
@@ -1084,15 +1107,24 @@ def test_saving_without_name_shows_message_and_stays_open(page_at):
     page_at.wait_for_timeout(300)
     assert page_at.locator("#client-panel").is_visible()
     assert page_at.locator("#client-msg").inner_text().strip() != ""
-    assert page_at.locator("#metrics").is_disabled()
+    assert page_at.locator("#f-revenue").is_disabled()
 
 
 def test_duplicate_name_shows_message(page_at):
-    for _ in range(2):
-        page_at.click("#new-client")
-        page_at.fill("#f-name", "하루인 인계점")
-        page_at.click("#save-client")
-        page_at.wait_for_timeout(400)
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_timeout(400)
+
+    # 백드롭은 클릭을 막는다(제품 요구사항) — 다시 #new-client 를 누르려면
+    # 먼저 패널을 닫아야 한다.
+    page_at.click("#panel-close")
+
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_timeout(400)
+
     assert "이미" in page_at.locator("#client-msg").inner_text()
 
 
@@ -1121,3 +1153,32 @@ def test_keywords_are_saved(page_at, tmp_data):
         (tmp_data / "clients" / "하루인_인계점" / "client.json")
         .read_text(encoding="utf-8"))
     assert saved["추적키워드"] == ["인계동 삼겹살"]
+
+
+def test_metrics_fields_reset_between_clients(page_at, no_network_t4):
+    """앞 매장의 월매출이 다음 매장에 남으면 안 된다."""
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "가게 하나")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    page_at.fill("#f-revenue", "42000000")
+    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.click("#panel-close")
+
+    page_at.click("#new-client")
+    assert page_at.locator("#f-revenue").input_value() == ""
+    assert page_at.locator("#f-market-rank").input_value() == ""
+    assert page_at.locator("#f-fetch-place").is_checked()
+
+
+def test_registering_new_client_clears_board(page_at, no_network_t4):
+    """새 매장을 등록했는데 구성판에 앞 매장 항목이 남으면 안 된다."""
+    page_at.click('.product-row[data-id="네이버-블로그_일반_체험단"] .add-btn')
+    page_at.wait_for_selector(".board-card")
+
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "새 가게")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    assert page_at.locator(".board-card").count() == 0

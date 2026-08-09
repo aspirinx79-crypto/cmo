@@ -135,6 +135,30 @@
       select.appendChild(option);
     }
     select.value = selectSlug || keep || "";
+    // select.value 대입은 change 이벤트를 내지 않는다. 드롭다운만 새 매장을
+    // 가리키고 구성판은 앞 매장인 상태를 직접 막는다.
+    if (selectSlug) await loadClientPlan(selectSlug);
+  }
+
+  // 고객사를 바꾸면 그 매장의 최신 기획안을 올린다.
+  // 기획안이 없는 매장(방금 등록한 신규)이면 구성판을 비운다 — 앞 매장 항목이
+  // 남은 채로 저장하면 A 매장 기획안이 B 매장 밑에 저장된다.
+  async function loadClientPlan(slug) {
+    if (!slug) return;
+    try {
+      const months = await window.API.planMonths(slug);
+      if (!months.length) {
+        window.Board.load([]);
+        return;
+      }
+      const plan = await window.API.plan(slug, months[0]);
+      document.getElementById("month").value = plan.월;
+      document.getElementById("contract-price").value = plan.계약가;
+      window.Board.load(plan.항목);
+    } catch (err) {
+      const el = document.getElementById("warnings");
+      if (el) el.textContent = `기획안을 불러오지 못했습니다: ${err.message}`;
+    }
   }
 
   window.Summary = {
@@ -212,19 +236,8 @@
       }
     });
 
-    document.getElementById("client-select").addEventListener("change", async (e) => {
-      if (!e.target.value) return;
-      try {
-        const months = await window.API.planMonths(e.target.value);
-        if (!months.length) return;
-        const plan = await window.API.plan(e.target.value, months[0]);
-        document.getElementById("month").value = plan.월;
-        document.getElementById("contract-price").value = plan.계약가;
-        window.Board.load(plan.항목);
-      } catch (err) {
-        const el = document.getElementById("warnings");
-        if (el) el.textContent = `기획안을 불러오지 못했습니다: ${err.message}`;
-      }
+    document.getElementById("client-select").addEventListener("change", (e) => {
+      loadClientPlan(e.target.value);
     });
 
     await loadPresets();

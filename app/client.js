@@ -75,6 +75,15 @@
     paintKeywords();
     paintRankRows();
     paintLastSnapshot(client);
+
+    // 지표 칸은 매장마다 새로 입력한다. 앞 매장 값이 남아 있으면
+    // saveMetrics() 가 그걸 다음 매장에 그대로 얹는다 — #f-revenue 는
+    // .manual-cost 라 가리기가 켜져 있으면 안 보이는 채로 남의 매장에
+    // 저장된다.
+    el("f-market-rank").value = "";
+    el("f-revenue").value = "";
+    el("f-keyword").value = "";
+    el("f-fetch-place").checked = true;
   }
 
   function paintLastSnapshot(client) {
@@ -104,19 +113,8 @@
   }
 
   function lock(disabled) {
-    const box = el("metrics");
-    if (disabled) {
-      box.setAttribute("disabled", "");
-      // <fieldset disabled> real 로 descendant 입력을 막지만, Playwright 의
-      // is_disabled() 는 FIELDSET 을 네이티브 비활성 태그 목록(BUTTON,
-      // INPUT, SELECT, TEXTAREA, OPTION, OPTGROUP)에 넣지 않는다 — fieldset
-      // 자기 자신을 물으면 disabled 속성이 있어도 false 를 돌려준다.
-      // aria-disabled 를 같이 세워 그 갭을 메운다.
-      box.setAttribute("aria-disabled", "true");
-    } else {
-      box.removeAttribute("disabled");
-      box.setAttribute("aria-disabled", "false");
-    }
+    if (disabled) el("metrics").setAttribute("disabled", "");
+    else el("metrics").removeAttribute("disabled");
   }
 
   async function open(slug) {
@@ -126,6 +124,13 @@
     say("metrics-msg", "");
     // 수집은 서버가 저장된 매장을 읽어야 돈다. 신규는 저장 전까지 잠근다.
     lock(!slug);
+
+    // 실패 메시지를 닫힌 패널 안에 쓰면 사용자에겐 "매장 정보" 가 죽은
+    // 버튼으로 보인다. 성공/실패 어느 쪽이든 패널은 연다.
+    el("client-panel").removeAttribute("hidden");
+    // 가리기가 켜진 상태로 패널을 열면 월매출칸이 그대로 보인다.
+    // 규칙이 화면마다 다르면 그게 사고가 된다.
+    window.Summary.applyConcealment();
 
     if (slug) {
       try {
@@ -137,11 +142,6 @@
     } else {
       fill({});
     }
-
-    el("client-panel").removeAttribute("hidden");
-    // 가리기가 켜진 상태로 패널을 열면 월매출칸이 그대로 보인다.
-    // 규칙이 화면마다 다르면 그게 사고가 된다.
-    window.Summary.applyConcealment();
   }
 
   function close() {
