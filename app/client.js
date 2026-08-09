@@ -125,10 +125,11 @@
     // 수집은 서버가 저장된 매장을 읽어야 돈다. 신규는 저장 전까지 잠근다.
     lock(!slug);
 
-    // 실패 메시지를 닫힌 패널 안에 쓰면 사용자에겐 "매장 정보" 가 죽은
-    // 버튼으로 보인다. 성공/실패 어느 쪽이든 패널은 연다.
+    // 먼저 비우고 연다. 서버 응답을 기다리는 사이 앞 매장 값이 보이면
+    // 미팅 자리에서 B 사장님에게 A 매장 정보를 보이는 셈이 된다.
+    fill({});
     el("client-panel").removeAttribute("hidden");
-    // 가리기가 켜진 상태로 패널을 열면 월매출칸이 그대로 보인다.
+    // 가리기가 켜진 상태로 열면 월매출칸이 그대로 보인다.
     // 규칙이 화면마다 다르면 그게 사고가 된다.
     window.Summary.applyConcealment();
 
@@ -139,8 +140,8 @@
         say("client-msg", `매장 정보를 불러오지 못했습니다: ${err.message}`);
         return;
       }
-    } else {
-      fill({});
+      // fill() 이 #f-revenue 를 다시 그리므로 가리기를 재적용한다.
+      window.Summary.applyConcealment();
     }
   }
 

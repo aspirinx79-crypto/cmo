@@ -1182,3 +1182,26 @@ def test_registering_new_client_clears_board(page_at, no_network_t4):
     page_at.wait_for_selector("#metrics:not([disabled])")
 
     assert page_at.locator(".board-card").count() == 0
+
+
+def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network_t4):
+    """서버 응답을 기다리는 사이 앞 매장 값이 보이면 안 된다."""
+    import re
+
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "가게 하나")
+    page_at.fill("#f-category", "고깃집")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    page_at.click("#panel-close")
+
+    # 매장 정보 응답을 붙잡아 두고(보내지 않고) 패널을 연다.
+    held = []
+    page_at.route(re.compile(r"/api/clients/[^/]+$"), lambda route: held.append(route))
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+
+    assert page_at.locator("#f-name").input_value() == ""
+    assert page_at.locator("#f-category").input_value() == ""
+
+    page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
