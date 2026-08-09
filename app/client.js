@@ -192,10 +192,12 @@
       ? { 월매출, 상권순위, 출처: "오픈업", 입력방식: "수동" }
       : null;
 
-    // ok 를 주지 않는다 — "저장 중…" 은 성공도 실패도 아니다. true 로 두면
-    // #metrics-msg 가 저장 시작과 동시에 ".ok:not(:empty)" 에 걸려, 저장이
-    // 실제로 끝나기 전에 "성공했다"고 기다리는 코드(테스트 포함)를 속인다.
-    say("metrics-msg", "저장 중…");
+    // 저장 중에는 이 칸을 비워 둔다. 화면을 기다리는 쪽이 .ok 와 :not(.ok)
+    // 로 이 칸의 모든 상태를 나눠 갖고 있어서, 중간 문구를 넣으면 어느
+    // 쪽이든 저장이 끝나기 전에 걸린다. 진행 중임은 버튼을 잠가 알린다.
+    say("metrics-msg", "");
+    const button = el("save-metrics");
+    button.disabled = true;
     try {
       await window.API.collect({
         slug: editingSlug,
@@ -207,6 +209,8 @@
       // 서버 메시지에 탈출구가 적혀 있다. 그대로 보여준다.
       say("metrics-msg", err.message);
       return;
+    } finally {
+      button.disabled = false;
     }
     paintLastSnapshot(await window.API.client(editingSlug));
     say("metrics-msg", "지표를 저장했습니다.", true);
