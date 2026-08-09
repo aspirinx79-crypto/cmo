@@ -12,6 +12,8 @@
     <label class="contract">계약가(월)
       <input id="contract-price" type="number" step="10000" value="1000000">
     </label>
+    <button id="new-client" type="button">+ 새 매장</button>
+    <button id="edit-client" type="button">매장 정보</button>
     <span id="warnings"></span>
   </header>
 
@@ -55,10 +57,58 @@
     </section>
   </main>
 
+  <div id="client-panel" hidden>
+    <div class="panel-box">
+      <div class="panel-head">
+        <h2 id="panel-title">새 매장</h2>
+        <button id="panel-close" type="button" aria-label="닫기">×</button>
+      </div>
+
+      <form id="client-form" novalidate>
+        <label>이름 <input id="f-name" required></label>
+        <label>플레이스URL <input id="f-place-url"></label>
+        <label>업종 <input id="f-category"></label>
+        <label>지역 <input id="f-area"></label>
+        <label>평수 <input id="f-size" type="number" min="0"></label>
+        <label>객단가 <input id="f-ticket" type="number" min="0" step="1000"></label>
+        <label>계약시작 <input id="f-start" type="month"></label>
+        <label>상태
+          <select id="f-status">
+            <option>진행중</option>
+            <option>대기</option>
+            <option>종료</option>
+          </select>
+        </label>
+        <div class="keyword-box">
+          <label>추적키워드 <input id="f-keyword"></label>
+          <button id="add-keyword" type="button">추가</button>
+          <ul id="keyword-list"></ul>
+        </div>
+        <p id="client-msg"></p>
+        <button id="save-client" type="submit">저장</button>
+      </form>
+
+      <fieldset id="metrics" disabled>
+        <legend>지표</legend>
+        <label class="checkbox">
+          <input id="f-fetch-place" type="checkbox" checked>
+          플레이스 함께 수집 (15초쯤 걸립니다)
+        </label>
+        <div id="rank-rows"></div>
+        <label>상권순위 <input id="f-market-rank" placeholder="상위 40%"></label>
+        <label>월매출 <input id="f-revenue" type="number" class="manual-cost"></label>
+        <p id="metrics-msg"></p>
+        <button id="save-metrics" type="button">지표 저장</button>
+        <p id="last-snapshot">—</p>
+      </fieldset>
+    </div>
+  </div>
+
   <script src="util.js"></script>
   <script src="api.js"></script>
   <script src="drawer.js"></script>
   <script src="board.js"></script>
   <script src="summary.js"></script>
+  <script src="client.js"></script>
 </body>
 </html>

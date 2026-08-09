@@ -114,7 +114,7 @@
     }
   }
 
-  async function loadClients() {
+  async function loadClients(selectSlug) {
     const select = document.getElementById("client-select");
     let clients;
     try {
@@ -124,15 +124,24 @@
       if (el) el.textContent = `고객사 목록을 불러오지 못했습니다: ${err.message}`;
       return;
     }
+    // 매장을 새로 등록하면 이 함수가 다시 불린다. 비우지 않으면 같은
+    // 매장이 두 번 쌓인다.
+    const keep = select.value;
+    select.innerHTML = '<option value="">고객사 선택…</option>';
     for (const c of clients) {
       const option = document.createElement("option");
       option.value = c.slug;
       option.textContent = c.이름;
       select.appendChild(option);
     }
+    select.value = selectSlug || keep || "";
   }
 
-  window.Summary = { currentPlan };
+  window.Summary = {
+    currentPlan,
+    reloadClients: loadClients,
+    applyConcealment: applyBoardConcealment,
+  };
 
   /* 프리셋 드롭다운. 실집행에서 반복된 조합을 한 번에 올린다.
      불러온 뒤에는 그냥 구성판의 항목이라, 빼고 더하는 데 제약이 없다.

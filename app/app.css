@@ -109,3 +109,59 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 body.hide-internal label:has(> .manual-cost) {
   display: none;
 }
+
+/* ── 매장 준비 패널 ──────────────────────────────────────────
+   미팅 화면 위에 덮는다. 뒤의 3단은 그대로 살아 있고 닫으면 돌아온다. */
+#topbar button {
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); cursor: pointer;
+}
+#client-panel {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(20, 24, 31, .45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto;
+  /* 배경(먹배경) 자체는 클릭을 먹지 않는다 — #topbar 의 새 매장/매장 정보
+     버튼은 이 오버레이 아래 깔려 있는데, 패널이 열려 있어도 그 버튼을
+     다시 눌러 폼을 초기화할 수 있어야 한다(연달아 두 매장을 등록하는
+     흐름). 실제 클릭을 받는 건 .panel-box 뿐이다. */
+  pointer-events: none;
+}
+#client-panel[hidden] { display: none; }
+.panel-box {
+  width: 520px; max-width: 100%;
+  background: var(--bg); border-radius: 10px; padding: 18px;
+  pointer-events: auto;
+}
+.panel-head { display: flex; align-items: center; margin-bottom: 12px; }
+.panel-head h2 { font-size: 16px; margin: 0; }
+#panel-close { margin-left: auto; border: none; background: none;
+               font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
+
+#client-form, #metrics { display: grid; gap: 8px; }
+#client-form label, #metrics label {
+  display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center;
+}
+#client-form input, #client-form select,
+#metrics input:not([type="checkbox"]) {
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+}
+#metrics label.checkbox { grid-template-columns: auto 1fr; }
+.keyword-box { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
+.keyword-box label { grid-column: 1; }
+#keyword-list { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0; }
+#keyword-list li { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+#keyword-list button { border: none; background: none; cursor: pointer; color: var(--muted); }
+
+#metrics { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#metrics[disabled] { opacity: .5; }
+#metrics legend { font-size: 12px; color: var(--muted); }
+.rank-row { grid-template-columns: 1fr 80px; }
+
+#save-client, #save-metrics {
+  padding: 9px; border-radius: 6px; cursor: pointer;
+  background: var(--accent); color: #fff; border: 1px solid var(--accent); font-weight: 700;
+}
+#client-msg, #metrics-msg { margin: 0; font-size: 13px; color: var(--danger); min-height: 1em; }
+#client-msg.ok, #metrics-msg.ok { color: var(--muted); }
+#last-snapshot { margin: 0; font-size: 12px; color: var(--muted); }

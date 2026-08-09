@@ -989,3 +989,135 @@ def test_app_still_opens_when_presets_cannot_be_read(page_at):
     page.wait_for_selector(".product-row")
     assert page.locator(".product-row").count() == 3
     assert page.locator("#client-select").is_visible()
+
+
+# ── 매장 준비 패널 ────────────────────────────────────────────────
+
+def test_panel_is_closed_at_start(page_at):
+    assert not page_at.locator("#client-panel").is_visible()
+
+
+def test_new_client_button_opens_panel(page_at):
+    page_at.click("#new-client")
+    assert page_at.locator("#client-panel").is_visible()
+    assert "새 매장" in page_at.locator("#panel-title").inner_text()
+
+
+def test_close_button_hides_panel(page_at):
+    page_at.click("#new-client")
+    page_at.click("#panel-close")
+    assert not page_at.locator("#client-panel").is_visible()
+
+
+def test_meeting_screen_survives_panel(page_at):
+    """패널을 열고 닫아도 3단 화면은 그대로 있어야 한다."""
+    page_at.click("#new-client")
+    page_at.click("#panel-close")
+    for sel in ("#drawer", "#board", "#summary"):
+        assert page_at.locator(sel).is_visible()
+
+
+def test_metrics_are_locked_before_saving(page_at):
+    """수집은 저장된 매장을 서버가 읽어야 돌아간다. 순서를 화면이 보여준다."""
+    page_at.click("#new-client")
+    assert page_at.locator("#metrics").is_disabled()
+
+
+def test_saving_with_name_only_succeeds(page_at):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    assert "하루인 인계점" in page_at.locator("#client-msg").inner_text()
+
+
+def test_saved_client_appears_in_dropdown(page_at):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    options = page_at.locator("#client-select option").all_inner_texts()
+    assert "하루인 인계점" in options
+
+
+def test_saved_client_is_selected_in_dropdown(page_at):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+    assert page_at.locator("#client-select").input_value() == "하루인_인계점"
+
+
+def test_empty_size_is_saved_as_null_not_zero(page_at, tmp_data):
+    """0평은 제안서에 찍히고 null 은 그 줄이 안 그려진다."""
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["평수"] is None
+    assert saved["객단가"] is None
+    assert saved["업종"] == ""
+
+
+def test_typed_numbers_are_saved_as_numbers(page_at, tmp_data):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.fill("#f-size", "60")
+    page_at.fill("#f-ticket", "18000")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["평수"] == 60
+    assert saved["객단가"] == 18000
+
+
+def test_saving_without_name_shows_message_and_stays_open(page_at):
+    page_at.click("#new-client")
+    page_at.click("#save-client")
+    page_at.wait_for_timeout(300)
+    assert page_at.locator("#client-panel").is_visible()
+    assert page_at.locator("#client-msg").inner_text().strip() != ""
+    assert page_at.locator("#metrics").is_disabled()
+
+
+def test_duplicate_name_shows_message(page_at):
+    for _ in range(2):
+        page_at.click("#new-client")
+        page_at.fill("#f-name", "하루인 인계점")
+        page_at.click("#save-client")
+        page_at.wait_for_timeout(400)
+    assert "이미" in page_at.locator("#client-msg").inner_text()
+
+
+def test_keyword_add_and_remove(page_at):
+    page_at.click("#new-client")
+    page_at.fill("#f-keyword", "인계동 삼겹살")
+    page_at.click("#add-keyword")
+    page_at.fill("#f-keyword", "수원 고깃집")
+    page_at.click("#add-keyword")
+    assert page_at.locator("#keyword-list li").count() == 2
+
+    page_at.locator("#keyword-list li", has_text="수원 고깃집").locator("button").click()
+    assert page_at.locator("#keyword-list li").count() == 1
+    assert "인계동 삼겹살" in page_at.locator("#keyword-list").inner_text()
+
+
+def test_keywords_are_saved(page_at, tmp_data):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.fill("#f-keyword", "인계동 삼겹살")
+    page_at.click("#add-keyword")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["추적키워드"] == ["인계동 삼겹살"]
