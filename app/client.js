@@ -192,7 +192,10 @@
       ? { 월매출, 상권순위, 출처: "오픈업", 입력방식: "수동" }
       : null;
 
-    say("metrics-msg", "저장 중…", true);
+    // ok 를 주지 않는다 — "저장 중…" 은 성공도 실패도 아니다. true 로 두면
+    // #metrics-msg 가 저장 시작과 동시에 ".ok:not(:empty)" 에 걸려, 저장이
+    // 실제로 끝나기 전에 "성공했다"고 기다리는 코드(테스트 포함)를 속인다.
+    say("metrics-msg", "저장 중…");
     try {
       await window.API.collect({
         slug: editingSlug,

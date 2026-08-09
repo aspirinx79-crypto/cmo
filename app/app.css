@@ -105,9 +105,13 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
    그 실비 입력칸이 구성판 카드 안에 있어서 오른쪽 단만 가려서는 원가가
    화면에 그대로 남는다. visibility/opacity 가 아니라 display:none 으로
    렌더 트리에서 빼야 선택·복사·인쇄로도 안 샌다 — 오른쪽 단과 같은 강도.
-   라벨("실비" 텍스트)까지 함께 지우려고 입력칸의 부모 label 을 통째로 뺀다. */
+   라벨("실비" 텍스트)까지 함께 지우려고 입력칸의 부모 label 을 통째로 뺀다.
+
+   !important 가 필요하다 — 매장 준비 패널 안의 라벨은 아래 `#metrics
+   label` 규칙이 ID 선택자를 써서 이 규칙보다 특정도가 높다. !important
+   없이 두면 #f-revenue 라벨은 이 규칙이 있어도 계속 grid 로 보인다. */
 body.hide-internal label:has(> .manual-cost) {
-  display: none;
+  display: none !important;
 }
 
 /* ── 매장 준비 패널 ──────────────────────────────────────────

@@ -994,15 +994,14 @@ def test_app_still_opens_when_presets_cannot_be_read(page_at):
 # ── 매장 준비 패널 ────────────────────────────────────────────────
 
 @pytest.fixture
-def no_network_t4(monkeypatch):
-    """cmo.lib.collect.fetch_place 를 예외로 갈아끼운다. 이 아래 테스트들은
-    지표 저장(#save-metrics)까지 가지 않지만, 실수로 그 경로를 타더라도
-    실제 Playwright 브라우저를 새로 띄워 네트워크에 나가지 않게 막는
-    안전장치다.
+def no_network(monkeypatch):
+    """cmo.lib.collect.fetch_place 를 예외로 갈아끼운다. 플레이스를 부르면
+    실패하게 만들어 테스트가 실제 네트워크로 나가지 않게 막는다.
 
-    이름을 no_network 가 아니라 no_network_t4 로 둔 이유: Task 5 에서 같은
-    역할의 fixture 를 no_network 라는 이름으로 추가할 예정이라, 이름이
-    겹치면 나중에 그 fixture 정의가 이걸 덮어써 버린다."""
+    Task 4 리뷰에서 no_network_t4 라는 이름으로 먼저 생겼다가, Task 5(이
+    파일 하단의 지표 수집 테스트들)가 같은 역할의 fixture 를 필요로 해
+    no_network 로 이름을 바꿨다. 같은 일을 하는 fixture 를 두 벌 두지
+    않으려고 기존 것을 재사용한다."""
     import cmo.lib.collect as collect
 
     def _boom(url, timeout_ms=15000):
@@ -1155,7 +1154,7 @@ def test_keywords_are_saved(page_at, tmp_data):
     assert saved["추적키워드"] == ["인계동 삼겹살"]
 
 
-def test_metrics_fields_reset_between_clients(page_at, no_network_t4):
+def test_metrics_fields_reset_between_clients(page_at, no_network):
     """앞 매장의 월매출이 다음 매장에 남으면 안 된다."""
     page_at.click("#new-client")
     page_at.fill("#f-name", "가게 하나")
@@ -1171,7 +1170,7 @@ def test_metrics_fields_reset_between_clients(page_at, no_network_t4):
     assert page_at.locator("#f-fetch-place").is_checked()
 
 
-def test_registering_new_client_clears_board(page_at, no_network_t4):
+def test_registering_new_client_clears_board(page_at, no_network):
     """새 매장을 등록했는데 구성판에 앞 매장 항목이 남으면 안 된다."""
     page_at.click('.product-row[data-id="네이버-블로그_일반_체험단"] .add-btn')
     page_at.wait_for_selector(".board-card")
@@ -1184,7 +1183,7 @@ def test_registering_new_client_clears_board(page_at, no_network_t4):
     assert page_at.locator(".board-card").count() == 0
 
 
-def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network_t4):
+def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network):
     """서버 응답을 기다리는 사이 앞 매장 값이 보이면 안 된다."""
     import re
 
@@ -1205,3 +1204,126 @@ def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network_t4):
     assert page_at.locator("#f-category").input_value() == ""
 
     page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
+
+
+# ── 지표 수집 ─────────────────────────────────────────────────
+# no_network fixture 는 이 파일 상단(매장 준비 패널 섹션)에 이미 정의돼
+# 있다 — Task 4 리뷰에서 no_network_t4 로 먼저 생겼고, 여기서 같은 이름을
+# 다시 정의하면 fixture 를 두 벌 두는 셈이라 재사용한다.
+
+def _register(page, name="하루인 인계점", keyword="인계동 삼겹살"):
+    page.click("#new-client")
+    page.fill("#f-name", name)
+    if keyword:
+        page.fill("#f-keyword", keyword)
+        page.click("#add-keyword")
+    page.click("#save-client")
+    page.wait_for_selector("#metrics:not([disabled])")
+
+
+def test_rank_rows_follow_keywords(page_at):
+    page_at.click("#new-client")
+    page_at.fill("#f-keyword", "인계동 삼겹살")
+    page_at.click("#add-keyword")
+    page_at.fill("#f-keyword", "수원 고깃집")
+    page_at.click("#add-keyword")
+    assert page_at.locator("#rank-rows .rank-row").count() == 2
+
+    page_at.locator("#keyword-list li", has_text="수원 고깃집").locator("button").click()
+    assert page_at.locator("#rank-rows .rank-row").count() == 1
+
+
+def test_manual_metrics_save_without_place(page_at, tmp_data, no_network):
+    """체크를 끄면 플레이스 없이 손으로 넣은 값만 저장된다."""
+    _register(page_at)
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#rank-rows .rank-input", "17")
+    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    snapshot = saved["스냅샷"][0]
+    assert snapshot["순위"] == [{"키워드": "인계동 삼겹살", "순위": 17}]
+    assert snapshot["예상매출"]["상권순위"] == "상위 40%"
+
+
+def test_place_failure_shows_message_and_screen_survives(page_at, no_network):
+    """네이버가 화면을 바꿔도 패널이 멈춰 서면 안 된다."""
+    _register(page_at)
+    page_at.fill("#f-place-url", "https://m.place.naver.com/restaurant/1")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg:not(.ok):not(:empty)")
+
+    assert "플레이스 함께 수집" in page_at.locator("#metrics-msg").inner_text()
+    assert page_at.locator("#client-panel").is_visible()
+    assert page_at.locator("#save-metrics").is_enabled()
+
+
+def test_retry_after_failure_with_checkbox_off_succeeds(page_at, tmp_data, no_network):
+    """실패 메시지가 알려준 대로 하면 실제로 저장돼야 한다."""
+    _register(page_at)
+    page_at.fill("#f-place-url", "https://m.place.naver.com/restaurant/1")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg:not(.ok):not(:empty)")
+
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#rank-rows .rank-input", "17")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert len(saved["스냅샷"]) == 1
+
+
+def test_last_snapshot_line_updates_after_saving(page_at, no_network):
+    _register(page_at)
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#rank-rows .rank-input", "17")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+    assert "마지막" in page_at.locator("#last-snapshot").inner_text()
+
+
+def test_empty_rank_is_not_saved(page_at, tmp_data, no_network):
+    """안 넣은 순위를 0위로 저장하면 제안서가 거짓말을 한다."""
+    _register(page_at)
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["스냅샷"][0]["순위"] == []
+
+
+def test_hide_button_conceals_revenue_field(page_at, no_network):
+    """가리기는 화면마다 다르게 굴면 안 된다. 월매출칸도 같이 사라진다."""
+    _register(page_at)
+    page_at.click("#panel-close")
+    page_at.click("#hide-internal")
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    assert not page_at.locator("#f-revenue").is_visible()
+
+
+def test_revenue_field_returns_when_unhidden(page_at, no_network):
+    _register(page_at)
+    page_at.click("#panel-close")
+    page_at.click("#hide-internal")
+    page_at.click("#hide-internal")
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    assert page_at.locator("#f-revenue").is_visible()

@@ -23,8 +23,18 @@
     document.querySelectorAll(".manual-cost").forEach((input) => {
       const label = input.closest("label");
       if (!label) return;
-      if (hide) label.setAttribute("hidden", "");
-      else label.removeAttribute("hidden");
+      if (hide) {
+        label.setAttribute("hidden", "");
+        // hidden 속성만으로는 부족하다 — 매장 준비 패널의 라벨은
+        // app.css 의 `#metrics label { display: grid }` 가 ID 선택자라,
+        // [hidden] 이 거는 UA 기본 display:none 을 이겨 버린다(author
+        // 규칙은 특정도와 무관하게 UA 규칙을 항상 이긴다). 인라인
+        // !important 로 직접 꺼야 이 자리에서도 확실히 가려진다.
+        label.style.setProperty("display", "none", "important");
+      } else {
+        label.removeAttribute("hidden");
+        label.style.removeProperty("display");
+      }
     });
   }
 
