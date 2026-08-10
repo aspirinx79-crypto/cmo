@@ -38,6 +38,15 @@ _ESCAPE = "「플레이스 함께 수집」을 끄고 다시 저장하면 손으
 ESCAPE_HATCH_NO_URL = f"플레이스 URL이 없습니다. 매장 정보에 먼저 등록하십시오. {_ESCAPE}"
 ESCAPE_HATCH_FAILED = f"플레이스 수집에 실패했습니다. {_ESCAPE}"
 
+NO_READ_KEY = ("판독에 필요한 키가 없습니다. "
+               "ANTHROPIC_API_KEY 를 환경변수에 넣으십시오.")
+
+
+def _read_document(data, filename, api_key, model=None):
+    """판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다."""
+    from cmo.lib.read_doc import read_document
+    return read_document(data, filename, api_key)
+
 
 def make_handler(store: Store, app_dir: Path):
     class Handler(BaseHTTPRequestHandler):
@@ -110,6 +119,66 @@ def make_handler(store: Store, app_dir: Path):
             store.client_write(slug, append_snapshot(client, snapshot))
             return self._json(snapshot)
 
+        # --- 자료 판독 ---
+        def _read_doc(self, store, body: dict):
+            """파일 한 개를 판독해 돌려준다. **아무것도 저장하지 않는다.**
+
+            판독이 1,082 를 108 로 읽는 날이 온다. 사람이 눈으로 보고
+            저장을 누르기 전까지는 파일이 그대로여야 한다.
+            """
+            import base64 as b64
+
+            from cmo.lib.read_doc import (api_key_from_env, store_mismatch,
+                                          truncation_warning)
+
+            slug = body["slug"]                 # 없으면 KeyError → 400
+            client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
+
+            key = api_key_from_env()
+            if not key:
+                return self._json({"오류": NO_READ_KEY}, 400)
+
+            try:
+                data = b64.b64decode(body["내용"])
+            except Exception:
+                return self._json({"오류": "파일을 읽지 못했습니다."}, 400)
+
+            reading = _read_document(data, body.get("파일명") or "", key)
+
+            mismatch = store_mismatch(reading, client)
+            warnings = [w for w in (truncation_warning(reading),) if w]
+            return self._json({"판독": reading, "경고": warnings,
+                               "저장가능": mismatch is None,
+                               "불일치": mismatch})
+
+        def _apply_doc(self, store, body: dict):
+            """사람이 확인한 판독을 저장한다.
+
+            매장 대조를 **여기서 다시 한다.** 화면이 막았더라도 서버가
+            최종 관문이다.
+
+            들어온 판독을 `parse_reading` 에 다시 통과시킨다 — 화면이 보낸
+            dict 를 그대로 믿고 저장하면 모양 검사를 한 번도 안 거친 값이
+            매장 폴더에 들어간다. 판독 경로에서 통과한 값이면 여기서도
+            그대로 통과하므로 사람에게는 아무 차이가 없다.
+            """
+            from cmo.lib.collect import append_snapshot
+            from cmo.lib.read_doc import (merge_into_client, parse_reading,
+                                          snapshot_from, store_mismatch)
+
+            slug = body["slug"]
+            client = store.client_read(slug)
+            reading = parse_reading(json.dumps(body["판독"], ensure_ascii=False))
+
+            mismatch = store_mismatch(reading, client)
+            if mismatch:
+                return self._json({"오류": mismatch}, 400)
+
+            merged = merge_into_client(client, reading)
+            store.client_write(slug, append_snapshot(merged,
+                                                     snapshot_from(reading)))
+            return self._json({"저장": slug})
+
         # --- 라우팅 ---
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -125,6 +194,10 @@ def make_handler(store: Store, app_dir: Path):
                     return self._json(store.presets())
                 if path == "/api/clients":
                     return self._json(store.clients())
+
+                if path == "/api/read-doc/ready":
+                    from cmo.lib.read_doc import api_key_from_env
+                    return self._json({"준비됨": bool(api_key_from_env())})
 
                 m = CLIENT_RE.match(path)
                 if m:
@@ -173,6 +246,12 @@ def make_handler(store: Store, app_dir: Path):
 
                 if path == "/api/collect":
                     return self._collect(store, body)
+
+                if path == "/api/read-doc":
+                    return self._read_doc(store, body)
+
+                if path == "/api/read-doc/apply":
+                    return self._apply_doc(store, body)
 
                 if path == "/api/clients":
                     return self._json({"slug": store.client_create(body)}, 201)

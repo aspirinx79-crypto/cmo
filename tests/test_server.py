@@ -380,3 +380,120 @@ def test_collect_appends_instead_of_replacing(server, monkeypatch):
 
     _, client = _get(server, "/api/clients/우된장_교대본점")
     assert len(client["스냅샷"]) == 2
+
+
+import base64
+
+READING = {
+    "플레이스ID": "1234567890", "플레이스명": "하루인 인계점",
+    "카테고리": "양꼬치", "방문자리뷰": 312, "블로그리뷰": 14, "저장수": 88,
+    "총키워드": 2, "TOP3": 1, "TOP10": 2,
+    "순위": [{"키워드": "인계동 삼겹살", "순위": 3},
+             {"키워드": "수원 고깃집", "순위": 7}],
+}
+
+
+def _fake_reader(reading):
+    return lambda data, filename, api_key, model=None: dict(reading)
+
+
+def test_read_doc_ready_reports_missing_key(server, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    status, body = _get(server, "/api/read-doc/ready")
+    assert status == 200 and body["준비됨"] is False
+
+
+def test_read_doc_returns_the_reading_without_saving(server, monkeypatch,
+                                                     tmp_data):
+    """판독은 화면을 채우기만 한다. 파일은 그대로여야 한다."""
+    import cmo.server as server_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    monkeypatch.setattr(server_mod, "_read_document", _fake_reader(READING))
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    before = (tmp_data / "clients" / "하루인_인계점" / "client.json").read_text(
+        encoding="utf-8")
+
+    status, body = _post(server, "/api/read-doc", {
+        "slug": "하루인_인계점", "파일명": "종합분석.pdf",
+        "내용": base64.b64encode(b"%PDF-fake").decode("ascii")})
+
+    assert status == 200
+    assert body["판독"]["방문자리뷰"] == 312
+    assert body["저장가능"] is True
+    after = (tmp_data / "clients" / "하루인_인계점" / "client.json").read_text(
+        encoding="utf-8")
+    assert after == before, "판독이 파일을 건드렸다"
+
+
+def test_read_doc_blocks_a_different_store(server, monkeypatch):
+    import cmo.server as server_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    monkeypatch.setattr(server_mod, "_read_document",
+                        _fake_reader({**READING, "플레이스명": "미친양꼬치 잠실점"}))
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+
+    status, body = _post(server, "/api/read-doc", {
+        "slug": "하루인_인계점", "파일명": "종합분석.pdf",
+        "내용": base64.b64encode(b"%PDF-fake").decode("ascii")})
+
+    assert body["저장가능"] is False
+    assert "미친양꼬치 잠실점" in body["불일치"]
+
+
+def test_read_doc_warns_when_the_list_is_truncated(server, monkeypatch):
+    import cmo.server as server_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    monkeypatch.setattr(server_mod, "_read_document",
+                        _fake_reader({**READING, "총키워드": 48}))
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+
+    status, body = _post(server, "/api/read-doc", {
+        "slug": "하루인_인계점", "파일명": "종합분석.pdf",
+        "내용": base64.b64encode(b"%PDF-fake").decode("ascii")})
+
+    assert any("48" in w for w in body["경고"])
+    assert body["저장가능"] is True, "잘림은 저장을 막지 않는다"
+
+
+def test_read_doc_without_key_is_rejected(server, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    try:
+        _post(server, "/api/read-doc", {
+            "slug": "하루인_인계점", "파일명": "a.pdf",
+            "내용": base64.b64encode(b"x").decode("ascii")})
+        assert False, "키 없이 통과했다"
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+
+
+def test_apply_saves_snapshot_and_fills_empty_fields(server, tmp_data):
+    _post(server, "/api/clients/하루인_인계점", {**CLIENT, "플레이스URL": "",
+                                                 "업종": ""})
+    status, _ = _post(server, "/api/read-doc/apply",
+                      {"slug": "하루인_인계점", "판독": READING})
+    assert status == 200
+
+    saved = json.loads((tmp_data / "clients" / "하루인_인계점" / "client.json")
+                       .read_text(encoding="utf-8"))
+    assert len(saved["스냅샷"]) == 1
+    assert saved["스냅샷"][0]["플레이스"]["방문자리뷰"] == 312
+    assert saved["스냅샷"][0]["순위요약"]["총키워드"] == 2
+    assert saved["플레이스URL"].endswith("/1234567890/home")
+    assert saved["업종"] == "양꼬치"
+
+
+def test_apply_checks_the_store_again_on_the_server(server):
+    """화면이 막았더라도 서버가 최종 관문이다."""
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    try:
+        _post(server, "/api/read-doc/apply",
+              {"slug": "하루인_인계점",
+               "판독": {**READING, "플레이스명": "미친양꼬치 잠실점"}})
+        assert False, "다른 매장 판독이 저장됐다"
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        assert "미친양꼬치 잠실점" in json.loads(exc.read().decode("utf-8"))["오류"]
