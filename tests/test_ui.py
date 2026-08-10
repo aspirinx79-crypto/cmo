@@ -1310,6 +1310,9 @@ def test_client_read_failure_disables_save_until_next_success(page_at, no_networ
     expect(page_at.locator("#save-client")).to_be_disabled()
     # 지표 칸도 다시 잠긴다 — 서버가 이 매장을 못 읽었으니 수집도 못 돈다.
     expect(page_at.locator("#f-revenue")).to_be_disabled()
+    # 자료 판독 칸도 같은 이유로 잠겨야 한다 — lock() 이 #metrics 와
+    # #doc 을 함께 맡으므로 여기서도 잠기는지 확인한다.
+    expect(page_at.locator("#doc-file")).to_be_disabled()
 
     page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
     page_at.click("#panel-close")
@@ -1581,6 +1584,9 @@ def test_doc_does_not_show_a_preview(page_at, no_network):
     _doc_routes(page_at)
     _register(page_at)
     _drop(page_at)
+    # 응답이 오기 전에도 img/canvas 는 0개다 — 그건 화면을 한 번도 안 본
+    # 것과 같다. 판독이 실제로 그려진 뒤에 세야 이 테스트가 뭔가를 본다.
+    expect(page_at.locator("#doc-result")).to_contain_text("312")
     expect(page_at.locator("#doc img")).to_have_count(0)
     expect(page_at.locator("#doc canvas")).to_have_count(0)
 
@@ -1613,6 +1619,40 @@ def test_doc_failure_leaves_a_short_message(page_at, no_network):
     _register(page_at)
     _drop(page_at, name="엉뚱한.pdf")
     expect(page_at.locator("#doc-msg")).to_contain_text("애드로그")
+    expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+def test_stale_reading_response_is_discarded_after_store_switch(page_at, no_network):
+    """A 매장에 파일을 놓고 응답을 기다리는 사이 패널을 닫고 다른 매장을
+    열면, 뒤늦게 도착한 A 의 판독값이 그 화면에 그려지면 안 된다.
+
+    서버는 /api/read-doc/apply 에서 매장 대조로 엉뚱한 저장은 막아 준다
+    (Task 3). 그러나 이건 그 앞 단계다 — 저장 전에 이미 A 의 숫자가 B
+    화면에 떠 있는 것 자체가 문제다."""
+    import re
+
+    page_at.route("**/api/read-doc/ready",
+                  lambda r: r.fulfill(status=200, content_type="application/json",
+                                      body=json.dumps({"준비됨": True})))
+    held = []
+    page_at.route(re.compile(r"/api/read-doc$"), lambda route: held.append(route))
+
+    _register(page_at, name="하루인 인계점")
+    # 요청이 실제로 나갈 때까지 기다린다(잠자기 대신 이벤트를 기다린다) —
+    # 그래야 아래에서 patch-close 로 넘어가기 전에 A 의 요청이 붙잡혀 있다.
+    with page_at.expect_request(re.compile(r"/api/read-doc$")):
+        _drop(page_at)
+
+    # 응답이 오기 전에 패널을 닫고 다른 매장을 연다.
+    page_at.click("#panel-close")
+    _register(page_at, name="다른 매장", keyword="다른 키워드")
+
+    # 이제야 A 매장 판독값으로 붙잡아 둔 요청을 채운다.
+    assert len(held) == 1
+    held[0].fulfill(status=200, content_type="application/json",
+                     body=json.dumps(DOC_OK, ensure_ascii=False))
+
+    expect(page_at.locator("#doc-result")).to_be_empty()
     expect(page_at.locator("#apply-doc")).to_be_disabled()
 
 

@@ -116,9 +116,18 @@
     };
   }
 
+  // #metrics(지표)와 #doc(자료 판독)은 같은 생명주기를 산다 — 둘 다
+  // 저장된 매장에서만 켜진다. 규칙을 한 곳에서만 관리한다 — 두 벌로
+  // 나뉘면(open()·saveClient() 에 흩어지면) 한쪽만 고치고 잊는 사고가
+  // 난다(I-5).
   function lock(disabled) {
-    if (disabled) el("metrics").setAttribute("disabled", "");
-    else el("metrics").removeAttribute("disabled");
+    if (disabled) {
+      el("metrics").setAttribute("disabled", "");
+      el("doc").setAttribute("disabled", "");
+    } else {
+      el("metrics").removeAttribute("disabled");
+      el("doc").removeAttribute("disabled");
+    }
   }
 
   async function open(slug) {
@@ -157,12 +166,13 @@
       window.Summary.applyConcealment();
     }
 
-    // 판독도 저장된 매장에서만 된다 — 서버가 매장을 대조해야 하기 때문이다.
+    // 판독 준비 상태(키 유무)는 잠금과 다른 축이라 따로 확인한다 — 잠금
+    // 자체는 lock() 이 #doc 도 함께 맡는다(맨 위 lock(!slug), 실패 시
+    // 아래 lock(true) 를 그대로 탄다).
     // fill() 뒤에 둔다: fill() 이 clearDoc() 을 불러 doc-msg 를 비우므로,
     // 그보다 먼저 메시지를 쓰면 이 자리에서 바로 지워진다(신규 등록도
     // fill({}) 을, 기존 매장 편집은 fill({}) 과 fill(client) 를 두 번
     // 부른다 — 둘 다 지나간 뒤에 써야 남는다).
-    el("doc").toggleAttribute("disabled", !slug);
     try {
       const { 준비됨 } = await window.API.readDocReady();
       el("doc-file").disabled = !준비됨;
@@ -206,11 +216,9 @@
       return;
     }
 
+    // 신규 등록은 open(null) 시점엔 slug 가 없어 #metrics·#doc 이 잠긴
+    // 채로 열렸다. 저장으로 slug 가 생겼으니 lock(false) 로 둘 다 푼다.
     lock(false);
-    // 신규 등록은 open(null) 시점엔 slug 가 없어 #doc 이 잠긴 채로
-    // 열렸다. 저장으로 slug 가 생겼으니 자료 판독 칸도 #metrics 처럼
-    // 여기서 풀어야 한다 — 안 풀면 등록 직후엔 판독을 못 쓴다.
-    el("doc").removeAttribute("disabled");
     await window.Summary.reloadClients(editingSlug);
     say("client-msg", `${data.이름} 을(를) 저장했습니다.`, true);
   }
@@ -302,6 +310,10 @@
   }
 
   async function readDoc(file) {
+    // 응답이 오는 사이 패널이 닫히고 다른 매장이 열리면 editingSlug 가
+    // 바뀐다. 그 시점의 slug 를 잡아 두고, 응답을 적용하기 전에 아직도
+    // 같은 매장인지 다시 확인한다 — 다르면 A 의 판독값이 B 화면에 그려진다.
+    const forSlug = editingSlug;
     say("doc-msg", "");
     el("doc-warn").textContent = "";
     el("doc-result").innerHTML = "";
@@ -314,27 +326,33 @@
         fr.onerror = () => no(new Error("파일을 읽지 못했습니다."));
         fr.readAsDataURL(file);
       });
-      paintReading(await window.API.readDoc({
-        slug: editingSlug, 파일명: file.name,
+      const got = await window.API.readDoc({
+        slug: forSlug, 파일명: file.name,
         내용: String(dataUrl).split(",")[1] || "",
-      }));
+      });
+      if (editingSlug !== forSlug) return;   // 그 사이 매장이 바뀌었다 — 조용히 버린다
+      paintReading(got);
     } catch (err) {
+      if (editingSlug !== forSlug) return;
       say("doc-msg", err.message);
     } finally {
-      el("doc-file").disabled = false;
+      if (editingSlug === forSlug) el("doc-file").disabled = false;
     }
   }
 
   async function applyDoc() {
+    const forSlug = editingSlug;   // readDoc() 과 같은 이유로 잡아 둔다
     const button = el("apply-doc");
     button.disabled = true;
     try {
-      await window.API.applyDoc({ slug: editingSlug, 판독: reading });
+      await window.API.applyDoc({ slug: forSlug, 판독: reading });
+      if (editingSlug !== forSlug) return;
       say("doc-msg", "판독값을 저장했습니다.", true);
       // 판독이 플레이스URL·업종·스냅샷을 바꿨다. 폼을 다시 읽어 온다.
       fill(await window.API.client(editingSlug));
       window.Summary.applyConcealment();
     } catch (err) {
+      if (editingSlug !== forSlug) return;
       say("doc-msg", err.message);
       button.disabled = false;
     }
