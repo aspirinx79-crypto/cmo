@@ -100,11 +100,13 @@ def api_key_from_env() -> str | None:
     return key
 
 
-def _require_https(endpoint: str) -> None:
+def require_https(endpoint: str) -> None:
     """평문 http 로는 요청을 만들지도 않는다.
 
     Bearer 키를 헤더에 싣기 때문에 http 는 곧 키 유출이다. 실패는 닫히는
     쪽으로 — 네트워크를 타기 전에 ValueError 로 끊는다.
+
+    read_doc.py 도 이 규칙을 그대로 쓴다. 같은 함수를 두 벌 두지 않으려고 공개 이름으로 둔다.
     """
     if not (endpoint or "").lower().startswith("https://"):
         raise ValueError(
@@ -113,11 +115,13 @@ def _require_https(endpoint: str) -> None:
         )
 
 
-def _short_error(exc: Exception) -> str:
+def short_error(exc: Exception) -> str:
     """예외를 짧은 사람 말로 바꾼다.
 
     예외 원문에는 URL·응답 본문·매장 정보가 섞여 들어온다. 그게 스냅샷에
     저장되면 그대로 클라이언트 JSON 이 된다. 원문은 stderr 로만 남긴다.
+
+    read_doc.py 도 이 규칙을 그대로 쓴다. 같은 함수를 두 벌 두지 않으려고 공개 이름으로 둔다.
     """
     if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403):
         return AUTH_FAILED
@@ -135,7 +139,7 @@ def fetch_ranks(api_key: str, place_id: str, keywords: list[str]) -> list[dict]:
     키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나 때문에
     아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다.
     """
-    _require_https(ADLOG_ENDPOINT)
+    require_https(ADLOG_ENDPOINT)
 
     out = []
     for kw in keywords:
@@ -152,7 +156,7 @@ def fetch_ranks(api_key: str, place_id: str, keywords: list[str]) -> list[dict]:
         except Exception as exc:  # 실패해도 나머지 키워드는 계속 본다
             print(f"[애드로그] {kw!r} 조회 실패: {exc!r}", file=sys.stderr)
             out.append({"키워드": kw, "순위": None, "지수": None,
-                        "오류": _short_error(exc)})
+                        "오류": short_error(exc)})
     return out
 
 
