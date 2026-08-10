@@ -11,9 +11,15 @@
 판독이 1,082 를 108 로 읽는 날이 온다. 그게 조용히 제안서까지 가면 안 된다.
 그래서 이 모듈은 아무것도 저장하지 않는다.
 """
+import base64
 import json
+import os
 import re
+import sys
+import urllib.request
 from datetime import datetime
+
+from .collect import require_https, short_error
 
 # 판독 결과에서 받아들이는 칸. 화이트리스트다 — 모델이 없는 칸을
 # 지어내도 통과시키지 않는다.
@@ -27,6 +33,46 @@ NOT_ADLOG = "애드로그 종합분석 파일이 아닌 것 같습니다"
 PLACE_URL = "https://m.place.naver.com/restaurant/{}/home"
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
+
+# 평문 http 면 API 키가 헤더째 중간에서 읽힌다.
+ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_VERSION = "2023-06-01"
+MODEL = "claude-sonnet-5"
+KEY_ENV = "ANTHROPIC_API_KEY"
+
+MAX_BYTES = 10 * 1024 * 1024
+MAX_PAGES = 8
+RENDER_DPI = 140
+
+TOO_BIG = "파일이 10MB 를 넘습니다."
+BAD_FILE = "파일을 열지 못했습니다. 애드로그에서 다시 내보내 보십시오."
+
+PROMPT = """이 그림은 애드로그(adlog)의 「플레이스 종합분석」 화면이다.
+아래 JSON 만 출력하라. 설명·인사·코드 울타리를 붙이지 마라.
+
+{
+  "플레이스ID": "화면 상단 검색창과 PLACE 카드의 ID",
+  "플레이스명": "기본정보의 플레이스명",
+  "카테고리": "기본정보의 카테고리",
+  "방문자리뷰": 정수,
+  "블로그리뷰": 정수,
+  "저장수": 정수,
+  "총키워드": 정수,
+  "TOP3": 정수,
+  "TOP10": 정수,
+  "순위": [{"키워드": "문자열", "순위": 정수}]
+}
+
+규칙:
+- 읽을 수 없는 값은 null 로 둬라. 짐작해서 채우지 마라.
+- 방문자리뷰·블로그리뷰·저장수는 「일자별 추이」의 **그래프에서 읽되,
+  세로 축 눈금이 아니라 가장 오른쪽 마지막 점에 붙은 라벨**을 읽어라.
+  축 눈금과 실제 값은 다르다.
+- "순위" 는 「키워드 순위 목록」에 보이는 줄만 담아라. 보이지 않는 줄을
+  지어내지 마라. 목록이 잘려 있으면 잘린 채로 두면 된다.
+- 순위 숫자는 "6위" 처럼 적혀 있다. 숫자만 넣어라.
+- 「급등/급락 키워드」 쪽의 삼각형 숫자는 순위가 아니라 변동폭이다.
+  그건 넣지 마라."""
 
 
 def _num(value) -> int | None:
@@ -163,3 +209,81 @@ def merge_into_client(client: dict, reading: dict) -> dict:
     if category and not (out.get("업종") or "").strip():
         out["업종"] = category
     return out
+
+
+def api_key_from_env() -> str | None:
+    """키를 환경변수에서만 읽는다. 없으면 None 이고, 그러면 판독이 꺼진다.
+
+    키가 없다고 도구가 멈추면 안 된다 — 손입력은 그대로 된다.
+    """
+    return (os.environ.get(KEY_ENV) or "").strip() or None
+
+
+def render_pages(data: bytes, filename: str) -> list[bytes]:
+    """파일을 PNG 바이트 목록으로 바꾼다. **디스크에 쓰지 않는다.**
+
+    애드로그 내보내기는 글자가 0자인 이미지 PDF 라 텍스트 추출이 안 된다.
+    쪽마다 그림으로 렌더해 모델에 보낸다.
+
+    이미지 파일은 그대로 통과시킨다 — 오픈업 캡처가 같은 통로로 들어온다.
+    """
+    if len(data) > MAX_BYTES:
+        raise ValueError(TOO_BIG)
+    if not filename.lower().endswith(".pdf"):
+        return [data]
+
+    import fitz
+
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        print(f"[판독] PDF 열기 실패: {exc!r}", file=sys.stderr)
+        raise ValueError(BAD_FILE) from None
+    try:
+        return [page.get_pixmap(dpi=RENDER_DPI).tobytes("png")
+                for page in list(doc)[:MAX_PAGES]]
+    finally:
+        doc.close()
+
+
+def read_document(data: bytes, filename: str, api_key: str,
+                  model: str = MODEL) -> dict:
+    """파일 한 개를 판독해 정규화된 dict 를 낸다. 아무것도 저장하지 않는다.
+
+    키는 **헤더로만** 보낸다. 본문이나 URL 에 실으면 로그에 남는다.
+
+    호출 실패의 예외 원문에는 요청 헤더가 섞여 들어온다 — 거기에 키가
+    있다. 그래서 원문을 밖으로 내보내지 않는다. stderr 에도 안 찍는다:
+    `collect.short_error()` 가 낸 짧은 말만 ValueError 로 다시 던진다.
+    """
+    require_https(ANTHROPIC_ENDPOINT)
+    pages = render_pages(data, filename)
+
+    content = [{"type": "image",
+                "source": {"type": "base64", "media_type": "image/png",
+                           "data": base64.b64encode(png).decode("ascii")}}
+               for png in pages]
+    content.append({"type": "text", "text": PROMPT})
+
+    body = json.dumps({
+        "model": model,
+        "max_tokens": 8000,
+        "messages": [{"role": "user", "content": content}],
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(ANTHROPIC_ENDPOINT, data=body, headers={
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "content-type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=180) as res:
+            payload = json.loads(res.read().decode("utf-8"))
+    except Exception as exc:
+        # 원문을 print 하지 마라 — 여기에 키가 들어 있다.
+        raise ValueError(f"판독 호출이 실패했습니다({short_error(exc)}).") from None
+
+    text = "".join(block.get("text", "")
+                   for block in (payload.get("content") or [])
+                   if isinstance(block, dict) and block.get("type") == "text")
+    return parse_reading(text)

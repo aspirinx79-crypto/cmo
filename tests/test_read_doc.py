@@ -3,13 +3,20 @@
 여기 테스트는 네트워크도 파일도 타지 않는다. 실고객 PDF 를 픽스처로
 쓰지 않는다 — 아래 값은 전부 지어낸 것이다.
 """
+import io
 import json
+import os
+import urllib.request
+from pathlib import Path
 
+import fitz
 import pytest
 
-from cmo.lib.read_doc import (NOT_ADLOG, merge_into_client, parse_reading,
-                              snapshot_from, store_mismatch,
-                              truncation_warning)
+from cmo.lib.read_doc import (ANTHROPIC_ENDPOINT, MAX_BYTES, MAX_PAGES, MODEL,
+                              NOT_ADLOG, PROMPT, api_key_from_env,
+                              merge_into_client, parse_reading,
+                              read_document, render_pages, snapshot_from,
+                              store_mismatch, truncation_warning)
 
 READING = {
     "플레이스ID": "1234567890",
@@ -136,3 +143,145 @@ def test_merge_does_not_mutate_the_original():
     client = {"이름": "하루인 인계점", "플레이스URL": "", "업종": ""}
     merge_into_client(client, READING)
     assert client["플레이스URL"] == ""
+
+
+def _pdf_bytes(pages: int = 2) -> bytes:
+    """글자 없는 그림 PDF 를 만든다 — 실물과 같은 조건이다."""
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page(width=300, height=400)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_api_key_absent_is_none(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert api_key_from_env() is None
+
+
+def test_endpoint_is_https():
+    assert ANTHROPIC_ENDPOINT.startswith("https://")
+
+
+def test_render_pdf_gives_one_png_per_page():
+    pages = render_pages(_pdf_bytes(2), "플레이스_종합분석.pdf")
+    assert len(pages) == 2
+    assert all(p.startswith(b"\x89PNG") for p in pages)
+
+
+def test_render_caps_page_count():
+    pages = render_pages(_pdf_bytes(MAX_PAGES + 3), "긴.pdf")
+    assert len(pages) == MAX_PAGES
+
+
+def test_render_passes_an_image_through_untouched():
+    png = render_pages(_pdf_bytes(1), "한쪽.pdf")[0]
+    assert render_pages(png, "캡처.png") == [png]
+
+
+def test_render_rejects_a_file_over_the_limit():
+    with pytest.raises(ValueError, match="10MB"):
+        render_pages(b"x" * (MAX_BYTES + 1), "큰.pdf")
+
+
+def test_render_reports_a_broken_pdf_in_human_words():
+    with pytest.raises(ValueError):
+        # 브리프 원문은 `b"%PDF-1.4 깨진파일"` (bytes 리터럴에 비ASCII 문자) —
+        # 파이썬 bytes 리터럴은 ASCII 만 허용해 SyntaxError 가 난다. 같은
+        # 내용을 UTF-8 로 인코딩해 동일한 "깨진 PDF" 의도를 유지한다.
+        render_pages("%PDF-1.4 깨진파일".encode("utf-8"), "깨진.pdf")
+
+
+def test_read_document_sends_key_in_header_and_never_in_body(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        def read(self):
+            return json.dumps({"content": [
+                {"type": "text",
+                 "text": json.dumps(READING, ensure_ascii=False)}]}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["headers"] = dict(req.header_items())
+        seen["body"] = req.data.decode("utf-8")
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    got = read_document(_pdf_bytes(1), "종합분석.pdf", "sk-비밀키")
+
+    assert got["플레이스명"] == "하루인 인계점"
+    assert seen["headers"]["X-api-key"] == "sk-비밀키"
+    assert "sk-비밀키" not in seen["body"]
+    assert "sk-비밀키" not in seen["url"]
+    assert json.loads(seen["body"])["model"] == MODEL
+
+
+def test_prompt_forbids_reading_numbers_off_the_graph_axis():
+    """축 눈금과 마지막 점의 라벨이 다르다. 읽어야 하는 건 라벨이다."""
+    assert "그래프" in PROMPT and "축" in PROMPT
+
+
+def test_key_never_reaches_stderr_even_when_the_call_fails(monkeypatch,
+                                                           capsys):
+    """실패 경로가 키를 흘리는 흔한 자리다.
+
+    urllib 의 예외 문자열에는 요청 정보가 섞여 들어온다. 그걸 그대로
+    print 하면 키가 콘솔에 남고, 콘솔은 화면 공유로 남는다.
+    """
+    import urllib.error
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.full_url, 401, f"bad key {dict(req.header_items())}", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(Exception):
+        read_document(_pdf_bytes(1), "종합분석.pdf", "sk-비밀키")
+
+    out = capsys.readouterr()
+    assert "sk-비밀키" not in out.err
+    assert "sk-비밀키" not in out.out
+
+
+def test_read_document_writes_nothing_to_disk(monkeypatch, tmp_path):
+    """판독한 파일이 어딘가에 남으면 관리할 개인정보가 하나 는다."""
+    class FakeResponse:
+        def read(self):
+            return json.dumps({"content": [
+                {"type": "text",
+                 "text": json.dumps(READING, ensure_ascii=False)}]}).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda req, timeout=None: FakeResponse())
+    monkeypatch.chdir(tmp_path)
+    before = set(tmp_path.rglob("*"))
+    read_document(_pdf_bytes(2), "종합분석.pdf", "키")
+    assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.network
+def test_real_reading_of_an_adlog_export():
+    """실제 애드로그 PDF 로 확인하는 유일한 자리.
+
+    파일은 저장소에 없다(실고객 자료다). 환경변수 ADLOG_SAMPLE_PDF 에
+    경로를 넣고 돌린다. 없으면 건너뛴다.
+    """
+    key = api_key_from_env()
+    path = os.environ.get("ADLOG_SAMPLE_PDF")
+    if not key or not path:
+        pytest.skip("ANTHROPIC_API_KEY 또는 ADLOG_SAMPLE_PDF 가 없다")
+    data = Path(path).read_bytes()
+    got = read_document(data, Path(path).name, key)
+    assert got["플레이스명"], "플레이스명을 못 읽었다"
+    assert got["방문자리뷰"] is not None, "방문자리뷰를 못 읽었다"
+    assert got["순위"], "키워드 순위를 하나도 못 읽었다"
