@@ -12,6 +12,24 @@ from cmo.lib.storage import Store
 
 EXPECTED_CLIENTS = 12
 
+# 카톡 이력에서 뽑아 넣은 12곳. 아래 규칙들은 이 시드에만 적용된다 —
+# 패널로 새로 등록한 매장은 카톡 근거가 없는 게 정상이고, 그걸 요구하면
+# 매장을 하나 넣을 때마다 테스트가 깨진다.
+KAKAO_SEED_SLUGS = {
+    "농우본수원갈비",
+    "로얄피그_한남점",
+    "미친양꼬치_대학로점",
+    "미친양꼬치_방이점",
+    "수서_가원",
+    "우된장_교대본점",
+    "우미회관_종각본점",
+    "지리산꿀통갈비_춘의역점",
+    "통큰바다한상",
+    "하루인_정자본점",
+    "하루인_판교점",
+    "함바그또카레야",
+}
+
 
 def test_all_clients_registered(cmo_dir):
     store = Store(cmo_dir / "data")
@@ -104,8 +122,21 @@ def _seed_texts(cmo_dir):
     return out
 
 
+# 플레이스URL 의 장소 ID 는 10자리 숫자라 계좌번호꼴 검사에 걸린다.
+# 공개 식별자이고 사람이 옮겨 적은 값이 아니므로 스캔 대상에서 뺀다.
+# 나머지 필드는 전부 검사한다 — 메모에 옮겨 적은 번호가 진짜 위험이다.
+def _scrub_place_url(text: str) -> str:
+    data = json.loads(text)
+    if isinstance(data, dict) and "플레이스URL" in data:
+        data["플레이스URL"] = ""
+        return json.dumps(data, ensure_ascii=False)
+    return text
+
+
 def test_seed_carries_no_phone_or_account_numbers(cmo_dir):
     for path, text in _seed_texts(cmo_dir):
+        if path.parent.parent.name == "clients":
+            text = _scrub_place_url(text)
         assert not PHONE_RE.search(text), f"{path.name}: 전화번호꼴 문자열이 있다"
         hit = _account_like(text)
         assert hit is None, f"{path.name}: 계좌번호꼴 숫자열이 있다 ({hit})"
@@ -132,6 +163,8 @@ def test_every_client_records_where_it_came_from(cmo_dir):
     """
     store = Store(cmo_dir / "data")
     for entry in store.clients():
+        if entry["slug"] not in KAKAO_SEED_SLUGS:
+            continue        # 패널로 등록한 매장. 카톡 근거가 없는 게 맞다
         client = store.client_read(entry["slug"])
         메모 = client.get("메모", "")
         assert "카톡 이력에서 등록" in 메모, f"{entry['slug']}: 출처가 없다"
