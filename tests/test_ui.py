@@ -1639,7 +1639,7 @@ def test_stale_reading_response_is_discarded_after_store_switch(page_at, no_netw
 
     _register(page_at, name="하루인 인계점")
     # 요청이 실제로 나갈 때까지 기다린다(잠자기 대신 이벤트를 기다린다) —
-    # 그래야 아래에서 patch-close 로 넘어가기 전에 A 의 요청이 붙잡혀 있다.
+    # 그래야 아래에서 panel-close 로 넘어가기 전에 A 의 요청이 붙잡혀 있다.
     with page_at.expect_request(re.compile(r"/api/read-doc$")):
         _drop(page_at)
 
@@ -1654,6 +1654,51 @@ def test_stale_reading_response_is_discarded_after_store_switch(page_at, no_netw
 
     expect(page_at.locator("#doc-result")).to_be_empty()
     expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+def test_stale_client_readback_after_apply_is_discarded_after_store_switch(page_at, no_network):
+    """applyDoc() 은 저장 요청 뒤 매장 정보를 다시 읽어 폼(fill())에
+    그린다 — 이것도 왕복이라 낡을 수 있다. A 매장에서 「판독값 저장」을
+    누르고 그 재조회 응답을 기다리는 사이 패널을 닫고 B 매장을 열면,
+    뒤늦게 도착한 A 의 매장 정보가 B 의 #f-name 등에 그려지면 안 된다.
+
+    판독 칸과 달리 이 폼은 「저장」 버튼 한 번이면 그대로 파일에
+    들어간다 — 서버의 매장 대조(store_mismatch)는 판독값의 플레이스명만
+    보지 폼의 #f-name 은 보지 않는다."""
+    import re
+
+    page_at.route("**/api/read-doc/ready",
+                  lambda r: r.fulfill(status=200, content_type="application/json",
+                                      body=json.dumps({"준비됨": True})))
+    page_at.route(re.compile(r"/api/read-doc$"),
+                  lambda r: r.fulfill(status=200, content_type="application/json",
+                                      body=json.dumps(DOC_OK, ensure_ascii=False)))
+    page_at.route("**/api/read-doc/apply",
+                  lambda r: r.fulfill(status=200, content_type="application/json",
+                                      body=json.dumps({"저장": "무관"})))
+
+    held = []
+    page_at.route(re.compile(r"/api/clients/[^/]+$"), lambda route: held.append(route))
+
+    _register(page_at, name="하루인 인계점")
+    _drop(page_at)
+    expect(page_at.locator("#apply-doc")).to_be_enabled()
+
+    # 저장 요청 자체는 통과하고, 그 뒤 매장 정보 재조회(GET)가 실제로
+    # 나갈 때까지 기다린다(잠자기 대신 이벤트를 기다린다).
+    with page_at.expect_request(re.compile(r"/api/clients/[^/]+$")):
+        page_at.click("#apply-doc")
+
+    # 재조회 응답이 오기 전에 패널을 닫고 다른 매장을 연다.
+    page_at.click("#panel-close")
+    _register(page_at, name="다른 매장", keyword="다른 키워드")
+
+    # 이제야 A 매장 정보로 붙잡아 둔 재조회 요청을 채운다.
+    assert len(held) == 1
+    held[0].fulfill(status=200, content_type="application/json",
+                     body=json.dumps({"이름": "하루인 인계점"}, ensure_ascii=False))
+
+    expect(page_at.locator("#f-name")).to_have_value("다른 매장")
 
 
 def test_place_fetch_is_off_by_default(page_at, no_network):

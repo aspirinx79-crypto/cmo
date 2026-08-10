@@ -349,7 +349,12 @@
       if (editingSlug !== forSlug) return;
       say("doc-msg", "판독값을 저장했습니다.", true);
       // 판독이 플레이스URL·업종·스냅샷을 바꿨다. 폼을 다시 읽어 온다.
-      fill(await window.API.client(editingSlug));
+      // 여기도 왕복이다 — 기다리는 사이 매장이 또 바뀔 수 있으니 같은
+      // 검사를 한 번 더 건다. forSlug 로 요청해 처음부터 끝까지 "내가
+      // 요청한 그 매장" 하나만 본다.
+      const client = await window.API.client(forSlug);
+      if (editingSlug !== forSlug) return;
+      fill(client);
       window.Summary.applyConcealment();
     } catch (err) {
       if (editingSlug !== forSlug) return;
