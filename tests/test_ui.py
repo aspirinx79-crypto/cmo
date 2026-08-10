@@ -1170,17 +1170,21 @@ def test_typed_numbers_are_saved_as_numbers(page_at, tmp_data):
 def test_saving_without_name_shows_message_and_stays_open(page_at):
     page_at.click("#new-client")
     page_at.click("#save-client")
-    page_at.wait_for_timeout(300)
-    assert page_at.locator("#client-panel").is_visible()
-    assert page_at.locator("#client-msg").inner_text().strip() != ""
-    assert page_at.locator("#f-revenue").is_disabled()
+    # 잠자기 대신 재시도하는 expect 를 쓴다 — 느린 날에 300ms 가 모자라면
+    # 제품이 멀쩡한데도 스위트가 빨개진다.
+    expect(page_at.locator("#client-msg")).not_to_be_empty()
+    expect(page_at.locator("#client-panel")).to_be_visible()
+    expect(page_at.locator("#f-revenue")).to_be_disabled()
 
 
 def test_duplicate_name_shows_message(page_at):
     page_at.click("#new-client")
     page_at.fill("#f-name", "하루인 인계점")
     page_at.click("#save-client")
-    page_at.wait_for_timeout(400)
+    # 첫 저장이 실제로 끝난 걸 확인하고 나서 두 번째를 시도해야 "중복"을
+    # 본다. 잠자기로 어림하면 느린 날에는 아직 저장되지 않은 상태에서
+    # 두 번째를 눌러 409 가 아니라 201 이 두 번 나온다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
 
     # 백드롭은 클릭을 막는다(제품 요구사항) — 다시 #new-client 를 누르려면
     # 먼저 패널을 닫아야 한다.
@@ -1189,9 +1193,8 @@ def test_duplicate_name_shows_message(page_at):
     page_at.click("#new-client")
     page_at.fill("#f-name", "하루인 인계점")
     page_at.click("#save-client")
-    page_at.wait_for_timeout(400)
 
-    assert "이미" in page_at.locator("#client-msg").inner_text()
+    expect(page_at.locator("#client-msg")).to_contain_text("이미")
 
 
 def test_keyword_add_and_remove(page_at):
@@ -1298,11 +1301,16 @@ def test_client_read_failure_disables_save_until_next_success(page_at, no_networ
     page_at.click("#edit-client")
     page_at.wait_for_selector("#client-panel:not([hidden])")
 
-    assert page_at.locator("#client-msg").inner_text().strip() != ""
-    assert page_at.locator("#client-panel").is_visible(), "메시지만 보이고 패널이 닫히면 안 된다"
-    assert page_at.locator("#save-client").is_disabled()
+    # open() 은 패널을 먼저 드러내고 **그 다음에** 매장 정보를 읽는다.
+    # 그래서 #client-panel:not([hidden]) 은 읽기가 끝나기 전에 이미 참이고,
+    # 여기서 inner_text() 같은 즉시 판정을 쓰면 왕복 한 번 사이에 끼어들어
+    # 간헐적으로 깨진다(실제로 깨졌다). 재시도하는 expect 로 기다린다.
+    expect(page_at.locator("#client-msg")).not_to_be_empty()
+    # 메시지만 보이고 패널이 닫히면 안 된다.
+    expect(page_at.locator("#client-panel")).to_be_visible()
+    expect(page_at.locator("#save-client")).to_be_disabled()
     # 지표 칸도 다시 잠긴다 — 서버가 이 매장을 못 읽었으니 수집도 못 돈다.
-    assert page_at.locator("#f-revenue").is_disabled()
+    expect(page_at.locator("#f-revenue")).to_be_disabled()
 
     page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
     page_at.click("#panel-close")
@@ -1312,7 +1320,7 @@ def test_client_read_failure_disables_save_until_next_success(page_at, no_networ
     page_at.click("#edit-client")
     page_at.wait_for_selector("#client-panel:not([hidden])")
     expect(page_at.locator("#f-name")).to_have_value("가게 하나")
-    assert page_at.locator("#save-client").is_enabled()
+    expect(page_at.locator("#save-client")).to_be_enabled()
 
 
 # ── 지표 수집 ─────────────────────────────────────────────────
