@@ -1237,7 +1237,6 @@ def test_metrics_fields_reset_between_clients(page_at, no_network):
     page_at.click("#new-client")
     assert page_at.locator("#f-revenue").input_value() == ""
     assert page_at.locator("#f-market-rank").input_value() == ""
-    assert page_at.locator("#f-fetch-place").is_checked()
 
 
 def test_registering_new_client_clears_board(page_at, no_network):
@@ -1377,6 +1376,10 @@ def test_place_failure_shows_message_and_screen_survives(page_at, no_network):
     page_at.click("#save-client")
     page_at.wait_for_selector("#client-msg.ok:not(:empty)")
 
+    # Task 4 에서 「플레이스 직접 긁기」 기본값이 켜짐→꺼짐으로 바뀌었다
+    # (평소엔 애드로그 PDF 로 받는다). 이 테스트는 긁기 실패 경로 자체를
+    # 검증하는 것이므로 명시적으로 켠다.
+    page_at.check("#f-fetch-place")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg:not(.ok):not(:empty)")
 
@@ -1392,6 +1395,10 @@ def test_retry_after_failure_with_checkbox_off_succeeds(page_at, tmp_data, no_ne
     page_at.click("#save-client")
     page_at.wait_for_selector("#client-msg.ok:not(:empty)")
 
+    # Task 4 에서 「플레이스 직접 긁기」 기본값이 켜짐→꺼짐으로 바뀌었다.
+    # 이 테스트는 "긁기를 켠 채 실패 → 끄고 재시도해 성공" 흐름을
+    # 검증하는 것이므로 명시적으로 켠다.
+    page_at.check("#f-fetch-place")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg:not(.ok):not(:empty)")
 
@@ -1502,6 +1509,118 @@ def test_panel_hide_internal_button_conceals_revenue_and_internal_together(page_
     assert "hidden" not in (page_at.locator("#internal").get_attribute("class") or "")
     assert page_at.locator("#panel-hide-internal").inner_text() == "가리기"
     assert page_at.locator("#hide-internal").inner_text() == "가리기"
+
+
+# ── 자료 판독 ─────────────────────────────────────────────────
+
+DOC_OK = {
+    "판독": {"플레이스ID": "1234567890", "플레이스명": "하루인 인계점",
+             "카테고리": "양꼬치", "방문자리뷰": 312, "블로그리뷰": 14,
+             "저장수": 88, "총키워드": 2, "TOP3": 1, "TOP10": 2,
+             "순위": [{"키워드": "인계동 삼겹살", "순위": 3},
+                      {"키워드": "수원 고깃집", "순위": 7}]},
+    "경고": [], "저장가능": True, "불일치": None,
+}
+DOC_MISMATCH = {**DOC_OK, "저장가능": False,
+                "불일치": "이 파일은 「미친양꼬치 잠실점」 자료입니다."}
+DOC_TRUNCATED = {**DOC_OK, "경고": ["키워드가 48개인데 2개만 읽혔습니다."]}
+
+
+def _doc_routes(page, result=None, ready=True):
+    import re
+
+    page.route("**/api/read-doc/ready",
+               lambda r: r.fulfill(status=200, content_type="application/json",
+                                   body=json.dumps({"준비됨": ready})))
+    page.route(re.compile(r"/api/read-doc$"),
+               lambda r: r.fulfill(status=200, content_type="application/json",
+                                   body=json.dumps(result or DOC_OK,
+                                                   ensure_ascii=False)))
+
+
+def _drop(page, name="종합분석.pdf"):
+    page.set_input_files("#doc-file", files=[{
+        "name": name, "mimeType": "application/pdf", "buffer": b"%PDF-fake"}])
+
+
+def test_doc_box_is_off_without_key(page_at, no_network):
+    _doc_routes(page_at, ready=False)
+    _register(page_at)
+    expect(page_at.locator("#doc-file")).to_be_disabled()
+    expect(page_at.locator("#doc-msg")).to_contain_text("키")
+
+
+def test_doc_paints_the_reading(page_at, no_network):
+    _doc_routes(page_at)
+    _register(page_at)
+    _drop(page_at)
+    expect(page_at.locator("#doc-result")).to_contain_text("312")
+    expect(page_at.locator("#doc-result")).to_contain_text("인계동 삼겹살")
+    expect(page_at.locator("#apply-doc")).to_be_enabled()
+
+
+def test_doc_mismatch_blocks_saving(page_at, no_network):
+    """A 매장 화면에 B 매장 파일을 떨구면 저장이 열리면 안 된다."""
+    _doc_routes(page_at, result=DOC_MISMATCH)
+    _register(page_at)
+    _drop(page_at)
+    expect(page_at.locator("#doc-msg")).to_contain_text("미친양꼬치 잠실점")
+    expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+def test_doc_truncation_warns_but_allows_saving(page_at, no_network):
+    _doc_routes(page_at, result=DOC_TRUNCATED)
+    _register(page_at)
+    _drop(page_at)
+    expect(page_at.locator("#doc-warn")).to_contain_text("48")
+    expect(page_at.locator("#apply-doc")).to_be_enabled()
+
+
+def test_doc_does_not_show_a_preview(page_at, no_network):
+    """오픈업 캡처가 같은 칸에 들어올 때 월매출이 그림으로 박혀 있다."""
+    _doc_routes(page_at)
+    _register(page_at)
+    _drop(page_at)
+    expect(page_at.locator("#doc img")).to_have_count(0)
+    expect(page_at.locator("#doc canvas")).to_have_count(0)
+
+
+def test_doc_clears_between_stores(page_at, no_network):
+    _doc_routes(page_at)
+    _register(page_at)
+    _drop(page_at)
+    expect(page_at.locator("#doc-result")).to_contain_text("312")
+    page_at.click("#panel-close")
+
+    page_at.click("#new-client")
+    expect(page_at.locator("#doc-result")).to_be_empty()
+    expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+def test_doc_failure_leaves_a_short_message(page_at, no_network):
+    import re
+
+    page_at.route("**/api/read-doc/ready",
+                  lambda r: r.fulfill(status=200,
+                                      content_type="application/json",
+                                      body=json.dumps({"준비됨": True})))
+    page_at.route(re.compile(r"/api/read-doc$"),
+                  lambda r: r.fulfill(status=400,
+                                      content_type="application/json",
+                                      body=json.dumps(
+                                          {"오류": "애드로그 종합분석 파일이 아닌 것 같습니다"},
+                                          ensure_ascii=False)))
+    _register(page_at)
+    _drop(page_at, name="엉뚱한.pdf")
+    expect(page_at.locator("#doc-msg")).to_contain_text("애드로그")
+    expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+def test_place_fetch_is_off_by_default(page_at, no_network):
+    """평소엔 PDF 로 받는다. 긁기는 애드로그가 안 될 때만 켠다."""
+    _doc_routes(page_at)
+    page_at.click("#new-client")
+    assert not page_at.locator("#f-fetch-place").is_checked()
 
 
 # ── 기존 매장 편집 ────────────────────────────────────────────

@@ -43,5 +43,8 @@
     createClient: (data) => post("/api/clients", data),
     saveClient: (slug, data) => post(`/api/clients/${encodeURIComponent(slug)}`, data),
     collect: (body) => post("/api/collect", body),
+    readDocReady: () => get("/api/read-doc/ready"),
+    readDoc: (body) => post("/api/read-doc", body),
+    applyDoc: (body) => post("/api/read-doc/apply", body),
   };
 })();

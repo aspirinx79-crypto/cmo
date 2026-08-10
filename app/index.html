@@ -89,11 +89,22 @@
         <button id="save-client" type="submit">저장</button>
       </form>
 
+      <fieldset id="doc" disabled>
+        <legend>자료 넣기</legend>
+        <label>애드로그 종합분석
+          <input id="doc-file" type="file" accept=".pdf,image/*">
+        </label>
+        <p id="doc-msg"></p>
+        <p id="doc-warn"></p>
+        <div id="doc-result"></div>
+        <button id="apply-doc" type="button" disabled>판독값 저장</button>
+      </fieldset>
+
       <fieldset id="metrics" disabled>
         <legend>지표</legend>
         <label class="checkbox">
-          <input id="f-fetch-place" type="checkbox" checked>
-          플레이스 함께 수집 (15초쯤 걸립니다)
+          <input id="f-fetch-place" type="checkbox">
+          플레이스 직접 긁기 (15초쯤 걸립니다 — 애드로그가 안 될 때만)
         </label>
         <div id="rank-rows"></div>
         <label>상권순위 <input id="f-market-rank" placeholder="상위 40%"></label>

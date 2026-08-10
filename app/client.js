@@ -75,6 +75,7 @@
     keywords = [...(client.추적키워드 || [])];
     paintKeywords();
     paintRankRows();
+    clearDoc();               // 앞 매장 판독이 남으면 안 된다
     paintLastSnapshot(client);
 
     // 지표 칸은 매장마다 새로 입력한다. 앞 매장 값이 남아 있으면
@@ -84,7 +85,9 @@
     el("f-market-rank").value = "";
     el("f-revenue").value = "";
     el("f-keyword").value = "";
-    el("f-fetch-place").checked = true;
+    // 평소엔 애드로그 PDF 로 받는다. 플레이스 직접 긁기는 그게 안 될 때만
+    // 손으로 켜는 예외라 매장을 열 때마다 꺼진 채로 시작해야 한다.
+    el("f-fetch-place").checked = false;
   }
 
   function paintLastSnapshot(client) {
@@ -153,6 +156,22 @@
       // fill() 이 #f-revenue 를 다시 그리므로 가리기를 재적용한다.
       window.Summary.applyConcealment();
     }
+
+    // 판독도 저장된 매장에서만 된다 — 서버가 매장을 대조해야 하기 때문이다.
+    // fill() 뒤에 둔다: fill() 이 clearDoc() 을 불러 doc-msg 를 비우므로,
+    // 그보다 먼저 메시지를 쓰면 이 자리에서 바로 지워진다(신규 등록도
+    // fill({}) 을, 기존 매장 편집은 fill({}) 과 fill(client) 를 두 번
+    // 부른다 — 둘 다 지나간 뒤에 써야 남는다).
+    el("doc").toggleAttribute("disabled", !slug);
+    try {
+      const { 준비됨 } = await window.API.readDocReady();
+      el("doc-file").disabled = !준비됨;
+      if (!준비됨) say("doc-msg", "판독 키가 없습니다. 손으로 입력하십시오.");
+    } catch (err) {
+      el("doc-file").disabled = true;
+      say("doc-msg", "판독 준비 상태를 확인하지 못했습니다.");
+    }
+
     // 이전에 열었을 때 실패해 잠갔을 수 있다(위 catch). 이번엔 성공했으니
     // 다시 눌러 저장할 수 있어야 한다 — 여기서 안 풀면 다음에 패널을 열
     // 때도 잠긴 채로 남는다.
@@ -188,6 +207,10 @@
     }
 
     lock(false);
+    // 신규 등록은 open(null) 시점엔 slug 가 없어 #doc 이 잠긴 채로
+    // 열렸다. 저장으로 slug 가 생겼으니 자료 판독 칸도 #metrics 처럼
+    // 여기서 풀어야 한다 — 안 풀면 등록 직후엔 판독을 못 쓴다.
+    el("doc").removeAttribute("disabled");
     await window.Summary.reloadClients(editingSlug);
     say("client-msg", `${data.이름} 을(를) 저장했습니다.`, true);
   }
@@ -240,6 +263,83 @@
     }
   }
 
+  /* 자료 판독 — 애드로그 종합분석 PDF 를 값으로 바꾼다.
+
+     판독은 화면을 채우기만 한다. 저장은 사람이 「판독값 저장」을 누를 때
+     일어난다. 1,082 를 108 로 읽는 날이 오는데, 그게 조용히 제안서까지
+     가면 안 된다.
+
+     미리보기를 띄우지 않는다 — 같은 칸에 오픈업 캡처가 들어올 때 그
+     그림에는 월매출이 박혀 있고, 「가리기」는 그림을 못 지운다. */
+
+  let reading = null;
+
+  function clearDoc() {
+    reading = null;
+    el("doc-result").innerHTML = "";
+    say("doc-msg", "");
+    el("doc-warn").textContent = "";
+    el("apply-doc").disabled = true;
+    el("doc-file").value = "";
+  }
+
+  function paintReading(got) {
+    const r = got.판독 || {};
+    const rows = [["플레이스명", r.플레이스명], ["방문자리뷰", r.방문자리뷰],
+                  ["블로그리뷰", r.블로그리뷰], ["저장수", r.저장수],
+                  ["총키워드", r.총키워드], ["TOP3", r.TOP3], ["TOP10", r.TOP10]];
+    const dl = rows.filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `<dt>${window.Util.escapeHtml(k)}</dt>` +
+                       `<dd>${window.Util.escapeHtml(String(v))}</dd>`).join("");
+    const li = (r.순위 || []).map((x) =>
+      `<li><span>${window.Util.escapeHtml(x.키워드)}</span>` +
+      `<span>${window.Util.escapeHtml(String(x.순위))}위</span></li>`).join("");
+    el("doc-result").innerHTML = `<dl>${dl}</dl><ul>${li}</ul>`;
+    el("doc-warn").textContent = (got.경고 || []).join(" ");
+    if (got.불일치) say("doc-msg", got.불일치);
+    el("apply-doc").disabled = !got.저장가능;
+    reading = got.저장가능 ? r : null;
+  }
+
+  async function readDoc(file) {
+    say("doc-msg", "");
+    el("doc-warn").textContent = "";
+    el("doc-result").innerHTML = "";
+    el("apply-doc").disabled = true;
+    el("doc-file").disabled = true;
+    try {
+      const dataUrl = await new Promise((ok, no) => {
+        const fr = new FileReader();
+        fr.onload = () => ok(fr.result);
+        fr.onerror = () => no(new Error("파일을 읽지 못했습니다."));
+        fr.readAsDataURL(file);
+      });
+      paintReading(await window.API.readDoc({
+        slug: editingSlug, 파일명: file.name,
+        내용: String(dataUrl).split(",")[1] || "",
+      }));
+    } catch (err) {
+      say("doc-msg", err.message);
+    } finally {
+      el("doc-file").disabled = false;
+    }
+  }
+
+  async function applyDoc() {
+    const button = el("apply-doc");
+    button.disabled = true;
+    try {
+      await window.API.applyDoc({ slug: editingSlug, 판독: reading });
+      say("doc-msg", "판독값을 저장했습니다.", true);
+      // 판독이 플레이스URL·업종·스냅샷을 바꿨다. 폼을 다시 읽어 온다.
+      fill(await window.API.client(editingSlug));
+      window.Summary.applyConcealment();
+    } catch (err) {
+      say("doc-msg", err.message);
+      button.disabled = false;
+    }
+  }
+
   window.ClientPanel = { open };
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -267,5 +367,11 @@
       paintKeywords();
       paintRankRows();
     });
+
+    el("doc-file").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) readDoc(file);
+    });
+    el("apply-doc").addEventListener("click", applyDoc);
   });
 })();
