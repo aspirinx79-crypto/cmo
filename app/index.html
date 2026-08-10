@@ -61,6 +61,7 @@
     <div class="panel-box">
       <div class="panel-head">
         <h2 id="panel-title">새 매장</h2>
+        <button id="panel-hide-internal" type="button">가리기</button>
         <button id="panel-close" type="button" aria-label="닫기">×</button>
       </div>
 
@@ -75,10 +76,10 @@
         <label>상태
           <select id="f-status">
             <option>진행중</option>
-            <option>대기</option>
             <option>종료</option>
           </select>
         </label>
+        <label>메모 <textarea id="f-memo" rows="3"></textarea></label>
         <div class="keyword-box">
           <label>추적키워드 <input id="f-keyword"></label>
           <button id="add-keyword" type="button">추가</button>

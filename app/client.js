@@ -71,6 +71,7 @@
     el("f-ticket").value = client.객단가 ?? "";
     el("f-start").value = client.계약시작 || el("month").value;
     el("f-status").value = client.상태 || "진행중";
+    el("f-memo").value = client.메모 || "";
     keywords = [...(client.추적키워드 || [])];
     paintKeywords();
     paintRankRows();
@@ -108,7 +109,7 @@
       계약시작: text("f-start"),
       상태: el("f-status").value,
       추적키워드: [...keywords],
-      메모: "",
+      메모: text("f-memo"),
     };
   }
 
@@ -138,11 +139,24 @@
         fill(await window.API.client(slug));
       } catch (err) {
         say("client-msg", `매장 정보를 불러오지 못했습니다: ${err.message}`);
+        // 폼은 이미 fill({}) 로 비워진 채다. 이름을 다시 쳐서 저장을
+        // 누르면 업종·지역·평수·객단가·추적키워드가 전부 빈 값으로
+        // 실매장을 덮어쓴다. 쓰는 길만 끊는다 — 저장 버튼을 끄면
+        // Enter 로 인한 암묵적 제출도 같이 막힌다(제출 버튼이 비활성이면
+        // 브라우저가 폼을 보내지 않는다). 칸 자체는 그대로 두어 상무님이
+        // 무슨 화면인지 볼 수 있게 한다.
+        // 패널은 열어 두고 메시지는 보이게 둔다 — I-5 에서 얻은 것이다.
+        lock(true);
+        el("save-client").setAttribute("disabled", "");
         return;
       }
       // fill() 이 #f-revenue 를 다시 그리므로 가리기를 재적용한다.
       window.Summary.applyConcealment();
     }
+    // 이전에 열었을 때 실패해 잠갔을 수 있다(위 catch). 이번엔 성공했으니
+    // 다시 눌러 저장할 수 있어야 한다 — 여기서 안 풀면 다음에 패널을 열
+    // 때도 잠긴 채로 남는다.
+    el("save-client").removeAttribute("disabled");
   }
 
   function close() {
@@ -157,10 +171,12 @@
     try {
       if (editingSlug) {
         // 스냅샷은 폼에 없다. 읽어서 그대로 얹지 않으면 수집 이력이 날아간다.
+        // 메모는 이제 폼(#f-memo)의 몫이다 — data.메모 를 그대로 쓴다.
+        // before.메모 로 덮으면 방금 고친 메모가 저장 직후 원래대로
+        // 되돌아간다.
         const before = await window.API.client(editingSlug);
         await window.API.saveClient(editingSlug, {
           ...data, slug: editingSlug, 스냅샷: before.스냅샷 || [],
-          메모: before.메모 || "",
         });
       } else {
         const made = await window.API.createClient(data);
@@ -212,8 +228,16 @@
     } finally {
       button.disabled = false;
     }
-    paintLastSnapshot(await window.API.client(editingSlug));
-    say("metrics-msg", "지표를 저장했습니다.", true);
+    try {
+      paintLastSnapshot(await window.API.client(editingSlug));
+      say("metrics-msg", "지표를 저장했습니다.", true);
+    } catch (err) {
+      // 저장 자체는 이미 성공했다(위 collect() 가 던지지 않고 통과했다).
+      // 이 읽기는 화면의 "마지막 수집" 줄을 새로고침하는 용도일 뿐이라,
+      // 실패해도 성공 메시지는 그대로 띄운다 — 안 그러면 실제로는 저장된
+      // 지표를 상무님이 못 본 걸로 알고 다시 눌러 스냅샷이 중복 쌓인다.
+      say("metrics-msg", "지표를 저장했습니다. (최근 수집 표시는 갱신하지 못했습니다.)", true);
+    }
   }
 
   window.ClientPanel = { open };
@@ -228,6 +252,12 @@
     el("panel-close").addEventListener("click", close);
     el("client-form").addEventListener("submit", saveClient);
     el("save-metrics").addEventListener("click", saveMetrics);
+    // 패널이 열려 있으면 백드롭이 클릭을 막아 #hide-internal(요약 칸)에
+    // 손이 안 닿는다(I-5) — 패널 안에도 같은 버튼을 두고 같은 함수를
+    // 부른다. 새로 구현하지 않는다: 규칙이 두 벌이 되는 게 사고다.
+    el("panel-hide-internal").addEventListener("click", () => {
+      window.Summary.toggleConcealment();
+    });
 
     el("add-keyword").addEventListener("click", () => {
       const kw = text("f-keyword");

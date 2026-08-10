@@ -865,6 +865,27 @@ def test_copy_to_next_month_carries_items_and_updates_month_field(page_with_clie
         '.board-card[data-id="네이버-블로그_일반_체험단"]').count() == 1
 
 
+# --- M-2: 기획안 없는 매장으로 바꿔도 계약가가 앞 매장 값으로 남는다 ---
+# 남으면 「N배」 줄이 잘못 계산되고, 그 상태로 저장하면 새 매장 기획안에
+# 앞 매장 계약가가 그대로 들어간다. index.html #contract-price 의 초기
+# value(1,000,000)로 되돌린다 — 새로 도구를 연 것과 같은 화면이 된다.
+
+def test_switching_to_client_without_plan_resets_contract_price(page_with_client):
+    page = page_with_client
+    _save_first_plan(page)  # 테스트고객사에 계약가 1,000,000 기획안 저장
+    page.fill("#contract-price", "9999999")  # 저장은 안 하고 화면 값만 바꾼다
+
+    page.click("#new-client")
+    page.fill("#f-name", "새 매장")
+    page.click("#save-client")
+    # 새 매장 등록은 reloadClients(editingSlug) 로 그 매장을 자동 선택하고
+    # loadClientPlan() 을 부른다 — 기획안이 없으니 이 경로를 탄다.
+    page.wait_for_selector("#client-msg.ok:not(:empty)")
+    page.click("#panel-close")
+
+    assert page.locator("#contract-price").input_value() == "1000000"
+
+
 def test_copy_without_existing_plan_warns_not_silent(page_with_client):
     """이번 달에 저장된 기획안이 없는데 복제를 누르면 서버가 404 를 낸다.
     조용히 넘어가면 상무님은 복제가 됐는지 안 됐는지 알 길이 없다."""
@@ -877,6 +898,44 @@ def test_copy_without_existing_plan_warns_not_silent(page_with_client):
     page.wait_for_timeout(300)
     assert dialogs, "없는 달 복제가 아무 반응도 없다"
     assert "복제" in dialogs[-1]
+
+
+# --- I-3: 기획안 읽기 실패 시 구성판이 안 비워지면 남의 매장에 저장된다 ---
+# planMonths() 는 성공해서 목록에는 달이 있는데(=목록에 있는 매장으로 바꾼
+# 것), 그 달의 plan() 읽기만 실패하는 경우를 재현한다 — 파일이 깨졌거나
+# 서버가 순간 튀는 경우다. 목록이 아예 비어 기획안이 없는 매장(기존
+# 테스트들이 이미 다루는 경우)과는 다른 경로다.
+
+def test_plan_read_failure_clears_board_not_leaving_other_clients_items(page_with_client, tmp_data):
+    import re
+
+    page = page_with_client
+    other_dir = tmp_data / "clients" / "다른매장"
+    other_dir.mkdir(parents=True)
+    (other_dir / "client.json").write_text(
+        json.dumps({"이름": "다른매장", "상태": "진행중"}, ensure_ascii=False),
+        encoding="utf-8")
+    (other_dir / "plans").mkdir()
+    (other_dir / "plans" / "2026-09.json").write_text(
+        json.dumps({"월": "2026-09", "계약가": 500000, "항목": []}, ensure_ascii=False),
+        encoding="utf-8")
+    page.reload()
+    page.wait_for_selector(".product-row")
+
+    # 먼저 테스트고객사를 고르고 구성판에 항목을 담아 둔다 — 저장은 안 한다.
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.wait_for_timeout(150)
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    page.wait_for_selector(".board-card")
+
+    # "다른매장" 은 목록에는 달이 있지만(2026-09.json 이 실제로 있다) 그
+    # 달의 개별 읽기만 실패하게 가로챈다. planMonths() 요청(달 없는
+    # /plans)은 그대로 통과시켜야 재현이 된다.
+    page.route(re.compile(r"/api/clients/[^/]+/plans/2026-09$"),
+               lambda route: route.fulfill(status=500))
+
+    page.select_option("#client-select", "다른매장")
+    expect(page.locator(".board-card")).to_have_count(0)
 
 
 # --- 고지사항이 길어도 카드가 화면을 잡아먹으면 안 된다 (app.css, CSS 만으로) ---
@@ -1217,6 +1276,45 @@ def test_edit_open_shows_blank_panel_until_data_arrives(page_at, no_network):
     page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
 
 
+# --- I-4: 매장 정보 읽기가 실패하면 빈 폼이 실매장에 묶인 채 저장 가능해진다 ---
+# open() 이 fetch 실패로 return 하는 시점엔 폼이 이미 fill({}) 로 비워져 있고
+# editingSlug 도 세팅돼 있다. 저장 버튼을 살려 두면 이름만 다시 쳐서 저장할
+# 때 업종·지역·평수·객단가·추적키워드가 전부 빈 값으로 실매장을 덮어쓴다.
+
+def test_client_read_failure_disables_save_until_next_success(page_at, no_network):
+    import re
+
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "가게 하나")
+    page_at.click("#save-client")
+    # 드롭다운은 reloadClients 완료 뒤에만 채워진다(#client-msg.ok 로
+    # 확정된다) — 그전에 #edit-client 를 누르면 "고객사를 먼저
+    # 선택하십시오" 얼럿이 뜨는 경합이 생긴다.
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+    page_at.click("#panel-close")
+
+    page_at.route(re.compile(r"/api/clients/[^/]+$"),
+                  lambda route: route.fulfill(status=500))
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+
+    assert page_at.locator("#client-msg").inner_text().strip() != ""
+    assert page_at.locator("#client-panel").is_visible(), "메시지만 보이고 패널이 닫히면 안 된다"
+    assert page_at.locator("#save-client").is_disabled()
+    # 지표 칸도 다시 잠긴다 — 서버가 이 매장을 못 읽었으니 수집도 못 돈다.
+    assert page_at.locator("#f-revenue").is_disabled()
+
+    page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
+    page_at.click("#panel-close")
+
+    # 정상 매장을 다시 열면 저장 버튼이 풀려야 한다 — 안 풀리면 다음
+    # 편집이 전부 막힌다.
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("가게 하나")
+    assert page_at.locator("#save-client").is_enabled()
+
+
 # ── 지표 수집 ─────────────────────────────────────────────────
 # no_network fixture 는 이 파일 상단(매장 준비 패널 섹션)에 이미 정의돼
 # 있다 — Task 4 리뷰에서 no_network_t4 로 먼저 생겼고, 여기서 같은 이름을
@@ -1309,6 +1407,36 @@ def test_last_snapshot_line_updates_after_saving(page_at, no_network):
     assert "마지막" in page_at.locator("#last-snapshot").inner_text()
 
 
+# --- M-3: 저장 후 마지막 스냅샷 재조회가 실패해도 저장 자체는 성공이다 ---
+# collect() 는 이미 통과했는데(=진짜로 저장됐는데) 뒤이은 재조회만 실패하는
+# 경우다. 메시지 칸이 아무것도 안 보여주면 상무님은 저장 여부를 몰라 다시
+# 눌러 스냅샷이 중복 쌓인다.
+
+def test_metrics_save_succeeds_even_if_snapshot_readback_fails(page_at, tmp_data, no_network):
+    import re
+
+    _register(page_at)
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#rank-rows .rank-input", "17")
+
+    # collect() 자체(POST /api/collect)는 그대로 통과시키고, 그 뒤
+    # paintLastSnapshot() 이 부르는 재조회(GET /api/clients/<slug>)만
+    # 실패하게 만든다.
+    page_at.route(re.compile(r"/api/clients/[^/]+$"),
+                  lambda route: route.fulfill(status=500))
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+
+    assert "저장했습니다" in page_at.locator("#metrics-msg").inner_text()
+    assert page_at.locator("#save-metrics").is_enabled(), "재조회 실패로 버튼이 잠긴 채 남았다"
+
+    page_at.unroute(re.compile(r"/api/clients/[^/]+$"))
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert len(saved["스냅샷"]) == 1, "재조회만 실패했을 뿐 저장 자체는 성공했어야 한다"
+
+
 def test_empty_rank_is_not_saved(page_at, tmp_data, no_network):
     """안 넣은 순위를 0위로 저장하면 제안서가 거짓말을 한다."""
     _register(page_at)
@@ -1341,6 +1469,31 @@ def test_revenue_field_returns_when_unhidden(page_at, no_network):
     page_at.click("#edit-client")
     page_at.wait_for_selector("#client-panel:not([hidden])")
     assert page_at.locator("#f-revenue").is_visible()
+
+
+# --- I-5: 패널이 열려 있으면 백드롭이 클릭을 막아 #hide-internal 에 손이 안
+# 닿는다. 패널 안의 #panel-hide-internal 이 같은 가리기 상태를 공유해야
+# 한다 — 새 로직이 아니라 같은 toggleConcealment() 를 부른다.
+
+def test_panel_hide_internal_button_conceals_revenue_and_internal_together(page_at, no_network):
+    _register(page_at)
+    assert page_at.locator("#f-revenue").is_visible()
+    assert page_at.locator("#panel-hide-internal").inner_text() == "가리기"
+
+    page_at.click("#panel-hide-internal")
+    assert not page_at.locator("#f-revenue").is_visible()
+    # 오른쪽 #internal(요약 칸)도 같은 상태를 공유한다 — 패널 안에서 눌러도
+    # 뒤 화면의 내부전용 칸이 같이 가려진다.
+    assert "hidden" in (page_at.locator("#internal").get_attribute("class") or "")
+    assert page_at.locator("#panel-hide-internal").inner_text() == "보기"
+    # 두 버튼의 글자가 항상 같은 상태를 보여야 한다.
+    assert page_at.locator("#hide-internal").inner_text() == "보기"
+
+    page_at.click("#panel-hide-internal")
+    assert page_at.locator("#f-revenue").is_visible()
+    assert "hidden" not in (page_at.locator("#internal").get_attribute("class") or "")
+    assert page_at.locator("#panel-hide-internal").inner_text() == "가리기"
+    assert page_at.locator("#hide-internal").inner_text() == "가리기"
 
 
 # ── 기존 매장 편집 ────────────────────────────────────────────
@@ -1402,6 +1555,56 @@ def test_edit_keeps_snapshots(page_at, tmp_data, no_network):
         .read_text(encoding="utf-8"))
     assert len(saved["스냅샷"]) == 1
     assert saved["업종"] == "고깃집"
+
+
+# --- I-1: 패널에 메모 칸 추가 ---
+# 시드 12곳처럼 "미확인" 문구가 메모에 적혀 있고, 지금은 화면에서 고칠 방법이
+# 없다. 등록 때 저장되는지, 편집 때 채워져 열리는지, 고쳐 저장하면 반영되되
+# 스냅샷은 그대로인지 확인한다.
+
+def test_memo_is_saved_on_registration(page_at, tmp_data):
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.fill("#f-memo", "카톡 이력에서 등록. 미확인.")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["메모"] == "카톡 이력에서 등록. 미확인."
+
+
+def test_memo_prefills_on_edit_and_survives_resave_with_snapshot_intact(page_at, tmp_data, no_network):
+    """메모를 고쳐 저장해도 반영되고, 폼에 없는 스냅샷은 그대로 남아야 한다."""
+    page_at.click("#new-client")
+    page_at.fill("#f-name", "하루인 인계점")
+    page_at.fill("#f-memo", "카톡 이력에서 등록. 미확인.")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#metrics:not([disabled])")
+
+    # 이 매장에는 플레이스URL 이 없다. 「플레이스 함께 수집」을 켠 채로
+    # 누르면 도구가 설계대로 탈출구 안내를 띄우고 저장하지 않는다 —
+    # 여기서 필요한 건 스냅샷 한 건이므로 체크를 끄고 손입력만 저장한다.
+    page_at.uncheck("#f-fetch-place")
+    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.click("#save-metrics")
+    page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
+    page_at.click("#panel-close")
+
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-memo")).to_have_value("카톡 이력에서 등록. 미확인.")
+
+    page_at.fill("#f-memo", "확인 완료. 평수 60평, 객단가 18000원.")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    saved = json.loads(
+        (tmp_data / "clients" / "하루인_인계점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["메모"] == "확인 완료. 평수 60평, 객단가 18000원."
+    assert len(saved["스냅샷"]) == 1, "메모를 고쳐 저장했더니 스냅샷이 지워졌다"
 
 
 def test_edit_does_not_duplicate_dropdown_entries(page_at, no_network):

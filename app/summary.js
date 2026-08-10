@@ -150,6 +150,13 @@
     if (selectSlug) await loadClientPlan(selectSlug);
   }
 
+  // index.html #contract-price 의 초기 value 와 맞춘다. 기획안이 없는
+  // 매장으로 바꿨을 때(아래) 계약가를 이 값으로 되돌린다 — 0원으로
+  // 비우면 「N배」 줄이 계약가 0을 놓고 계산되어 다른 방식으로 왜곡되고,
+  // 빈 값도 Number("") 가 0 으로 읽혀 결국 같다. 새로 이 도구를 연 것과
+  // 같은 화면으로 되돌리는 편이 사장님 앞에서 자연스럽다.
+  const DEFAULT_CONTRACT_PRICE = "1000000";
+
   // 고객사를 바꾸면 그 매장의 최신 기획안을 올린다.
   // 기획안이 없는 매장(방금 등록한 신규)이면 구성판을 비운다 — 앞 매장 항목이
   // 남은 채로 저장하면 A 매장 기획안이 B 매장 밑에 저장된다.
@@ -158,6 +165,11 @@
     try {
       const months = await window.API.planMonths(slug);
       if (!months.length) {
+        // 계약가도 같이 초기화한다 — 안 하면 앞 매장 계약가가 남아 「N배」
+        // 줄을 잘못 계산하고, 그 상태로 저장하면 이 매장의 새 기획안에
+        // 앞 매장 계약가가 그대로 들어간다. #month 는 사용자가 고른
+        // 값이라 그대로 둔다.
+        document.getElementById("contract-price").value = DEFAULT_CONTRACT_PRICE;
         window.Board.load([]);
         return;
       }
@@ -168,13 +180,41 @@
     } catch (err) {
       const el = document.getElementById("warnings");
       if (el) el.textContent = `기획안을 불러오지 못했습니다: ${err.message}`;
+      // 읽기 실패는 "기획안 없음"과 같은 위험을 안는다 — 구성판에 앞
+      // 매장 항목이 남은 채로 저장을 누르면 그 매장 기획안이 지금 고른
+      // 매장 폴더에 저장된다. 비워서 막는다. (I-3)
+      document.getElementById("contract-price").value = DEFAULT_CONTRACT_PRICE;
+      window.Board.load([]);
     }
+  }
+
+  // 가리기 토글의 유일한 구현. #hide-internal(요약 칸)과
+  // #panel-hide-internal(매장 준비 패널) 두 버튼이 이 함수 하나를 부른다.
+  // 규칙이 두 벌이 되면 그게 사고다 — 한쪽만 누르고 다른 쪽은 안 가려지는
+  // 상태가 생긴다. 두 버튼 모두 같은 body.hide-internal 상태를 공유하므로
+  // 글자("가리기"/"보기")도 항상 같이 바뀐다.
+  function toggleConcealment() {
+    const box = document.getElementById("internal");
+    const hidden = box.classList.toggle("hidden");
+    // #internal(오른쪽 단)만 가리는 걸로는 부족하다 — 직접입력 상품의
+    // 실비는 구성판(가운데 단)의 .manual-cost 입력칸에 산다. body 에도
+    // 같은 상태를 반영해 app.css 가 두 곳을 한 번에 가리게 한다.
+    document.body.classList.toggle("hide-internal", hidden);
+    // 토글 자체는 구성판을 다시 그리지 않으므로(카드 개수·값이 안
+    // 바뀐다) paint() 가 저절로 안 불린다 — 여기서 직접 적용한다.
+    applyBoardConcealment();
+    const label = hidden ? "보기" : "가리기";
+    document.getElementById("hide-internal").textContent = label;
+    const panelBtn = document.getElementById("panel-hide-internal");
+    if (panelBtn) panelBtn.textContent = label;
+    return hidden;
   }
 
   window.Summary = {
     currentPlan,
     reloadClients: loadClients,
     applyConcealment: applyBoardConcealment,
+    toggleConcealment,
   };
 
   /* 프리셋 드롭다운. 실집행에서 반복된 조합을 한 번에 올린다.
@@ -211,19 +251,7 @@
   document.addEventListener("DOMContentLoaded", async () => {
     window.Board.onChange(paint);
 
-    document.getElementById("hide-internal").addEventListener("click", () => {
-      const box = document.getElementById("internal");
-      const hidden = box.classList.toggle("hidden");
-      // #internal(오른쪽 단)만 가리는 걸로는 부족하다 — 직접입력 상품의
-      // 실비는 구성판(가운데 단)의 .manual-cost 입력칸에 산다. body 에도
-      // 같은 상태를 반영해 app.css 가 두 곳을 한 번에 가리게 한다.
-      document.body.classList.toggle("hide-internal", hidden);
-      // 토글 자체는 구성판을 다시 그리지 않으므로(카드 개수·값이 안
-      // 바뀐다) paint() 가 저절로 안 불린다 — 여기서 직접 적용한다.
-      applyBoardConcealment();
-      document.getElementById("hide-internal").textContent =
-        hidden ? "보기" : "가리기";
-    });
+    document.getElementById("hide-internal").addEventListener("click", toggleConcealment);
 
     document.getElementById("save-plan").addEventListener("click", save);
     document.getElementById("copy-next").addEventListener("click", copyNext);

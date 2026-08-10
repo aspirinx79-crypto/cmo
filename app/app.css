@@ -133,7 +133,11 @@ body.hide-internal label:has(> .manual-cost) {
 }
 .panel-head { display: flex; align-items: center; margin-bottom: 12px; }
 .panel-head h2 { font-size: 16px; margin: 0; }
-#panel-close { margin-left: auto; border: none; background: none;
+/* #hide-internal(요약 칸)과 같은 자리: 패널이 열려 백드롭이 클릭을 막을
+   때도 손이 닿는 곳에 같은 동작을 둔다(I-5). */
+#panel-hide-internal { margin-left: auto; padding: 6px 10px; border: 1px solid var(--line);
+                        border-radius: 6px; background: var(--bg); cursor: pointer; }
+#panel-close { margin-left: 8px; border: none; background: none;
                font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
 
 #client-form, #metrics { display: grid; gap: 8px; }
@@ -143,6 +147,10 @@ body.hide-internal label:has(> .manual-cost) {
 #client-form input, #client-form select,
 #metrics input:not([type="checkbox"]) {
   padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+}
+#client-form textarea {
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  resize: vertical; font: inherit;
 }
 #metrics label.checkbox { grid-template-columns: auto 1fr; }
 .keyword-box { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }

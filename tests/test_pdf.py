@@ -27,7 +27,7 @@ PLAN = {"월": "2026-09", "계약가": 1000000, "진단메모": "블로그 리�
         "항목": [{"상품id": "네이버-블로그_일반_체험단", "수량": 40},
                 {"상품id": "네이버-서비스툴관리", "수량": 1}]}
 
-FORBIDDEN_WORDS = ("실비", "원가", "마진", "마진율", "내부전용")
+FORBIDDEN_WORDS = ("실비", "원가", "마진", "마진율", "내부전용", "월매출")
 
 
 @pytest.fixture(scope="module")
@@ -60,9 +60,13 @@ def test_no_cost_words_in_pdf(pdf_text):
 
 
 def test_no_cost_amounts_in_pdf(pdf_text):
-    """40팀 × 실비 8,000 = 320,000. 이 숫자가 보이면 안 된다."""
-    for amount in ("320,000", "8,000원", "320000"):
-        assert amount not in pdf_text["text"], f"실비 금액 {amount} 이 노출됐다"
+    """40팀 × 실비 8,000 = 320,000. 이 숫자가 보이면 안 된다.
+
+    월매출 42,000,000 도 같이 막는다 — payload 단계 검사(test_proposal.py)는
+    이미 있지만 PDF 쪽에는 없었다. 서식을 고치다 payload 는 안 새는데 PDF
+    렌더링 쪽에서 실수로 꽂아 넣는 경우까지 여기서 잡는다."""
+    for amount in ("320,000", "8,000원", "320000", "42,000,000", "42000000"):
+        assert amount not in pdf_text["text"], f"실비/추정매출 금액 {amount} 이 노출됐다"
 
 
 def test_every_line_appears_with_list_price(pdf_text):
