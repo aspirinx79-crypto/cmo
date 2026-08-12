@@ -134,16 +134,20 @@ def parse_reading(text: str) -> dict:
     return out
 
 
-def store_mismatch(reading: dict, client: dict) -> str | None:
-    """이 파일이 지금 고른 매장의 것인가. 아니면 사람 말로 이유를 낸다.
+def name_mismatch(읽은이름: str | None, client: dict) -> str | None:
+    """이 자료가 지금 고른 매장의 것인가. 아니면 사람 말로 이유를 낸다.
 
     글자 그대로 같은지만 본다. 비슷하면 통과시키지 않는다.
 
     애드로그에서 여러 매장을 연달아 내보내면 파일명이 전부
     `플레이스_종합분석_{날짜}_{시각}.pdf` 로 똑같다. 대조가 없으면 남의
-    매장 리뷰수가 조용히 들어가고 그게 제안서 첫 장에 찍힌다.
+    매장 리뷰수가 조용히 들어가고 그게 제안서 첫 장에 찍힌다. 오픈업
+    캡처도 파일명이 캡처 시각뿐이라 사정이 같다.
+
+    **규칙은 한 벌이다.** 애드로그와 오픈업이 같은 함수를 부른다 — 두
+    벌이면 한쪽만 고치고 잊는 사고가 난다.
     """
-    찍힌이름 = (reading.get("플레이스명") or "").strip()
+    찍힌이름 = (읽은이름 or "").strip()
     고른이름 = (client.get("이름") or "").strip()
     if not 찍힌이름:
         return "파일에서 매장 이름을 읽지 못했습니다. 저장하지 않습니다."
@@ -151,6 +155,11 @@ def store_mismatch(reading: dict, client: dict) -> str | None:
         return (f"이 파일은 「{찍힌이름}」 자료입니다. "
                 f"지금 고른 매장은 「{고른이름}」 입니다.")
     return None
+
+
+def store_mismatch(reading: dict, client: dict) -> str | None:
+    """애드로그 판독의 입구. 대조 자체는 `name_mismatch` 가 한다."""
+    return name_mismatch(reading.get("플레이스명"), client)
 
 
 def truncation_warning(reading: dict) -> str | None:
@@ -246,9 +255,9 @@ def render_pages(data: bytes, filename: str) -> list[bytes]:
         doc.close()
 
 
-def read_document(data: bytes, filename: str, api_key: str,
-                  model: str = MODEL) -> dict:
-    """파일 한 개를 판독해 정규화된 dict 를 낸다. 아무것도 저장하지 않는다.
+def ask_model(images: list[bytes], prompt: str, api_key: str,
+              model: str = MODEL) -> str:
+    """그림들과 프롬프트를 보내 **글자**를 받는다. 파싱은 부르는 쪽 몫이다.
 
     키는 **헤더로만** 보낸다. 본문이나 URL 에 실으면 로그에 남는다.
 
@@ -257,13 +266,12 @@ def read_document(data: bytes, filename: str, api_key: str,
     `collect.short_error()` 가 낸 짧은 말만 ValueError 로 다시 던진다.
     """
     require_https(ANTHROPIC_ENDPOINT)
-    pages = render_pages(data, filename)
 
     content = [{"type": "image",
                 "source": {"type": "base64", "media_type": "image/png",
                            "data": base64.b64encode(png).decode("ascii")}}
-               for png in pages]
-    content.append({"type": "text", "text": PROMPT})
+               for png in images]
+    content.append({"type": "text", "text": prompt})
 
     body = json.dumps({
         "model": model,
@@ -283,7 +291,13 @@ def read_document(data: bytes, filename: str, api_key: str,
         # 원문을 print 하지 마라 — 여기에 키가 들어 있다.
         raise ValueError(f"판독 호출이 실패했습니다({short_error(exc)}).") from None
 
-    text = "".join(block.get("text", "")
+    return "".join(block.get("text", "")
                    for block in (payload.get("content") or [])
                    if isinstance(block, dict) and block.get("type") == "text")
-    return parse_reading(text)
+
+
+def read_document(data: bytes, filename: str, api_key: str,
+                  model: str = MODEL) -> dict:
+    """파일 한 개를 판독해 정규화된 dict 를 낸다. 아무것도 저장하지 않는다."""
+    pages = render_pages(data, filename)
+    return parse_reading(ask_model(pages, PROMPT, api_key, model))

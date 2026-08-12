@@ -285,3 +285,68 @@ def test_real_reading_of_an_adlog_export():
     assert got["플레이스명"], "플레이스명을 못 읽었다"
     assert got["방문자리뷰"] is not None, "방문자리뷰를 못 읽었다"
     assert got["순위"], "키워드 순위를 하나도 못 읽었다"
+
+
+def test_ask_model_returns_text_not_a_dict(monkeypatch):
+    """ask_model 은 글자만 낸다. 파싱은 부르는 쪽 몫이다."""
+    from cmo.lib import read_doc
+
+    보낸것 = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "content": [{"type": "text", "text": "안녕"}]
+            }).encode("utf-8")
+
+    def fake_urlopen(req, timeout=None):
+        보낸것["헤더"] = dict(req.headers)
+        보낸것["본문"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    got = read_doc.ask_model([b"\x89PNG-1", b"\x89PNG-2"], "읽어라", "sk-test")
+
+    assert got == "안녕"
+    # 키는 헤더로만 간다. 본문·URL 에 실으면 로그에 남는다.
+    assert 보낸것["헤더"]["X-api-key"] == "sk-test"
+    assert "sk-test" not in json.dumps(보낸것["본문"], ensure_ascii=False)
+    # 그림 두 장과 프롬프트 한 개가 이 순서로 들어간다.
+    content = 보낸것["본문"]["messages"][0]["content"]
+    assert [c["type"] for c in content] == ["image", "image", "text"]
+    assert content[-1]["text"] == "읽어라"
+
+
+def test_ask_model_never_leaks_the_key_on_failure(monkeypatch, capsys):
+    """예외 원문에는 요청 헤더가 섞이고 키가 바로 그 헤더다."""
+    from cmo.lib import read_doc
+
+    def boom(req, timeout=None):
+        raise RuntimeError("HTTP 401 x-api-key: sk-secret-key")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(ValueError) as err:
+        read_doc.ask_model([b"\x89PNG"], "읽어라", "sk-secret-key")
+
+    assert "sk-secret-key" not in str(err.value)
+    캡처 = capsys.readouterr()
+    assert "sk-secret-key" not in 캡처.out
+    assert "sk-secret-key" not in 캡처.err
+
+
+def test_name_mismatch_is_the_one_rule():
+    """대조 규칙은 한 벌이다. store_mismatch 도 이 함수를 부른다."""
+    from cmo.lib.read_doc import name_mismatch, store_mismatch
+
+    client = {"이름": "하루인 인계점"}
+    assert name_mismatch("하루인 인계점", client) is None
+    assert "하루인 인계점" in name_mismatch("미친양꼬치 잠실점", client)
+    assert "매장 이름을 읽지 못했습니다" in name_mismatch("", client)
+    # 애드로그 쪽 입구는 그대로 돈다.
+    assert store_mismatch({"플레이스명": "하루인 인계점"}, client) is None
