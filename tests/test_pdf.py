@@ -115,3 +115,52 @@ def test_absolute_revenue_is_not_printed(pdf_text):
     """오픈업 추정 매출 절대금액은 싣지 않는다. 반박당하면 제안서 전체가 흔들린다."""
     assert "42,000,000" not in pdf_text["text"]
     assert "상위 40%" in pdf_text["text"]
+
+
+# ── 오픈업 카드 ───────────────────────────────────────────────
+
+OPENUB_CLIENT = {**CLIENT, "오픈업": [{
+    "기준월": "2026-06",
+    "매출": {"하한": 46000000, "상한": 56000000},
+    "성별최다": {"값": "남성", "비율": 65},
+    "연령최다": {"값": "남성 20대", "비율": 26},
+    "요일최다": {"값": "토", "비율": 25},
+    "평일비율": 65,
+    "시간대최다": {"값": "밤", "비율": 40},
+    "판독시각": "2026-08-12T09:30:00",
+}]}
+
+
+@pytest.fixture(scope="module")
+def openub_pdf_text(tmp_path_factory):
+    payload = build_payload(OPENUB_CLIENT, PLAN, PRODUCTS)
+    out = tmp_path_factory.mktemp("pdf") / "제안서_오픈업.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    text = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    return text
+
+
+def test_openub_cards_are_printed(openub_pdf_text):
+    """서식의 자바스크립트가 죽으면 카드가 통째로 빠진다. 실제로 찍어 본다."""
+    assert "4,600~5,600만원" in openub_pdf_text
+    assert "남성 65%" in openub_pdf_text
+    assert "남성 20대 26%" in openub_pdf_text
+    assert "토 25% · 밤 40%" in openub_pdf_text
+
+
+def test_openub_footnote_names_the_source_and_month(openub_pdf_text):
+    """추정치가 확정 숫자로 읽히면 안 된다."""
+    assert "오픈업 추정(2026년 6월)" in openub_pdf_text
+
+
+def test_openub_pdf_never_shows_the_reading_timestamp(openub_pdf_text):
+    assert "판독시각" not in openub_pdf_text
+    assert "2026-08-12T09:30" not in openub_pdf_text
+
+
+def test_openub_pdf_still_hides_forbidden_words(openub_pdf_text):
+    """오픈업 카드가 붙어도 기존 금지선은 그대로다."""
+    for word in FORBIDDEN_WORDS:
+        assert word not in openub_pdf_text, f"제안서에 '{word}' 가 찍혔다"

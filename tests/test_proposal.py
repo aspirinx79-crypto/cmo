@@ -546,3 +546,56 @@ def test_notice_keeps_customer_facing_words_that_look_internal(products):
     joined = " ".join(notices)
     assert "대표키워드" in joined, f"고객용 고지가 죽었다: {joined}"
     assert "단톡에서" in joined, f"고객용 고지가 죽었다: {joined}"
+
+
+# ── 오픈업 ────────────────────────────────────────────────────
+
+OPENUB_ENTRY = {
+    "기준월": "2026-06",
+    "매출": {"하한": 46000000, "상한": 56000000},
+    "성별최다": {"값": "남성", "비율": 65},
+    "연령최다": {"값": "남성 20대", "비율": 26},
+    "요일최다": {"값": "토", "비율": 25},
+    "평일비율": 65,
+    "시간대최다": {"값": "밤", "비율": 40},
+    "판독시각": "2026-08-12T09:30:00",
+}
+
+
+def test_payload_carries_the_latest_openub_month():
+    """여러 달이 쌓여 있어도 제안서에는 최신 달만 나간다."""
+    client = dict(CLIENT, 오픈업=[dict(OPENUB_ENTRY, 기준월="2026-05"),
+                                  OPENUB_ENTRY])
+    payload = build_payload(client, PLAN, PRODUCTS)
+    assert payload["오픈업"]["기준월"] == "2026-06"
+    assert payload["오픈업"]["매출"] == {"하한": 46000000, "상한": 56000000}
+    assert payload["오픈업"]["성별최다"] == {"값": "남성", "비율": 65}
+
+
+def test_payload_omits_openub_when_there_is_none():
+    """오픈업 자료가 없으면 카드가 통째로 빠진다. 빈 카드를 만들지 않는다."""
+    assert build_payload(CLIENT, PLAN, PRODUCTS)["오픈업"] is None
+
+
+def test_payload_never_carries_the_reading_timestamp():
+    """화이트리스트다. 명시한 필드 외에는 안 나간다."""
+    client = dict(CLIENT, 오픈업=[OPENUB_ENTRY])
+    payload = build_payload(client, PLAN, PRODUCTS)
+    assert "판독시각" not in payload["오픈업"]
+    assert "2026-08-12T09:30:00" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_payload_never_carries_hand_typed_revenue():
+    """손으로 넣은 단일 숫자는 근거가 약하고 기준월도 없다. 내부전용이다."""
+    client = dict(CLIENT, 오픈업=[OPENUB_ENTRY])
+    payload = build_payload(client, PLAN, PRODUCTS)
+    blob = json.dumps(payload, ensure_ascii=False)
+    assert "42000000" not in blob          # 스냅샷의 손입력 월매출
+    assert payload["지표"]["상권순위"] == "상위 40%"   # 이건 그대로 나간다
+
+
+def test_payload_skips_openub_entries_without_a_month():
+    """기준월 없는 찌꺼기가 섞여 있어도 최신 달 계산이 흔들리지 않는다."""
+    client = dict(CLIENT, 오픈업=[{"기준월": None, "매출": None}, OPENUB_ENTRY])
+    payload = build_payload(client, PLAN, PRODUCTS)
+    assert payload["오픈업"]["기준월"] == "2026-06"

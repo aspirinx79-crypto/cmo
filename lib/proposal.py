@@ -78,6 +78,26 @@ def _metrics(client: dict) -> dict:
     }
 
 
+# 제안서로 나가는 오픈업 필드. 화이트리스트다 — 여기 없는 건 안 나간다.
+# `판독시각` 은 내부 기록이고, 손입력 월매출은 기준월도 출처도 없어
+# 고객에게 보일 근거가 못 된다.
+_OPENUB_KEYS = ("기준월", "매출", "성별최다", "연령최다", "요일최다",
+                "평일비율", "시간대최다")
+
+
+def _openub(client: dict) -> dict | None:
+    """가장 늦은 기준월 한 건만 낸다. 없으면 None 이다.
+
+    여러 달이 쌓여 있어도 제안서에는 최신 달만 나간다. 자료가 아예
+    없으면 카드 세 장과 각주가 통째로 빠진다 — 빈 카드를 만들지 않는다.
+    """
+    목록 = [e for e in (client.get("오픈업") or []) if e.get("기준월")]
+    if not 목록:
+        return None
+    최신 = max(목록, key=lambda e: e["기준월"])
+    return {k: 최신.get(k) for k in _OPENUB_KEYS}
+
+
 def _quantity_label(product: dict, item: dict) -> str:
     unit = product.get("단위") or "건"
     if product["가격유형"] == "예산배율":
@@ -346,6 +366,7 @@ def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
         "평수": client.get("평수"),
         "진단": plan.get("진단메모", ""),
         "지표": _metrics(client),
+        "오픈업": _openub(client),
         "구성": lines,
         "정가합": 정가합,
         "계약가": 계약가,

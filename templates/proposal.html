@@ -25,10 +25,16 @@
     tr.total td { font-weight: 800; border-top: 2px solid #14181f; border-bottom: none; }
     .headline { margin-top: 6mm; padding: 5mm; background: #eef4ff;
                 border-left: 4px solid #3E8AFF; font-size: 14pt; font-weight: 800; }
-    .metrics { display: flex; gap: 6mm; margin: 5mm 0; }
-    .metric { flex: 1; padding: 4mm; background: #f8fafc; border-radius: 3mm; }
+    /* 오픈업 카드 세 장이 더해지면서 한 줄에 다 담기지 않는다.
+       줄바꿈을 막으면 카드가 눌려 숫자가 두 줄로 접힌다. */
+    .metrics { display: flex; flex-wrap: wrap; gap: 6mm; margin: 5mm 0; }
+    .metric { flex: 1 1 28%; padding: 4mm; background: #f8fafc; border-radius: 3mm; }
     .metric .label { color: #6b7280; font-size: 9pt; }
     .metric .value { font-size: 18pt; font-weight: 800; }
+    /* 오픈업 값은 「남성 20대 26%」처럼 글자가 길다. 18pt 로는 카드 안에서
+       잘린다. 보조 정보라 한 단계 작게 찍고 대신 한 줄에 담는다. */
+    .metric .value.small { font-size: 12pt; white-space: nowrap; }
+    .note { font-size: 8pt; color: #6b7280; margin: 1mm 0 0; }
     ul { margin: 0; padding-left: 5mm; }
     li { margin-bottom: 2mm; }
     .week { margin-bottom: 4mm; }
@@ -51,6 +57,7 @@
     <h2>매장 진단</h2>
     <div id="d-basic"></div>
     <div class="metrics" id="d-metrics"></div>
+    <p id="d-metrics-note" class="note"></p>
     <p id="d-memo"></p>
   </section>
 
@@ -102,9 +109,39 @@
         cards.push({ label: "「" + r.키워드 + "」", value: r.순위 + "위" });
       if (M.상권순위) cards.push({ label: "동일 상권 내", value: M.상권순위 });
 
+      // 오픈업 추정치. 확정 숫자로 읽히지 않게 구간으로 적고 각주에
+      // 출처와 기준월을 함께 찍는다.
+      const U = P.오픈업;
+      if (U) {
+        // 값을 짧게 끊어 카드마다 한 줄에 담는다. 「4,600만~5,600만원」은
+        // 18pt 굵은 글씨로는 카드를 넘겨 「4,600만~5,600 / 만원」으로
+        // 잘린다. 잘린 숫자가 제안서 첫 장에 찍히면 안 된다.
+        const 만 = (n) => Math.round(n / 10000).toLocaleString();
+        if (U.매출)
+          cards.push({ label: "월 추정매출", small: true,
+                       value: 만(U.매출.하한) + "~" + 만(U.매출.상한) + "만원" });
+        if (U.성별최다)
+          cards.push({ label: "주 고객", small: true,
+                       value: U.성별최다.값 + " " + U.성별최다.비율 + "%" });
+        if (U.연령최다)
+          cards.push({ label: "최다 연령", small: true,
+                       value: U.연령최다.값 + " " + U.연령최다.비율 + "%" });
+        if (U.요일최다 || U.시간대최다)
+          cards.push({ label: "붐비는 때", small: true,
+                       value: [U.요일최다 ? U.요일최다.값 + " " + U.요일최다.비율 + "%" : null,
+                               U.시간대최다 ? U.시간대최다.값 + " " + U.시간대최다.비율 + "%" : null]
+                              .filter(Boolean).join(" · ") });
+      }
+
       document.getElementById("d-metrics").innerHTML = cards.map((c) =>
         `<div class="metric"><div class="label">${esc(c.label)}</div>
-         <div class="value">${esc(c.value)}</div></div>`).join("");
+         <div class="value${c.small ? " small" : ""}">${esc(c.value)}</div></div>`).join("");
+
+      const 각주 = document.getElementById("d-metrics-note");
+      if (U && 각주) {
+        const [연, 월] = (U.기준월 || "-").split("-");
+        각주.textContent = `매출·고객 구성은 오픈업 추정(${연}년 ${Number(월)}월)`;
+      }
 
       document.getElementById("d-memo").textContent = P.진단 || "";
 
