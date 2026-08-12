@@ -1,4 +1,9 @@
-/* 디자인 토큰은 발표덱과 맞춘다 — 브랜드 파랑 #3E8AFF */
+/* 배경 위에 흰 카드가 떠 있는 결. 배치와 밀도는 그대로 두고 표면만 바꿨다 —
+   이 도구는 미팅 중에 쓰는 작업대라, 여백을 늘리면 왼쪽 상품 24개가 화면
+   밖으로 밀려 도구가 오히려 나빠진다.
+
+   포인트색은 보라 #6B4FD6 이다. 발표덱·제안서는 브랜드 파랑 #3E8AFF 를
+   그대로 쓴다 — 저 둘은 고객이 받는 문서고 이 도구는 내부용이다. */
 @font-face {
   font-family: "Pretendard";
   src: url("fonts/PretendardVariable.woff2") format("woff2-variations");
@@ -7,13 +12,17 @@
 }
 
 :root {
-  --accent: #3E8AFF;
-  --ink: #14181f;
+  --accent: #6B4FD6;
+  --ink: #20242E;
   --muted: #6b7280;
-  --line: #e5e7eb;
-  --bg: #ffffff;
-  --panel: #f8fafc;
+  --line: #E6E8F0;
+  --bg: #F5F6FB;
+  --surface: #ffffff;
+  --panel: #F8F9FD;
   --danger: #dc2626;
+  --radius: 12px;
+  --pill: 999px;
+  --shadow: 0 1px 3px rgba(20, 24, 46, .06), 0 8px 24px rgba(20, 24, 46, .04);
 }
 
 * { box-sizing: border-box; }
@@ -24,31 +33,44 @@ body {
   color: var(--ink);
   background: var(--bg);
   font-size: 14px;
+  letter-spacing: -0.01em;
 }
 
 #topbar {
   display: flex; gap: 12px; align-items: center;
   padding: 10px 16px; border-bottom: 1px solid var(--line);
-  position: sticky; top: 0; background: var(--bg); z-index: 10;
+  position: sticky; top: 0; background: var(--surface); z-index: 10;
 }
-#topbar select, #topbar input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+#topbar select, #topbar input {
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--pill);
+  background: var(--surface);
+}
 #contract-price { width: 140px; text-align: right; }
 #warnings { color: var(--danger); font-size: 13px; margin-left: auto; }
 
+/* 세 칸이 배경 위에 흰 카드로 떠 있다. 칸 너비와 행 높이는 그대로다. */
 main {
   display: grid;
   grid-template-columns: 260px 1fr 260px;
+  gap: 10px;
+  padding: 10px;
   height: calc(100vh - 53px);
 }
-main > section { overflow-y: auto; padding: 12px; }
-#drawer { border-right: 1px solid var(--line); background: var(--panel); }
-#summary { border-left: 1px solid var(--line); background: var(--panel); }
+main > section {
+  overflow-y: auto; padding: 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+#drawer, #summary { background: var(--surface); }
 
-#search { width: 100%; padding: 8px; margin-bottom: 10px;
-          border: 1px solid var(--line); border-radius: 6px; }
+#search { width: 100%; padding: 8px 12px; margin-bottom: 10px;
+          border: 1px solid var(--line); border-radius: var(--pill);
+          background: var(--panel); }
 
 .media-group > summary {
-  cursor: pointer; font-weight: 700; padding: 6px 0; list-style: none;
+  cursor: pointer; font-weight: 800; padding: 6px 0; list-style: none;
+  letter-spacing: -0.025em;
 }
 .product-row {
   display: flex; align-items: center; gap: 6px;
@@ -60,14 +82,14 @@ main > section { overflow-y: auto; padding: 12px; }
 .product-row.discontinued .name::after { content: " (판매중지)"; color: var(--danger); }
 .add-btn {
   border: 1px solid var(--accent); color: var(--accent); background: transparent;
-  border-radius: 5px; width: 24px; height: 24px; cursor: pointer;
+  border-radius: var(--pill); width: 24px; height: 24px; cursor: pointer;
 }
 .add-btn:disabled { border-color: var(--line); color: var(--line); cursor: not-allowed; }
 
 /* 내부전용 — 시각적으로 확실히 분리한다 */
 #internal {
   margin-top: 16px; padding: 10px;
-  background: #eceff3; border: 1px dashed #9aa3af; border-radius: 8px;
+  background: var(--panel); border: 1px dashed #b9c0d4; border-radius: var(--radius);
 }
 #internal.hidden dl { display: none; }
 .internal-head { display: flex; justify-content: space-between; align-items: center;
@@ -76,13 +98,19 @@ main > section { overflow-y: auto; padding: 12px; }
 dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; margin: 0; }
 dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 #actions { display: grid; gap: 6px; margin-top: 16px; }
-#actions button { padding: 9px; border-radius: 6px; border: 1px solid var(--line);
-                  background: var(--bg); cursor: pointer; }
+#actions button { padding: 9px 14px; border-radius: var(--pill); border: 1px solid var(--line);
+                  background: var(--surface); cursor: pointer; font-weight: 600; }
 #make-proposal { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
 
+#preset-select {
+  width: 100%; padding: 8px 12px; margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: var(--pill);
+  background: var(--panel); font: inherit; color: var(--ink);
+}
+
 /* ② 구성판 카드 */
-.board-card { border: 1px solid var(--line); border-radius: 8px;
-              padding: 10px; margin-bottom: 8px; background: var(--bg); }
+.board-card { border: 1px solid var(--line); border-radius: var(--radius);
+              padding: 10px; margin-bottom: 8px; background: var(--surface); }
 .card-head { display: flex; gap: 8px; align-items: center; }
 .card-head .media { color: var(--muted); font-size: 12px; }
 .card-head .remove-btn { margin-left: auto; border: none; background: none;
@@ -117,8 +145,8 @@ body.hide-internal label:has(> .manual-cost) {
 /* ── 매장 준비 패널 ──────────────────────────────────────────
    미팅 화면 위에 덮는다. 뒤의 3단은 그대로 살아 있고 닫으면 돌아온다. */
 #topbar button {
-  padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--bg); cursor: pointer;
+  padding: 6px 14px; border: 1px solid var(--line); border-radius: var(--pill);
+  background: var(--surface); cursor: pointer; font-weight: 600;
 }
 #client-panel {
   position: fixed; inset: 0; z-index: 20;
@@ -129,14 +157,14 @@ body.hide-internal label:has(> .manual-cost) {
 #client-panel[hidden] { display: none; }
 .panel-box {
   width: 520px; max-width: 100%;
-  background: var(--bg); border-radius: 10px; padding: 18px;
+  background: var(--surface); border-radius: 16px; padding: 18px;
 }
 .panel-head { display: flex; align-items: center; margin-bottom: 12px; }
 .panel-head h2 { font-size: 16px; margin: 0; }
 /* #hide-internal(요약 칸)과 같은 자리: 패널이 열려 백드롭이 클릭을 막을
    때도 손이 닿는 곳에 같은 동작을 둔다(I-5). */
 #panel-hide-internal { margin-left: auto; padding: 6px 10px; border: 1px solid var(--line);
-                        border-radius: 6px; background: var(--bg); cursor: pointer; }
+                        border-radius: var(--pill); background: var(--surface); cursor: pointer; }
 #panel-close { margin-left: 8px; border: none; background: none;
                font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
 
@@ -146,10 +174,10 @@ body.hide-internal label:has(> .manual-cost) {
 }
 #client-form input, #client-form select,
 #metrics input:not([type="checkbox"]) {
-  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
 }
 #client-form textarea {
-  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
   resize: vertical; font: inherit;
 }
 #metrics label.checkbox { grid-template-columns: auto 1fr; }
@@ -159,12 +187,12 @@ body.hide-internal label:has(> .manual-cost) {
 #keyword-list li { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
 #keyword-list button { border: none; background: none; cursor: pointer; color: var(--muted); }
 
-#metrics { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#metrics { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 #metrics[disabled] { opacity: .5; }
 #metrics legend { font-size: 12px; color: var(--muted); }
 .rank-row { grid-template-columns: 1fr 80px; }
 
-#doc { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#doc { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 #doc[disabled] { opacity: .5; }
 #doc legend { font-size: 12px; color: var(--muted); }
 #doc-msg { margin: 6px 0; font-size: 13px; color: var(--danger); min-height: 1em; }
@@ -174,19 +202,19 @@ body.hide-internal label:has(> .manual-cost) {
 #doc-result ul { list-style: none; margin: 0; padding: 0; max-height: 8em; overflow-y: auto; }
 #doc-result li { display: flex; justify-content: space-between; padding: 1px 0; }
 
-#openub { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#openub { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 #openub[disabled] { opacity: .5; }
 #openub legend { font-size: 12px; color: var(--muted); }
 #openub-msg { margin: 6px 0; font-size: 13px; color: var(--danger); min-height: 1em; }
 #openub-result { font-size: 13px; }
 #openub-result dl { grid-template-columns: 1fr auto; margin-bottom: 6px; }
-#apply-doc { margin-top: 8px; padding: 9px; border-radius: 6px; cursor: pointer;
+#apply-doc { margin-top: 8px; padding: 9px 14px; border-radius: var(--pill); cursor: pointer;
              background: var(--accent); color: #fff; border: 1px solid var(--accent);
              font-weight: 700; }
 #apply-doc:disabled { background: var(--line); border-color: var(--line); cursor: not-allowed; }
 
 #save-client, #save-metrics {
-  padding: 9px; border-radius: 6px; cursor: pointer;
+  padding: 9px 14px; border-radius: var(--pill); cursor: pointer;
   background: var(--accent); color: #fff; border: 1px solid var(--accent); font-weight: 700;
 }
 #client-msg, #metrics-msg { margin: 0; font-size: 13px; color: var(--danger); min-height: 1em; }
