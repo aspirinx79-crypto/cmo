@@ -1974,3 +1974,20 @@ def test_action_buttons_are_readable(page_at, no_network):
       return out;
     }""")
     assert bad == [], f"글자와 배경이 같은 색인 버튼: {bad}"
+
+
+def test_quote_button_is_readable(page_at, no_network):
+    """새 버튼도 글자가 보여야 한다 — 「제안서 만들기」가 흰 글씨에 흰
+    배경이라 빈 알약으로 보인 적이 있다."""
+    expect(page_at.locator("#make-quote")).to_have_text("견적서 만들기")
+    같은색 = page_at.evaluate("""() => {
+      const s = getComputedStyle(document.getElementById('make-quote'));
+      return s.color === s.backgroundColor;
+    }""")
+    assert 같은색 is False
+
+
+def test_quote_defaults_are_vat_included_and_details_on(page_at, no_network):
+    """부가세는 기본 10%, 내역은 기본 펼침이다."""
+    expect(page_at.locator("#quote-vat-out")).not_to_be_checked()
+    expect(page_at.locator("#quote-detail")).to_be_checked()

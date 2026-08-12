@@ -288,6 +288,25 @@
       }
     });
 
+    document.getElementById("make-quote").addEventListener("click", async () => {
+      if (!slug()) { alert("고객사를 먼저 선택하십시오."); return; }
+      const plan = currentPlan();
+      try {
+        // 제안서와 같은 계약이다 — 저장을 거절하면 견적서도 안 만든다.
+        // 거절했는데 견적서가 나오면 화면에 있는 구성이 아니라 예전
+        // 기획안으로 만들어진 물건이라, 들고 나간 사람이 속는다.
+        const r = await savePlanAskingToOverwrite(plan);
+        if (!r.saved) return;
+        const made = await window.API.quote(
+          slug(), plan.월,
+          document.getElementById("quote-vat-out").checked,
+          document.getElementById("quote-detail").checked);
+        alert(`견적서를 만들었습니다.\n${made.경로}`);
+      } catch (err) {
+        alert(`견적서 생성 실패: ${err.message}`);
+      }
+    });
+
     document.getElementById("client-select").addEventListener("change", (e) => {
       loadClientPlan(e.target.value);
     });

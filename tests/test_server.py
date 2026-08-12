@@ -674,3 +674,28 @@ def test_read_openub_blocks_too_many_captures(server, monkeypatch):
                                 "캡처": [_capture(f"{i}.png") for i in range(7)]})
 
     assert status == 400
+
+
+def test_quote_endpoint_makes_a_pdf(server, tmp_data):
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    _post(server, "/api/clients/하루인_인계점/plans/2026-09", PLAN)
+
+    status, body = _post(server, "/api/quote",
+                         {"slug": "하루인_인계점", "월": "2026-09"})
+
+    assert status == 200
+    assert body["경로"].endswith("견적서.pdf")
+    assert Path(body["경로"]).exists()
+
+
+def test_quote_without_a_contract_price_is_blocked(server):
+    """0원짜리 견적서가 고객에게 가는 게 최악이다."""
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    _post(server, "/api/clients/하루인_인계점/plans/2026-09",
+          {**PLAN, "계약가": 0})
+
+    status, body = _post_error(server, "/api/quote",
+                               {"slug": "하루인_인계점", "월": "2026-09"})
+
+    assert status == 400
+    assert "계약가" in body["오류"]

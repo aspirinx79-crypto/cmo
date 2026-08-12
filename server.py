@@ -314,6 +314,23 @@ def make_handler(store: Store, app_dir: Path):
                     out = CMO / "out" / f"{slug}_{month}_제안서.pdf"
                     return self._json({"경로": str(build(payload, out))})
 
+                if path == "/api/quote":
+                    from cmo.build_pdf import QUOTE, build
+                    from cmo.lib.quote import QuoteBlocked, build_quote_payload
+                    slug, month = body["slug"], body["월"]
+                    try:
+                        payload = build_quote_payload(
+                            store.client_read(slug),
+                            store.plan_read(slug, month),
+                            store.products(),
+                            부가세별도=bool(body.get("부가세별도")),
+                            내역펼침=bool(body.get("내역펼침", True)))
+                    except QuoteBlocked as exc:
+                        return self._json({"오류": str(exc)}, 400)
+                    out = CMO / "out" / f"{slug}_{month}_견적서.pdf"
+                    return self._json({"경로": str(build(payload, out,
+                                                         template=QUOTE))})
+
                 if path == "/api/collect":
                     return self._collect(store, body)
 
