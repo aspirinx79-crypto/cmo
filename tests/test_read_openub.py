@@ -153,3 +153,83 @@ def test_parse_also_accepts_an_already_folded_month():
     del raw["기준월들"]
     raw["기준월"] = 6
     assert parse_openub(json.dumps(raw, ensure_ascii=False))["기준월"] == 6
+
+
+def test_read_captures_sends_every_page_in_one_call(monkeypatch):
+    """세 장을 한 번의 호출로 보낸다 — 성별과 연령이 다른 장에 걸쳐 있다."""
+    from cmo.lib import read_openub
+
+    본것 = {}
+
+    def fake_ask(images, prompt, api_key, model=None):
+        본것["장수"] = len(images)
+        본것["프롬프트"] = prompt
+        return json.dumps(RAW, ensure_ascii=False)
+
+    monkeypatch.setattr(read_openub, "ask_model", fake_ask)
+    got = read_openub.read_captures(
+        [(b"\x89PNG-1", "a.png"), (b"\x89PNG-2", "b.png"),
+         (b"\x89PNG-3", "c.png")], "sk-test")
+
+    assert 본것["장수"] == 3
+    assert 본것["프롬프트"] is read_openub.OPENUB_PROMPT
+    assert got["기준월"] == 6
+
+
+def test_read_captures_blocks_too_many(monkeypatch):
+    from cmo.lib import read_openub
+
+    monkeypatch.setattr(read_openub, "ask_model",
+                        lambda *a, **k: json.dumps(RAW, ensure_ascii=False))
+    files = [(b"\x89PNG", f"{i}.png") for i in range(MAX_CAPTURES + 1)]
+    with pytest.raises(ValueError, match="장까지"):
+        read_openub.read_captures(files, "sk-test")
+
+
+def test_read_captures_blocks_too_big(monkeypatch):
+    """합계로 본다. 한 장씩은 작아도 다 더하면 넘을 수 있다."""
+    from cmo.lib import read_doc, read_openub
+
+    monkeypatch.setattr(read_openub, "ask_model",
+                        lambda *a, **k: json.dumps(RAW, ensure_ascii=False))
+    절반 = b"x" * (read_doc.MAX_BYTES // 2 + 1)
+    with pytest.raises(ValueError):
+        read_openub.read_captures([(절반, "a.png"), (절반, "b.png")], "sk-test")
+
+
+def test_read_captures_needs_at_least_one_file(monkeypatch):
+    from cmo.lib import read_openub
+
+    with pytest.raises(ValueError):
+        read_openub.read_captures([], "sk-test")
+
+
+@pytest.mark.network
+def test_real_captures_read_gender_from_the_headline():
+    r"""색이 뒤집힌 성별 차트에서 남녀를 바로 읽는지는 실물로만 확인된다.
+
+    실행하려면 두 가지가 있어야 한다:
+      $env:ANTHROPIC_API_KEY = "sk-..."
+      $env:OPENUB_SAMPLE_DIR = "C:\...\캡처가 든 폴더"
+    폴더의 이미지를 이름순으로 전부 넣는다. 저장소에 캡처를 복사하지 마라.
+    """
+    import os
+    from pathlib import Path
+
+    from cmo.lib.read_doc import api_key_from_env
+    from cmo.lib.read_openub import read_captures
+
+    key = api_key_from_env()
+    folder = os.environ.get("OPENUB_SAMPLE_DIR")
+    if not key or not folder:
+        pytest.skip("ANTHROPIC_API_KEY 또는 OPENUB_SAMPLE_DIR 가 없다")
+
+    paths = sorted(p for p in Path(folder).iterdir()
+                   if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    got = read_captures([(p.read_bytes(), p.name) for p in paths], key)
+
+    assert got["매장명"]
+    assert got["기준월"] in range(1, 13)
+    assert got["성별최다"] in ("남성", "여성")
+    assert 50 <= got["성별최다비율"] <= 100      # 최다인데 절반 미만일 수 없다
+    assert got["매출하한"] < got["매출상한"]
