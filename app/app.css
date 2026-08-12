@@ -68,6 +68,28 @@ main > section {
           border: 1px solid var(--line); border-radius: var(--pill);
           background: var(--panel); }
 
+/* 자주 쓰는 상품 — 서랍 맨 위. 매체 목록과 눈으로 구분되게 옅게 깔았다. */
+.pin-group {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 8px; margin-bottom: 12px;
+}
+.pin-head { font-size: 11px; font-weight: 800; color: var(--accent);
+            letter-spacing: -0.02em; margin-bottom: 4px; }
+.pin-row { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+.pin-row + .pin-row { border-top: 1px solid var(--line); }
+/* 접히는 건 상품명뿐이다. 매체와 가격이 세로로 쪼개지면 「네/이/버」,
+   「50,000 / 원」처럼 읽을 수 없게 된다. */
+.pin-row .name { flex: 0 1 auto; min-width: 0; }
+.pin-row .media { flex: 1; color: var(--muted); font-size: 11px;
+                  white-space: nowrap; }
+.pin-row .price { color: var(--muted); font-variant-numeric: tabular-nums;
+                  white-space: nowrap; }
+.pin-add { flex: 0 0 auto; }
+.pin-add {
+  border: 1px solid var(--accent); color: #fff; background: var(--accent);
+  border-radius: var(--pill); width: 24px; height: 24px; cursor: pointer;
+}
+
 .media-group > summary {
   cursor: pointer; font-weight: 800; padding: 6px 0; list-style: none;
   letter-spacing: -0.025em;

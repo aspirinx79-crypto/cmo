@@ -1991,3 +1991,40 @@ def test_quote_defaults_are_vat_included_and_details_on(page_at, no_network):
     """부가세는 기본 10%, 내역은 기본 펼침이다."""
     expect(page_at.locator("#quote-vat-out")).not_to_be_checked()
     expect(page_at.locator("#quote-detail")).to_be_checked()
+
+
+# ── 자주 쓰는 상품 ────────────────────────────────────────────
+
+def test_pinned_group_sits_at_the_top(page_at, no_network):
+    """서랍 맨 위에 자주 쓰는 상품이 온다."""
+    first = page_at.evaluate(
+        "() => document.getElementById('drawer-list').firstElementChild.className")
+    assert "pin-group" in first
+
+
+def test_pinned_rows_follow_the_frequency_order(page_at, no_network):
+    """카톡 12곳 기록에서 센 순서다. 픽스처에 있는 것만 뜬다."""
+    names = page_at.eval_on_selector_all(
+        ".pin-row .name", "els => els.map(e => e.textContent)")
+    assert names == ["블로그 일반 체험단", "타겟광고"]
+
+
+def test_pinned_rows_do_not_duplicate_product_rows(page_at, no_network):
+    """자주 쓰는 목록은 별도 마크업이다.
+
+    같은 클래스를 쓰면 `.add-btn[data-id=…]` 가 둘을 잡아 기존 테스트가
+    전부 깨진다. 서랍의 매체별 목록은 그대로 3개다.
+    """
+    assert page_at.locator(".product-row").count() == 3
+    assert page_at.locator(".add-btn").count() == 3
+
+
+def test_pinned_add_button_puts_it_on_the_board(page_at, no_network):
+    page_at.click('.pin-add[data-id="네이버-블로그_일반_체험단"]')
+    expect(page_at.locator(".board-card")).to_have_count(1)
+
+
+def test_pinned_rows_are_filtered_by_search(page_at, no_network):
+    page_at.fill("#search", "타겟")
+    보이는것 = [r for r in page_at.locator(".pin-row").all() if r.is_visible()]
+    assert len(보이는것) == 1

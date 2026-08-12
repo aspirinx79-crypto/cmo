@@ -171,3 +171,24 @@ def test_every_client_records_where_it_came_from(cmo_dir):
         assert "마지막 대화" in 메모, f"{entry['slug']}: 상태 근거가 없다"
         assert re.fullmatch(r"\d{4}-\d{2}", client["계약시작"]), \
             f"{entry['slug']}: 계약시작이 YYYY-MM 이 아니다"
+
+
+def test_pinned_products_exist_and_are_sellable(cmo_dir):
+    """자주 쓰는 목록은 실존·판매중인 상품만 가리켜야 한다.
+
+    id 를 오타 내거나 상품이 판매중지되면 서랍 맨 위가 조용히 빈다.
+    """
+    import re
+
+    source = (cmo_dir / "app" / "drawer.js").read_text(encoding="utf-8")
+    block = re.search(r"const FREQUENT = \[(.*?)\];", source, re.S)
+    assert block, "drawer.js 에서 FREQUENT 목록을 못 찾았다"
+    ids = re.findall(r'"([^"]+)"', block.group(1))
+
+    store = Store(cmo_dir / "data")
+    products = {p["id"]: p for p in store.products()}
+
+    assert ids[0] == "네이버-서비스툴관리", "서비스툴관리가 맨 위여야 한다"
+    for pid in ids:
+        assert pid in products, f"없는 상품: {pid}"
+        assert not products[pid]["판매중지"], f"판매중지 상품: {pid}"
