@@ -8,7 +8,7 @@ import re
 SOURCES = (
     "app/index.html", "app/app.css", "app/util.js", "app/api.js",
     "app/drawer.js", "app/board.js", "app/summary.js",
-    "templates/proposal.html",
+    "templates/proposal.html", "templates/quote.html",
 )
 URL_RE = re.compile(r'https?://[^\s"\')]+')
 NAMESPACE_RE = re.compile(r'^https?://(www\.)?w3\.org/')

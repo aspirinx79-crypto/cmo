@@ -164,3 +164,80 @@ def test_openub_pdf_still_hides_forbidden_words(openub_pdf_text):
     """오픈업 카드가 붙어도 기존 금지선은 그대로다."""
     for word in FORBIDDEN_WORDS:
         assert word not in openub_pdf_text, f"제안서에 '{word}' 가 찍혔다"
+
+
+# ── 견적서 ────────────────────────────────────────────────────
+
+QUOTE_CLIENT = {"이름": "하루인 인계점", "업종": "고깃집", "지역": "수원 인계동"}
+QUOTE_PLAN = {"월": "2026-09", "계약가": 1500000, "항목": [
+    {"상품id": "네이버-블로그_일반_체험단", "수량": 10},
+    {"상품id": "네이버-서비스툴관리", "수량": 1}]}
+
+
+@pytest.fixture(scope="module")
+def quote_pdf_text(tmp_path_factory):
+    from cmo.build_pdf import QUOTE, build
+    from cmo.lib.quote import build_quote_payload
+
+    payload = build_quote_payload(QUOTE_CLIENT, QUOTE_PLAN, PRODUCTS)
+    out = tmp_path_factory.mktemp("pdf") / "견적서.pdf"
+    build(payload, out, template=QUOTE)
+    doc = fitz.open(out)
+    text = "".join(doc[i].get_text() for i in range(doc.page_count))
+    pages = doc.page_count
+    doc.close()
+    return {"text": text, "pages": pages}
+
+
+def test_quote_is_one_page(quote_pdf_text):
+    assert quote_pdf_text["pages"] == 1
+
+
+def test_quote_prints_the_totals(quote_pdf_text):
+    text = quote_pdf_text["text"]
+    assert "1,500,000" in text
+    assert "150,000" in text
+    assert "1,650,000" in text
+    assert "vat포함" in text
+
+
+def test_quote_prints_the_header(quote_pdf_text):
+    text = quote_pdf_text["text"]
+    assert "하루인 인계점 CMO 서비스" in text
+    assert "하루인 인계점 귀하" in text
+    assert "15일" in text and "협의" in text
+
+
+def test_quote_prints_the_issuer_from_the_constant(quote_pdf_text):
+    from cmo.lib.quote import QUOTE_ISSUER
+
+    text = quote_pdf_text["text"]
+    assert QUOTE_ISSUER["사업자등록번호"] in text
+    assert QUOTE_ISSUER["전화번호"] in text
+    assert QUOTE_ISSUER["계좌"].split()[0] in text
+
+
+def test_quote_never_shows_cost_words(quote_pdf_text):
+    """견적서도 고객 문서다. 제안서와 같은 금지선이 온다."""
+    for word in FORBIDDEN_WORDS:
+        assert word not in quote_pdf_text["text"], f"견적서에 '{word}' 가 찍혔다"
+
+
+def test_quote_details_carry_no_money(quote_pdf_text):
+    """내역 줄에 항목별 금액이 붙으면 원가 구조가 드러난다."""
+    text = quote_pdf_text["text"]
+    assert "블로그 일반 체험단 10팀" in text
+    assert "300,000" not in text
+    assert "30,000" not in text
+
+
+def test_quote_template_has_no_hardcoded_issuer():
+    """서식과 값이 한 파일에 있으면 값을 고치러 서식을 열게 된다.
+
+    받은 견적서 세 건이 서로 달라진 경로가 그것이다.
+    """
+    from cmo.build_pdf import QUOTE
+
+    source = QUOTE.read_text(encoding="utf-8")
+    for 값 in ("356-88-02874", "1688-2633", "210-112344-04-015", "압구정로2길"):
+        assert 값 not in source, f"서식에 발주처 값 '{값}' 이 박혀 있다"

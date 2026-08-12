@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>견적서</title>
+  <style>
+    /* proposal.html 과 같은 블록이다. 폰트는 저장소 안에서 온다 —
+       CDN 을 쓰면 미팅 장소에서 한글이 깨진 견적서가 나간다. */
+    @font-face {
+      font-family: "Pretendard";
+      src: url("../app/fonts/PretendardVariable.woff2") format("woff2-variations");
+      font-weight: 100 900; font-display: block;
+    }
+    @page { size: A4 portrait; margin: 14mm 12mm; }
+    * { box-sizing: border-box; }
+    body { font-family: "Pretendard", sans-serif; color: #14181f;
+           font-size: 10pt; margin: 0; }
+
+    h1 { font-size: 20pt; letter-spacing: 8pt; text-align: center;
+         margin: 0 0 8mm; font-weight: 800; }
+
+    .head { display: flex; gap: 6mm; margin-bottom: 5mm; }
+    .head table { border-collapse: collapse; }
+    .head th, .head td { border: 0.3mm solid #cbd5e1; padding: 1.6mm 3mm;
+                         font-size: 9pt; text-align: left; }
+    .head th { background: #f1f5f9; font-weight: 700; white-space: nowrap; }
+    .head .who { margin-left: auto; text-align: right; }
+    .who .name { font-size: 12pt; font-weight: 800; margin-top: 2mm; }
+    .note { font-size: 8pt; color: #6b7280; text-align: right; margin: 0 0 2mm; }
+
+    table.items { width: 100%; border-collapse: collapse; }
+    table.items th, table.items td { border: 0.3mm solid #cbd5e1;
+                                     padding: 2mm 3mm; font-size: 9.5pt; }
+    table.items th { background: #f1f5f9; font-weight: 700; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .detail td { border-top: none; color: #475569; font-size: 9pt;
+                 padding-top: 0.6mm; padding-bottom: 0.6mm; }
+
+    .sum { width: 62mm; margin-left: auto; margin-top: 4mm; border-collapse: collapse; }
+    .sum th, .sum td { border: 0.3mm solid #cbd5e1; padding: 2mm 3mm; font-size: 9.5pt; }
+    .sum th { background: #f1f5f9; text-align: left; }
+    .sum .total td, .sum .total th { font-weight: 800; font-size: 11pt; }
+
+    .issuer { margin-top: 10mm; display: grid; grid-template-columns: 1fr 1fr;
+              gap: 1mm 6mm; font-size: 9pt; color: #334155; }
+  </style>
+</head>
+<body>
+  <h1>견 적 서</h1>
+
+  <div class="head">
+    <table>
+      <tr><th>견적내용</th><td id="q-title"></td></tr>
+      <tr><th>견적일자</th><td id="q-date"></td></tr>
+      <tr><th>견적 유효일</th><td id="q-valid"></td></tr>
+      <tr><th>납기일</th><td id="q-due"></td></tr>
+    </table>
+    <div class="who">
+      <div>견적 요청인</div>
+      <div class="name" id="q-who"></div>
+    </div>
+  </div>
+
+  <p class="note">*옵션항목은 할인불가합니다</p>
+
+  <table class="items">
+    <thead>
+      <tr><th style="width:10mm">#</th><th>견적 항목</th>
+          <th style="width:16mm">수량</th><th style="width:28mm">단가</th>
+          <th style="width:30mm">합</th></tr>
+    </thead>
+    <tbody id="q-body"></tbody>
+  </table>
+
+  <table class="sum">
+    <tr><th>합계</th><td class="num" id="q-sum"></td></tr>
+    <tr><th>부가세</th><td class="num" id="q-vat"></td></tr>
+    <tr class="total"><th id="q-total-label"></th><td class="num" id="q-total"></td></tr>
+  </table>
+
+  <div class="issuer" id="q-issuer"></div>
+
+  <script src="../app/util.js"></script>
+  <script>
+    // build_pdf.py 가 window.PAYLOAD 를 주입한 뒤 render() 를 부른다
+    function render() {
+      const P = window.PAYLOAD;
+      const esc = window.Util.escapeHtml;
+      const won = (n) => Number(n || 0).toLocaleString("ko-KR");
+
+      document.getElementById("q-title").textContent = P.견적내용;
+      document.getElementById("q-date").textContent = P.견적일자;
+      document.getElementById("q-valid").textContent = P.유효일;
+      document.getElementById("q-due").textContent = P.납기일;
+      document.getElementById("q-who").textContent = P.요청인;
+
+      document.getElementById("q-body").innerHTML = P.항목.map((it) => {
+        const head =
+          `<tr><td class="num">${it.번호}</td><td>${esc(it.이름)}</td>` +
+          `<td class="num">${it.수량}</td><td class="num">${won(it.단가)}</td>` +
+          `<td class="num">${won(it.합)}</td></tr>`;
+        // 내역 줄에는 금액이 없다. 원가 구조가 드러나면 안 된다.
+        const details = (it.세부 || []).map((d) =>
+          `<tr class="detail"><td></td><td colspan="4">&gt;${esc(d)}</td></tr>`).join("");
+        return head + details;
+      }).join("");
+
+      document.getElementById("q-sum").textContent = won(P.합계);
+      document.getElementById("q-vat").textContent = won(P.부가세);
+      document.getElementById("q-total-label").textContent = P.부가세문구;
+      document.getElementById("q-total").textContent = won(P.총합);
+
+      // 발주처는 payload 에서만 온다. 서식에 박아 두지 않는다 — 값을
+      // 고치러 서식을 열게 되면 서식이 조금씩 달라진다.
+      const I = P.발주처;
+      const 줄 = [
+        ["견적발주처", I.상호], ["담당자", I.담당자],
+        ["사업자등록번호", I.사업자등록번호], ["전화번호", I.전화번호],
+        ["대표자", I.대표자], ["팩스번호", I.팩스번호],
+        ["사업장", I.사업장], ["이메일", I.이메일],
+        ["홈페이지", I.홈페이지], ["", I.계좌],
+      ];
+      document.getElementById("q-issuer").innerHTML = 줄.map(([k, v]) =>
+        `<div>${k ? esc(k) + " : " : ""}${esc(v)}</div>`).join("");
+    }
+  </script>
+</body>
+</html>
