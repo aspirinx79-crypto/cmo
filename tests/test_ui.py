@@ -1951,3 +1951,26 @@ def test_openub_clears_between_stores(page_at, no_network):
     page_at.click("#new-client")
     expect(page_at.locator("#openub-result")).to_be_empty()
     expect(page_at.locator("#apply-openub")).to_be_disabled()
+
+
+def test_action_buttons_are_readable(page_at, no_network):
+    """버튼 글자색과 배경색이 같으면 글자가 사라진다.
+
+    실제로 그랬다 — 「제안서 만들기」가 흰 글씨에 흰 배경이라 빈 알약으로
+    보였다. `#actions button`(ID+요소)이 `#make-proposal`(ID 하나)보다
+    특정도가 높아 배경만 덮이고 글자색은 남은 탓이다. 눈으로만 보면
+    "버튼이 왜 비어 있지" 로 끝나고 원인까지 못 간다.
+    """
+    page_at.goto(page_at.url)
+    page_at.wait_for_selector("#actions button")
+    bad = page_at.evaluate("""() => {
+      const out = [];
+      for (const el of document.querySelectorAll('#actions button, #topbar button')) {
+        const s = getComputedStyle(el);
+        if (s.color === s.backgroundColor && (el.textContent || '').trim()) {
+          out.push(el.id + ' :: ' + s.color);
+        }
+      }
+      return out;
+    }""")
+    assert bad == [], f"글자와 배경이 같은 색인 버튼: {bad}"
