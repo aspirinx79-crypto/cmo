@@ -48,6 +48,12 @@ def _read_document(data, filename, api_key, model=None):
     return read_document(data, filename, api_key)
 
 
+def _read_captures(files, api_key):
+    """오픈업 판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다."""
+    from cmo.lib.read_openub import read_captures
+    return read_captures(files, api_key)
+
+
 def make_handler(store: Store, app_dir: Path):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -179,6 +185,70 @@ def make_handler(store: Store, app_dir: Path):
                                                      snapshot_from(reading)))
             return self._json({"저장": slug})
 
+        # --- 오픈업 판독 ---
+        def _read_openub(self, store, body: dict):
+            """캡처 여러 장을 판독해 돌려준다. **아무것도 저장하지 않는다.**"""
+            import base64 as b64
+
+            from cmo.lib.read_doc import api_key_from_env, name_mismatch
+
+            slug = body["slug"]                 # 없으면 KeyError → 400
+            client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
+
+            key = api_key_from_env()
+            if not key:
+                return self._json({"오류": NO_READ_KEY}, 400)
+
+            try:
+                files = [(b64.b64decode(c["내용"]), c.get("파일명") or "")
+                         for c in (body.get("캡처") or [])]
+            except Exception:
+                return self._json({"오류": "파일을 읽지 못했습니다."}, 400)
+
+            reading = _read_captures(files, key)
+
+            mismatch = name_mismatch(reading.get("매장명"), client)
+            return self._json({"판독": reading,
+                               "저장가능": mismatch is None,
+                               "불일치": mismatch})
+
+        def _apply_openub(self, store, body: dict):
+            """사람이 확인한 판독을 저장한다.
+
+            매장 대조를 **여기서 다시 한다.** 화면이 막았더라도 서버가
+            최종 관문이다.
+
+            들어온 판독을 `parse_openub` 에 **다시 통과시킨다** — 화면이
+            보낸 dict 를 그대로 믿고 저장하면 모양 검사를 한 번도 안 거친
+            값이 매장 폴더에 들어간다. 애드로그 `_apply_doc` 이
+            `parse_reading` 을 다시 태우는 것과 같은 이유다.
+
+            기준월이 없는 판독은 저장하지 않는다 — 섞인 캡처를 파서가
+            끊어 기준월이 비었거나, 화면을 건너뛰고 직접 부른 경우다.
+            기준월 없이 저장하면 어느 달 값인지 영영 알 수 없다.
+
+            `ValueError` 는 `do_POST` 가 이미 400 으로 바꾼다.
+            """
+            from cmo.lib.read_doc import name_mismatch
+            from cmo.lib.read_openub import (merge_openub, openub_entry,
+                                             parse_openub)
+
+            slug = body["slug"]
+            client = store.client_read(slug)
+            reading = parse_openub(json.dumps(body["판독"], ensure_ascii=False))
+
+            mismatch = name_mismatch(reading.get("매장명"), client)
+            if mismatch:
+                return self._json({"오류": mismatch}, 400)
+
+            entry = openub_entry(reading)
+            if not entry.get("기준월"):
+                return self._json({"오류": "기준월을 읽지 못해 저장하지 않습니다."},
+                                  400)
+
+            store.client_write(slug, merge_openub(client, entry))
+            return self._json({"저장": slug})
+
         # --- 라우팅 ---
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -252,6 +322,12 @@ def make_handler(store: Store, app_dir: Path):
 
                 if path == "/api/read-doc/apply":
                     return self._apply_doc(store, body)
+
+                if path == "/api/read-openub":
+                    return self._read_openub(store, body)
+
+                if path == "/api/read-openub/apply":
+                    return self._apply_openub(store, body)
 
                 if path == "/api/clients":
                     return self._json({"slug": store.client_create(body)}, 201)

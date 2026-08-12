@@ -497,3 +497,180 @@ def test_apply_checks_the_store_again_on_the_server(server):
     except urllib.error.HTTPError as exc:
         assert exc.code == 400
         assert "미친양꼬치 잠실점" in json.loads(exc.read().decode("utf-8"))["오류"]
+
+
+OPENUB_READING = {
+    "매장명": "하루인 인계점",
+    "기준월": 6,
+    "매출하한": 46000000,
+    "매출상한": 56000000,
+    "성별최다": "남성",
+    "성별최다비율": 65,
+    "연령최다": "남성 20대",
+    "연령최다비율": 26,
+    "요일최다": "토",
+    "요일최다비율": 25,
+    "평일비율": 65,
+    "시간대최다": "밤",
+    "시간대최다비율": 40,
+}
+
+OPENUB_SLUG = "하루인_인계점"
+
+
+def _capture(name="a.png"):
+    return {"파일명": name,
+            "내용": base64.b64encode(b"\x89PNG").decode("ascii")}
+
+
+def _fake_captures(reading):
+    def fake(files, api_key):
+        return dict(reading)
+    return fake
+
+
+def _post_error(base, path, body):
+    """오류 응답은 urllib 가 예외로 올린다. 코드와 본문을 함께 본다."""
+    try:
+        _post(base, path, body)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+    raise AssertionError("오류가 나야 하는데 성공했다")
+
+
+def test_read_openub_returns_the_reading_without_saving(server, monkeypatch,
+                                                        tmp_data):
+    """판독은 화면만 채운다. 파일은 그대로여야 한다."""
+    import cmo.server as server_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    monkeypatch.setattr(server_mod, "_read_captures",
+                        _fake_captures(OPENUB_READING))
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+    before = (tmp_data / "clients" / OPENUB_SLUG / "client.json").read_text(
+        encoding="utf-8")
+
+    status, body = _post(server, "/api/read-openub",
+                         {"slug": OPENUB_SLUG, "캡처": [_capture()]})
+
+    assert status == 200
+    assert body["저장가능"] is True
+    assert body["판독"]["매출하한"] == 46000000
+    after = (tmp_data / "clients" / OPENUB_SLUG / "client.json").read_text(
+        encoding="utf-8")
+    assert after == before, "판독이 파일을 건드렸다"
+
+
+def test_read_openub_needs_a_key(server, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post_error(server, "/api/read-openub",
+                               {"slug": OPENUB_SLUG, "캡처": [_capture()]})
+
+    assert status == 400
+    assert "키" in body["오류"]
+
+
+def test_read_openub_blocks_a_different_store(server, monkeypatch):
+    """오픈업 캡처도 파일명이 캡처 시각뿐이라 남의 매장 것을 넣기 쉽다."""
+    import cmo.server as server_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    monkeypatch.setattr(server_mod, "_read_captures",
+                        _fake_captures({**OPENUB_READING,
+                                        "매장명": "미친양꼬치 잠실점"}))
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post(server, "/api/read-openub",
+                         {"slug": OPENUB_SLUG, "캡처": [_capture()]})
+
+    assert body["저장가능"] is False
+    assert "미친양꼬치 잠실점" in body["불일치"]
+
+
+def test_apply_openub_keeps_one_entry_per_month(server, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    _post(server, "/api/read-openub/apply",
+          {"slug": OPENUB_SLUG, "판독": dict(OPENUB_READING)})
+    _post(server, "/api/read-openub/apply",
+          {"slug": OPENUB_SLUG, "판독": dict(OPENUB_READING)})
+
+    status, saved = _get(server, f"/api/clients/{OPENUB_SLUG}")
+    assert len(saved["오픈업"]) == 1
+    assert saved["오픈업"][0]["매출"] == {"하한": 46000000, "상한": 56000000}
+    assert saved["오픈업"][0]["기준월"].endswith("-06")
+
+
+def test_apply_openub_does_not_touch_snapshots(server, monkeypatch):
+    """이번 설계의 핵심 — 애드로그 값이 살아남는다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    client = {**CLIENT,
+              "스냅샷": [{"수집시각": "2026-08-12T08:00:00",
+                          "플레이스": {"방문자리뷰": 1082}}]}
+    _post(server, f"/api/clients/{OPENUB_SLUG}", client)
+
+    _post(server, "/api/read-openub/apply",
+          {"slug": OPENUB_SLUG, "판독": dict(OPENUB_READING)})
+
+    status, saved = _get(server, f"/api/clients/{OPENUB_SLUG}")
+    assert saved["스냅샷"][0]["플레이스"]["방문자리뷰"] == 1082
+    assert saved["오픈업"][0]["기준월"].endswith("-06")
+
+
+def test_apply_openub_checks_the_store_again(server, monkeypatch):
+    """화면이 막았더라도 서버가 최종 관문이다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post_error(server, "/api/read-openub/apply",
+                               {"slug": OPENUB_SLUG,
+                                "판독": {**OPENUB_READING,
+                                         "매장명": "미친양꼬치 잠실점"}})
+
+    assert status == 400
+    assert "미친양꼬치 잠실점" in body["오류"]
+    _, saved = _get(server, f"/api/clients/{OPENUB_SLUG}")
+    assert "오픈업" not in saved
+
+
+def test_apply_openub_blocks_a_reading_without_a_month(server, monkeypatch):
+    """기준월 없이 저장하면 어느 달 값인지 영영 알 수 없다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post_error(server, "/api/read-openub/apply",
+                               {"slug": OPENUB_SLUG,
+                                "판독": {**OPENUB_READING, "기준월": None}})
+
+    assert status == 400
+    _, saved = _get(server, f"/api/clients/{OPENUB_SLUG}")
+    assert "오픈업" not in saved
+
+
+def test_apply_openub_rechecks_the_shape(server, monkeypatch):
+    """화면이 보낸 dict 를 그대로 믿고 저장하지 않는다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post_error(server, "/api/read-openub/apply",
+                               {"slug": OPENUB_SLUG,
+                                "판독": {"매장명": "하루인 인계점", "기준월": 6}})
+
+    assert status == 400
+    _, saved = _get(server, f"/api/clients/{OPENUB_SLUG}")
+    assert "오픈업" not in saved
+
+
+def test_read_openub_blocks_too_many_captures(server, monkeypatch):
+    """화면에서 먼저 끊지만 서버도 같은 상한을 본다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "키")
+    _post(server, f"/api/clients/{OPENUB_SLUG}", CLIENT)
+
+    status, body = _post_error(server, "/api/read-openub",
+                               {"slug": OPENUB_SLUG,
+                                "캡처": [_capture(f"{i}.png") for i in range(7)]})
+
+    assert status == 400
