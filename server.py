@@ -302,7 +302,7 @@ def make_handler(store: Store, app_dir: Path):
                     )
 
                 if path == "/api/proposal":
-                    from cmo.build_proposal import build
+                    from cmo.build_pdf import build
                     from cmo.lib.proposal import ProposalBlocked, build_payload
                     slug, month = body["slug"], body["월"]
                     try:

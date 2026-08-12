@@ -6,7 +6,7 @@
 import fitz
 import pytest
 
-from cmo.build_proposal import build
+from cmo.build_pdf import build
 from cmo.lib.proposal import INTERNAL_STEP_WORDS, build_payload
 
 PRODUCTS = [
