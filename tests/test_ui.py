@@ -1837,3 +1837,117 @@ def test_edit_without_selection_warns(page_at):
     page_at.click("#edit-client")
     page_at.wait_for_timeout(200)
     assert not page_at.locator("#client-panel").is_visible()
+
+
+# ── 오픈업 캡처 판독 ──────────────────────────────────────────
+
+OPENUB_OK = {
+    "판독": {"매장명": "하루인 인계점", "기준월": 6,
+             "매출하한": 46000000, "매출상한": 56000000,
+             "성별최다": "남성", "성별최다비율": 65,
+             "연령최다": "남성 20대", "연령최다비율": 26,
+             "요일최다": "토", "요일최다비율": 25,
+             "평일비율": 65,
+             "시간대최다": "밤", "시간대최다비율": 40},
+    "저장가능": True, "불일치": None,
+}
+OPENUB_MISMATCH = {**OPENUB_OK, "저장가능": False,
+                   "불일치": "이 파일은 「미친양꼬치 잠실점」 자료입니다."}
+
+
+def _openub_routes(page, result=None, ready=True):
+    import re
+
+    page.route("**/api/read-doc/ready",
+               lambda r: r.fulfill(status=200, content_type="application/json",
+                                   body=json.dumps({"준비됨": ready})))
+    page.route(re.compile(r"/api/read-openub$"),
+               lambda r: r.fulfill(status=200, content_type="application/json",
+                                   body=json.dumps(result or OPENUB_OK,
+                                                   ensure_ascii=False)))
+
+
+def _drop_captures(page, count=3):
+    page.set_input_files("#openub-file", files=[
+        {"name": f"오픈업{i}.png", "mimeType": "image/png",
+         "buffer": b"\x89PNG-fake"} for i in range(count)])
+
+
+def test_openub_box_is_off_without_key(page_at, no_network):
+    _openub_routes(page_at, ready=False)
+    _register(page_at)
+    expect(page_at.locator("#openub-file")).to_be_disabled()
+    expect(page_at.locator("#openub-msg")).to_contain_text("키")
+
+
+def test_openub_is_locked_for_a_new_client(page_at, no_network):
+    """저장 전 매장에서는 잠겨 있다 — lock() 이 #openub 도 함께 맡는다."""
+    _openub_routes(page_at)
+    page_at.click("#new-client")
+    expect(page_at.locator("#openub")).to_have_attribute("disabled", "")
+
+
+def test_openub_paints_the_reading(page_at, no_network):
+    _openub_routes(page_at)
+    _register(page_at)
+    _drop_captures(page_at)
+    expect(page_at.locator("#openub-result")).to_contain_text("4,600만")
+    expect(page_at.locator("#openub-result")).to_contain_text("남성")
+    expect(page_at.locator("#openub-result")).to_contain_text("남성 20대")
+    expect(page_at.locator("#apply-openub")).to_be_enabled()
+
+
+def test_openub_mismatch_blocks_saving(page_at, no_network):
+    _openub_routes(page_at, result=OPENUB_MISMATCH)
+    _register(page_at)
+    _drop_captures(page_at)
+    expect(page_at.locator("#openub-msg")).to_contain_text("미친양꼬치 잠실점")
+    expect(page_at.locator("#apply-openub")).to_be_disabled()
+
+
+def test_openub_does_not_show_a_preview(page_at, no_network):
+    """캡처에는 월매출이 박혀 있고 「가리기」는 그림을 못 지운다."""
+    _openub_routes(page_at)
+    _register(page_at)
+    _drop_captures(page_at)
+    # 그려진 뒤에 센다 — 응답 전에는 0개라 그냥 통과해 버린다.
+    expect(page_at.locator("#openub-result")).to_contain_text("4,600만")
+    expect(page_at.locator("#openub img")).to_have_count(0)
+    expect(page_at.locator("#openub canvas")).to_have_count(0)
+
+
+def test_openub_blocks_more_than_six_captures(page_at, no_network):
+    """화면에서 먼저 끊는다. 서버도 같은 상한을 다시 본다."""
+    _openub_routes(page_at)
+    _register(page_at)
+    _drop_captures(page_at, count=7)
+    expect(page_at.locator("#openub-msg")).to_contain_text("6장")
+    expect(page_at.locator("#apply-openub")).to_be_disabled()
+
+
+def test_concealment_hides_the_openub_revenue_row(page_at, no_network):
+    """캡처에 박힌 월매출은 「가리기」가 함께 가린다.
+
+    가리기 규칙이 화면마다 다르면 그게 사고가 된다 — 매장 준비 패널
+    설계가 월매출 칸을 내부전용으로 정한 것과 같은 규칙이다.
+    """
+    _openub_routes(page_at)
+    _register(page_at)
+    _drop_captures(page_at)
+    expect(page_at.locator("#openub-result")).to_contain_text("4,600만")
+
+    page_at.click("#panel-hide-internal")
+    expect(page_at.locator("#openub-result .internal-only").first).to_be_hidden()
+    # 나머지 줄은 그대로 보인다 — 가리기는 매출만 덮는다.
+    expect(page_at.locator("#openub-result")).to_contain_text("남성")
+
+
+def test_openub_clears_between_stores(page_at, no_network):
+    _openub_routes(page_at)
+    _register(page_at)
+    _drop_captures(page_at)
+    expect(page_at.locator("#openub-result")).to_contain_text("4,600만")
+    page_at.click("#panel-close")
+    page_at.click("#new-client")
+    expect(page_at.locator("#openub-result")).to_be_empty()
+    expect(page_at.locator("#apply-openub")).to_be_disabled()

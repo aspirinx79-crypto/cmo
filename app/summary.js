@@ -36,6 +36,20 @@
         label.style.removeProperty("display");
       }
     });
+
+    // 판독 결과처럼 input 이 아닌 자리도 가린다. `.manual-cost` 는 입력칸을
+    // 찾아 그 label 을 덮지만, 오픈업 결과는 dt/dd 라 자기 자신을 덮는다.
+    document.querySelectorAll(".internal-only").forEach((node) => {
+      if (hide) {
+        node.setAttribute("hidden", "");
+        // #openub-result dl 이 grid 라 [hidden] 의 UA 규칙을 이긴다.
+        // 위 `.manual-cost` 와 같은 이유로 인라인 !important 로 끈다.
+        node.style.setProperty("display", "none", "important");
+      } else {
+        node.removeAttribute("hidden");
+        node.style.removeProperty("display");
+      }
+    });
   }
 
   function paint(result, items) {

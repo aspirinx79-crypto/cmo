@@ -46,5 +46,7 @@
     readDocReady: () => get("/api/read-doc/ready"),
     readDoc: (body) => post("/api/read-doc", body),
     applyDoc: (body) => post("/api/read-doc/apply", body),
+    readOpenub: (body) => post("/api/read-openub", body),
+    applyOpenub: (body) => post("/api/read-openub/apply", body),
   };
 })();

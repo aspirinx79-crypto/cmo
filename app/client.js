@@ -76,6 +76,7 @@
     paintKeywords();
     paintRankRows();
     clearDoc();               // 앞 매장 판독이 남으면 안 된다
+    clearOpenub();            // 오픈업도 같은 이유로 비운다
     paintLastSnapshot(client);
 
     // 지표 칸은 매장마다 새로 입력한다. 앞 매장 값이 남아 있으면
@@ -121,12 +122,9 @@
   // 나뉘면(open()·saveClient() 에 흩어지면) 한쪽만 고치고 잊는 사고가
   // 난다(I-5).
   function lock(disabled) {
-    if (disabled) {
-      el("metrics").setAttribute("disabled", "");
-      el("doc").setAttribute("disabled", "");
-    } else {
-      el("metrics").removeAttribute("disabled");
-      el("doc").removeAttribute("disabled");
+    for (const id of ["metrics", "doc", "openub"]) {
+      if (disabled) el(id).setAttribute("disabled", "");
+      else el(id).removeAttribute("disabled");
     }
   }
 
@@ -176,10 +174,16 @@
     try {
       const { 준비됨 } = await window.API.readDocReady();
       el("doc-file").disabled = !준비됨;
-      if (!준비됨) say("doc-msg", "판독 키가 없습니다. 손으로 입력하십시오.");
+      el("openub-file").disabled = !준비됨;
+      if (!준비됨) {
+        say("doc-msg", "판독 키가 없습니다. 손으로 입력하십시오.");
+        say("openub-msg", "판독 키가 없습니다. 손으로 입력하십시오.");
+      }
     } catch (err) {
       el("doc-file").disabled = true;
+      el("openub-file").disabled = true;
       say("doc-msg", "판독 준비 상태를 확인하지 못했습니다.");
+      say("openub-msg", "판독 준비 상태를 확인하지 못했습니다.");
     }
 
     // 이전에 열었을 때 실패해 잠갔을 수 있다(위 catch). 이번엔 성공했으니
@@ -363,6 +367,115 @@
     }
   }
 
+  /* 오픈업 캡처 판독.
+
+     애드로그와 같은 원칙이다 — 화면을 채우기만 하고, 저장은 사람이
+     누른다. 미리보기도 띄우지 않는다.
+
+     오픈업은 스냅샷이 아니라 매장 파일의 월별 목록에 쌓인다. 스냅샷으로
+     쌓으면 제안서가 마지막 스냅샷만 읽는 탓에 애드로그 리뷰수·순위가
+     통째로 사라진다. */
+
+  let openubReading = null;
+
+  function clearOpenub() {
+    openubReading = null;
+    el("openub-result").innerHTML = "";
+    say("openub-msg", "");
+    el("apply-openub").disabled = true;
+    el("openub-file").value = "";
+  }
+
+  function 만원(n) {
+    return n === null || n === undefined
+      ? "" : `${Math.round(n / 10000).toLocaleString()}만`;
+  }
+
+  function paintOpenub(got) {
+    const r = got.판독 || {};
+    const rows = [
+      ["기준월", r.기준월 ? `${r.기준월}월` : null],
+      ["추정 매출", r.매출하한 && r.매출상한
+        ? `${만원(r.매출하한)} ~ ${만원(r.매출상한)}원` : null],
+      ["주 고객", r.성별최다 ? `${r.성별최다} ${r.성별최다비율}%` : null],
+      ["최다 연령", r.연령최다 ? `${r.연령최다} ${r.연령최다비율}%` : null],
+      ["최다 요일", r.요일최다 ? `${r.요일최다} ${r.요일최다비율}%` : null],
+      ["평일 비중", r.평일비율 === null || r.평일비율 === undefined
+        ? null : `${r.평일비율}%`],
+      ["최다 시간대", r.시간대최다 ? `${r.시간대최다} ${r.시간대최다비율}%` : null],
+    ];
+    // 매출 줄에는 「가리기」가 걸린다. 캡처에 박힌 월매출은 미팅 자리에서
+    // 보일 이유가 없다 — 매장 준비 패널의 월매출 칸과 같은 규칙이다.
+    const dl = rows.filter(([, v]) => v)
+      .map(([k, v]) => {
+        const 내부 = k === "추정 매출" ? ' class="internal-only"' : "";
+        return `<dt${내부}>${window.Util.escapeHtml(k)}</dt>` +
+               `<dd${내부}>${window.Util.escapeHtml(v)}</dd>`;
+      }).join("");
+    const 못읽음 = rows.filter(([, v]) => !v).map(([k]) => k);
+    el("openub-result").innerHTML = `<dl>${dl}</dl>`;
+    if (got.불일치) say("openub-msg", got.불일치);
+    else if (못읽음.length) say("openub-msg", `못 읽은 항목: ${못읽음.join(" · ")}`);
+    el("apply-openub").disabled = !got.저장가능;
+    openubReading = got.저장가능 ? r : null;
+    // 판독 결과를 새로 그렸다. 가리기가 켜져 있으면 다시 입힌다 —
+    // 안 그러면 가린 상태에서 캡처를 넣는 순간 매출이 드러난다.
+    window.Summary.applyConcealment();
+  }
+
+  async function readOpenub(files) {
+    // readDoc() 과 같은 이유로 요청 시점의 slug 를 잡아 둔다 — 응답이
+    // 오는 사이 다른 매장이 열리면 A 의 판독값이 B 화면에 그려진다.
+    const forSlug = editingSlug;
+    say("openub-msg", "");
+    el("openub-result").innerHTML = "";
+    el("apply-openub").disabled = true;
+
+    if (files.length > 6) {
+      say("openub-msg", "캡처는 6장까지 넣을 수 있습니다.");
+      el("openub-file").value = "";
+      return;
+    }
+
+    el("openub-file").disabled = true;
+    try {
+      const 캡처 = [];
+      for (const file of files) {
+        const dataUrl = await new Promise((ok, no) => {
+          const fr = new FileReader();
+          fr.onload = () => ok(fr.result);
+          fr.onerror = () => no(new Error("파일을 읽지 못했습니다."));
+          fr.readAsDataURL(file);
+        });
+        캡처.push({ 파일명: file.name,
+                    내용: String(dataUrl).split(",")[1] || "" });
+      }
+      const got = await window.API.readOpenub({ slug: forSlug, 캡처 });
+      if (editingSlug !== forSlug) return;
+      paintOpenub(got);
+    } catch (err) {
+      if (editingSlug !== forSlug) return;
+      say("openub-msg", err.message);
+    } finally {
+      if (editingSlug === forSlug) el("openub-file").disabled = false;
+    }
+  }
+
+  async function applyOpenub() {
+    const forSlug = editingSlug;
+    const button = el("apply-openub");
+    button.disabled = true;
+    try {
+      await window.API.applyOpenub({ slug: forSlug, 판독: openubReading });
+      if (editingSlug !== forSlug) return;
+      say("openub-msg", "판독값을 저장했습니다.", true);
+    } catch (err) {
+      if (editingSlug !== forSlug) return;
+      say("openub-msg", err.message);
+      button.disabled = false;
+    }
+  }
+
   window.ClientPanel = { open };
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -396,5 +509,11 @@
       if (file) readDoc(file);
     });
     el("apply-doc").addEventListener("click", applyDoc);
+
+    el("openub-file").addEventListener("change", (e) => {
+      const files = [...(e.target.files || [])];
+      if (files.length) readOpenub(files);
+    });
+    el("apply-openub").addEventListener("click", applyOpenub);
   });
 })();

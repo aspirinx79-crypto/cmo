@@ -173,6 +173,13 @@ body.hide-internal label:has(> .manual-cost) {
 #doc-result dl { grid-template-columns: 1fr auto; margin-bottom: 6px; }
 #doc-result ul { list-style: none; margin: 0; padding: 0; max-height: 8em; overflow-y: auto; }
 #doc-result li { display: flex; justify-content: space-between; padding: 1px 0; }
+
+#openub { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+#openub[disabled] { opacity: .5; }
+#openub legend { font-size: 12px; color: var(--muted); }
+#openub-msg { margin: 6px 0; font-size: 13px; color: var(--danger); min-height: 1em; }
+#openub-result { font-size: 13px; }
+#openub-result dl { grid-template-columns: 1fr auto; margin-bottom: 6px; }
 #apply-doc { margin-top: 8px; padding: 9px; border-radius: 6px; cursor: pointer;
              background: var(--accent); color: #fff; border: 1px solid var(--accent);
              font-weight: 700; }
