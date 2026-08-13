@@ -24,7 +24,8 @@ from .collect import require_https, short_error
 # 판독 결과에서 받아들이는 칸. 화이트리스트다 — 모델이 없는 칸을
 # 지어내도 통과시키지 않는다.
 READING_KEYS = ("플레이스ID", "플레이스명", "카테고리", "방문자리뷰",
-                "블로그리뷰", "저장수", "총키워드", "TOP3", "TOP10", "순위")
+                "블로그리뷰", "저장수", "총키워드", "TOP3", "TOP10", "순위",
+                "기준일", "비교일", "대표키워드", "히든키워드", "리뷰")
 
 _NUMBER_KEYS = ("방문자리뷰", "블로그리뷰", "저장수", "총키워드", "TOP3", "TOP10")
 
@@ -60,11 +61,29 @@ PROMPT = """이 그림은 애드로그(adlog)의 「플레이스 종합분석」
   "총키워드": 정수,
   "TOP3": 정수,
   "TOP10": 정수,
-  "순위": [{"키워드": "문자열", "순위": 정수}]
+  "순위": [{"키워드": "문자열", "순위": 정수, "순위권밖": true/false,
+            "조회수": 정수, "비교순위": 정수}],
+  "기준일": "순위 추이 표 첫(가장 왼쪽) 날짜 열의 날짜. 08-12 처럼",
+  "비교일": "순위 추이 표 마지막(가장 오른쪽) 날짜 열의 날짜",
+  "대표키워드": ["기본정보의 대표키워드"],
+  "히든키워드": ["히든 키워드 영역에 나열된 말들"],
+  "리뷰": {
+    "방문자": [{"제목": "문자열", "조회수": 정수, "작성일": "2026-07-16",
+                "작성자": "문자열"}],
+    "블로그": [{"제목": "문자열", "작성일": "2026-05-26",
+                "실명여부": "문자열"}]
+  }
 }
 
 규칙:
 - 읽을 수 없는 값은 null 로 둬라. 짐작해서 채우지 마라.
+- **순위 칸이 "-" 면 순위권 밖이다.** "순위권밖": true 로 하고 "순위" 는
+  null 로 둬라. 못 읽은 것과 다르다 — 이건 「그 키워드에서 안 보인다」는
+  사실이다.
+- "조회수" 는 키워드 옆에 「5,740건」처럼 적혀 있다. 숫자만 넣어라.
+- "순위" 는 추이 표의 **가장 왼쪽 날짜 열**, "비교순위" 는 **가장 오른쪽
+  날짜 열**이다. 가운데 열들은 읽지 마라.
+- 리뷰는 화면에 보이는 줄만 담아라. 스크롤 밖은 지어내지 마라.
 - 방문자리뷰·블로그리뷰·저장수는 「일자별 추이」의 **그래프에서 읽되,
   세로 축 눈금이 아니라 가장 오른쪽 마지막 점에 붙은 라벨**을 읽어라.
   축 눈금과 실제 값은 다르다.
@@ -95,6 +114,45 @@ def _text(value) -> str:
     return str(value).strip() if isinstance(value, str) else ""
 
 
+def _rank_row(raw_row: dict) -> dict | None:
+    """순위 한 줄. `-` 는 순위권 밖이고 null 은 모르는 것이다.
+
+    둘을 섞으면 「서초맛집 순위 없음」이 「조사 안 했음」으로 읽힌다.
+    실물에서 월 5,740번 검색되는 키워드가 바로 그 `-` 였다.
+    """
+    keyword = _text(raw_row.get("키워드"))
+    if not keyword:
+        return None
+    rank = _num(raw_row.get("순위"))
+    outside = bool(raw_row.get("순위권밖"))
+    volume = _num(raw_row.get("조회수"))
+    if rank is None and not outside and volume is None:
+        return None            # 아무것도 못 읽은 줄이다
+    return {
+        "키워드": keyword,
+        "순위": rank,
+        "순위권밖": outside,
+        "조회수": volume,
+        "비교순위": _num(raw_row.get("비교순위")),
+    }
+
+
+def _review_rows(raw, keys: tuple[str, ...]) -> list[dict]:
+    """리뷰 목록 한 갈래. 제목이 없는 줄은 버린다."""
+    out = []
+    for r in (raw or []):
+        if not isinstance(r, dict):
+            continue
+        title = _text(r.get("제목"))
+        if not title:
+            continue
+        row = {"제목": title}
+        for key in keys:
+            row[key] = _num(r.get(key)) if key == "조회수" else _text(r.get(key))
+        out.append(row)
+    return out
+
+
 def parse_reading(text: str) -> dict:
     """모델 응답 글자에서 판독 dict 를 꺼낸다.
 
@@ -119,12 +177,19 @@ def parse_reading(text: str) -> dict:
         "플레이스ID": _text(raw.get("플레이스ID")),
         "플레이스명": _text(raw.get("플레이스명")) or None,
         "카테고리": _text(raw.get("카테고리")),
-        "순위": [
-            {"키워드": _text(r.get("키워드")), "순위": _num(r.get("순위"))}
-            for r in (raw.get("순위") or [])
-            if isinstance(r, dict) and _text(r.get("키워드"))
-            and _num(r.get("순위")) is not None
-        ],
+        "기준일": _text(raw.get("기준일")) or None,
+        "비교일": _text(raw.get("비교일")) or None,
+        "대표키워드": [_text(x) for x in (raw.get("대표키워드") or []) if _text(x)],
+        "히든키워드": [_text(x) for x in (raw.get("히든키워드") or []) if _text(x)],
+        "순위": [row for row in
+                 (_rank_row(r) for r in (raw.get("순위") or [])
+                  if isinstance(r, dict))
+                 if row],
+    }
+    리뷰 = raw.get("리뷰") or {}
+    out["리뷰"] = {
+        "방문자": _review_rows(리뷰.get("방문자"), ("조회수", "작성일")),
+        "블로그": _review_rows(리뷰.get("블로그"), ("작성일", "실명여부")),
     }
     for key in _NUMBER_KEYS:
         out[key] = _num(raw.get(key))

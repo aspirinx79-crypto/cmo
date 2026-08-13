@@ -58,11 +58,18 @@ def test_parse_reading_turns_unreadable_numbers_into_none_not_zero():
 
 
 def test_parse_reading_drops_rank_rows_without_a_number():
+    """순위도 조회수도 순위권밖 표시도 없는 줄은 버린다. 이름 없는 줄도.
+
+    줄 모양이 넓어졌다(조회수·순위권밖·비교순위가 붙었다). 여기서 보는
+    것은 「무엇을 버리는가」이므로 남은 키워드로 단언한다 — 모양을 통째로
+    고정하면 칸이 하나 늘 때마다 이 테스트가 뜻 없이 깨진다.
+    """
     got = parse_reading(json.dumps(
         {**READING, "순위": [{"키워드": "가", "순위": 3},
                              {"키워드": "나", "순위": None},
                              {"키워드": "", "순위": 5}]}, ensure_ascii=False))
-    assert got["순위"] == [{"키워드": "가", "순위": 3}]
+    assert [r["키워드"] for r in got["순위"]] == ["가"]
+    assert got["순위"][0]["순위"] == 3
 
 
 @pytest.mark.parametrize("text", ["", "못 읽었습니다", "{", "[]"])
@@ -350,3 +357,80 @@ def test_name_mismatch_is_the_one_rule():
     assert "매장 이름을 읽지 못했습니다" in name_mismatch("", client)
     # 애드로그 쪽 입구는 그대로 돈다.
     assert store_mismatch({"플레이스명": "하루인 인계점"}, client) is None
+
+
+# ── 보강 판독: 조회수·순위권밖·비교순위·히든키워드·리뷰 ──────────
+
+RICH = {
+    "플레이스ID": "2038790815",
+    "플레이스명": "서경한우프라자 예술의전당점",
+    "카테고리": "육류,고기요리",
+    "방문자리뷰": 775, "블로그리뷰": 1415, "저장수": 100,
+    "총키워드": 51, "TOP3": 6, "TOP10": 11,
+    "기준일": "08-12", "비교일": "07-29",
+    "대표키워드": ["방배역가족모임밥집", "서초역고기집회식"],
+    "히든키워드": ["예술의전당한우", "방배역 곰탕"],
+    "순위": [
+        {"키워드": "서초맛집", "순위": None, "순위권밖": True,
+         "조회수": 5740, "비교순위": 81},
+        {"키워드": "방배동맛집", "순위": 77, "조회수": 4900, "비교순위": 18},
+        {"키워드": "예술의전당정육식당", "순위": 1, "조회수": 50, "비교순위": 1},
+    ],
+    "리뷰": {
+        "방문자": [{"제목": "아이들이 한우 먹고싶다고", "조회수": 1479,
+                    "작성일": "2026-07-16", "작성자": "ljw20566"}],
+        "블로그": [{"제목": "방배동 소고기 맛집 추천", "작성일": "2026-05-26",
+                    "실명여부": "톰바미설치"}],
+    },
+}
+
+
+def test_parse_reads_search_volume_and_outside_rank():
+    got = parse_reading(json.dumps(RICH, ensure_ascii=False))
+    첫줄 = got["순위"][0]
+    assert 첫줄["키워드"] == "서초맛집"
+    assert 첫줄["조회수"] == 5740
+    assert 첫줄["순위권밖"] is True
+    assert 첫줄["순위"] is None
+    assert 첫줄["비교순위"] == 81
+
+
+def test_outside_rank_is_not_confused_with_unknown():
+    """`-` 는 순위권 밖이라는 사실이고 null 은 모른다는 사실이다."""
+    raw = json.loads(json.dumps(RICH, ensure_ascii=False))
+    raw["순위"].append({"키워드": "모르는키워드", "순위": None, "조회수": 12})
+    got = parse_reading(json.dumps(raw, ensure_ascii=False))
+    모름 = next(r for r in got["순위"] if r["키워드"] == "모르는키워드")
+    assert 모름["순위권밖"] is False
+    assert 모름["순위"] is None
+
+
+def test_parse_reads_the_two_dates():
+    got = parse_reading(json.dumps(RICH, ensure_ascii=False))
+    assert got["기준일"] == "08-12"
+    assert got["비교일"] == "07-29"
+
+
+def test_parse_reads_keyword_lists():
+    got = parse_reading(json.dumps(RICH, ensure_ascii=False))
+    assert got["히든키워드"] == ["예술의전당한우", "방배역 곰탕"]
+    assert got["대표키워드"][0] == "방배역가족모임밥집"
+
+
+def test_parse_reads_reviews_including_internal_marks():
+    """실명여부까지 읽어 둔다. 제안서에서 빼는 건 proposal 쪽 일이다."""
+    got = parse_reading(json.dumps(RICH, ensure_ascii=False))
+    방문 = got["리뷰"]["방문자"][0]
+    assert 방문["제목"].startswith("아이들이")
+    assert 방문["조회수"] == 1479
+    assert got["리뷰"]["블로그"][0]["실명여부"] == "톰바미설치"
+
+
+def test_old_readings_without_the_new_fields_still_parse():
+    """기존 PDF 한 장만 넣으면 새 칸이 없다. 그래도 통과해야 한다."""
+    got = parse_reading(json.dumps(READING, ensure_ascii=False))
+    assert got["기준일"] is None
+    assert got["히든키워드"] == []
+    assert got["리뷰"] == {"방문자": [], "블로그": []}
+    assert got["순위"][0]["조회수"] is None
+    assert got["순위"][0]["순위권밖"] is False
