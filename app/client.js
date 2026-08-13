@@ -313,7 +313,7 @@
     reading = got.저장가능 ? r : null;
   }
 
-  async function readDoc(file) {
+  async function readDoc(files) {
     // 응답이 오는 사이 패널이 닫히고 다른 매장이 열리면 editingSlug 가
     // 바뀐다. 그 시점의 slug 를 잡아 두고, 응답을 적용하기 전에 아직도
     // 같은 매장인지 다시 확인한다 — 다르면 A 의 판독값이 B 화면에 그려진다.
@@ -322,18 +322,29 @@
     el("doc-warn").textContent = "";
     el("doc-result").innerHTML = "";
     el("apply-doc").disabled = true;
+
+    if (files.length > 6) {
+      say("doc-msg", "캡처는 6장까지 넣을 수 있습니다.");
+      el("doc-file").value = "";
+      return;
+    }
+
     el("doc-file").disabled = true;
     try {
-      const dataUrl = await new Promise((ok, no) => {
-        const fr = new FileReader();
-        fr.onload = () => ok(fr.result);
-        fr.onerror = () => no(new Error("파일을 읽지 못했습니다."));
-        fr.readAsDataURL(file);
-      });
-      const got = await window.API.readDoc({
-        slug: forSlug, 파일명: file.name,
-        내용: String(dataUrl).split(",")[1] || "",
-      });
+      // 조회수는 순위 추이 표에, 리뷰 목록은 기본정보 화면에 있다.
+      // 여러 장을 함께 보내야 한 매장의 그림이 맞춰진다.
+      const 캡처 = [];
+      for (const file of files) {
+        const dataUrl = await new Promise((ok, no) => {
+          const fr = new FileReader();
+          fr.onload = () => ok(fr.result);
+          fr.onerror = () => no(new Error("파일을 읽지 못했습니다."));
+          fr.readAsDataURL(file);
+        });
+        캡처.push({ 파일명: file.name,
+                    내용: String(dataUrl).split(",")[1] || "" });
+      }
+      const got = await window.API.readDoc({ slug: forSlug, 캡처 });
       if (editingSlug !== forSlug) return;   // 그 사이 매장이 바뀌었다 — 조용히 버린다
       paintReading(got);
     } catch (err) {
@@ -505,8 +516,8 @@
     });
 
     el("doc-file").addEventListener("change", (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (file) readDoc(file);
+      const files = [...(e.target.files || [])];
+      if (files.length) readDoc(files);
     });
     el("apply-doc").addEventListener("click", applyDoc);
 

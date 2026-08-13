@@ -2028,3 +2028,18 @@ def test_pinned_rows_are_filtered_by_search(page_at, no_network):
     page_at.fill("#search", "타겟")
     보이는것 = [r for r in page_at.locator(".pin-row").all() if r.is_visible()]
     assert len(보이는것) == 1
+
+
+def test_doc_takes_several_files(page_at, no_network):
+    """애드로그도 캡처를 여러 장 받는다 — 조회수와 리뷰가 다른 화면에 있다."""
+    expect(page_at.locator("#doc-file")).to_have_attribute("multiple", "")
+
+
+def test_doc_blocks_more_than_six(page_at, no_network):
+    _doc_routes(page_at)
+    _register(page_at)
+    page_at.set_input_files("#doc-file", files=[
+        {"name": f"{i}.png", "mimeType": "image/png", "buffer": b"\x89PNG"}
+        for i in range(7)])
+    expect(page_at.locator("#doc-msg")).to_contain_text("6장")
+    expect(page_at.locator("#apply-doc")).to_be_disabled()
