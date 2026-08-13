@@ -266,6 +266,16 @@ def snapshot_from(reading: dict) -> dict:
         "순위": list(reading.get("순위") or []),
         "예상매출": None,
         "순위요약": {k: reading.get(k) for k in ("총키워드", "TOP3", "TOP10")},
+        # 한 시점의 사실이라 같은 묶음에 둔다. 나눠 두면 나중에 두 시점을
+        # 비교할 때 축이 어긋난다 — 원 스펙 §11 이 세 출처를 한 스냅샷에
+        # 묶은 것과 같은 이유다.
+        "진단": {
+            "기준일": reading.get("기준일"),
+            "비교일": reading.get("비교일"),
+            "대표키워드": list(reading.get("대표키워드") or []),
+            "히든키워드": list(reading.get("히든키워드") or []),
+            "리뷰": reading.get("리뷰") or {"방문자": [], "블로그": []},
+        },
     }
 
 

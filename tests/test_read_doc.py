@@ -122,9 +122,13 @@ def test_truncation_warning_is_silent_when_total_is_unknown():
 def test_snapshot_matches_the_existing_shape():
     """새 저장 형식을 만들지 않는다 — 제안서·화면이 그대로 받아야 한다."""
     snap = snapshot_from(READING)
-    assert set(snap) == {"수집시각", "플레이스", "순위", "예상매출", "순위요약"}
+    assert set(snap) == {"수집시각", "플레이스", "순위", "예상매출", "순위요약",
+                         "진단"}
     assert snap["플레이스"] == {"방문자리뷰": 312, "블로그리뷰": 14, "저장수": 88}
-    assert snap["순위"][0] == {"키워드": "인계동 삼겹살", "순위": 3}
+    # 줄에 조회수·순위권밖·비교순위가 붙었다. 여기서 보는 것은 「기존
+    # 모양을 지켰는가」이므로 값으로 단언한다.
+    assert snap["순위"][0]["키워드"] == "인계동 삼겹살"
+    assert snap["순위"][0]["순위"] == 3
     assert snap["예상매출"] is None
     assert snap["순위요약"] == {"총키워드": 3, "TOP3": 1, "TOP10": 2}
 

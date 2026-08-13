@@ -647,3 +647,99 @@ def test_payload_skips_openub_entries_without_a_month():
     client = dict(CLIENT, 오픈업=[{"기준월": None, "매출": None}, OPENUB_ENTRY])
     payload = build_payload(client, PLAN, PRODUCTS)
     assert payload["오픈업"]["기준월"] == "2026-06"
+
+
+# ── 진단자료: 기회표·변화·히든키워드·리뷰 ─────────────────────
+
+RICH_SNAP = {
+    "수집시각": "2026-08-13T09:00:00",
+    "플레이스": {"방문자리뷰": 775, "블로그리뷰": 1415, "저장수": 100},
+    "순위": [
+        {"키워드": "서초맛집", "순위": None, "순위권밖": True,
+         "조회수": 5740, "비교순위": 81},
+        {"키워드": "방배동맛집", "순위": 77, "순위권밖": False,
+         "조회수": 4900, "비교순위": 18},
+        {"키워드": "방배동 회식", "순위": 5, "순위권밖": False,
+         "조회수": 10, "비교순위": 22},
+        {"키워드": "예술의전당정육식당", "순위": 1, "순위권밖": False,
+         "조회수": 50, "비교순위": 1},
+    ],
+    "예상매출": None,
+    "순위요약": {"총키워드": 51, "TOP3": 6, "TOP10": 11},
+    "진단": {
+        "기준일": "08-12", "비교일": "07-29",
+        "대표키워드": ["방배역가족모임밥집"],
+        "히든키워드": ["예술의전당한우", "방배역 곰탕", "방배동한우"],
+        "리뷰": {
+            "방문자": [{"제목": "아이들이 한우 먹고싶다고", "조회수": 1479,
+                        "작성일": "2026-07-16", "작성자": "ljw20566"}],
+            "블로그": [{"제목": "방배동 소고기 맛집 추천",
+                        "작성일": "2026-05-26", "실명여부": "톰바미설치"}],
+        },
+    },
+}
+RICH_CLIENT = dict(CLIENT, 스냅샷=[RICH_SNAP])
+
+
+def test_opportunity_table_is_sorted_by_search_volume():
+    표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["기회표"]
+    assert [r["키워드"] for r in 표][:2] == ["서초맛집", "방배동맛집"]
+    assert 표[0]["조회수"] == 5740
+    assert 표[0]["순위표시"] == "30위 밖"
+    assert 표[1]["순위표시"] == "77위"
+
+
+def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
+    """조회수가 가장 큰데 안 잡힌 키워드와, 1위인데 조회수가 작은 키워드."""
+    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["헤드라인"]
+    assert "5,740" in 문장
+    assert "서초맛집" in 문장
+    assert "예술의전당정육식당" in 문장
+
+
+def test_rank_moves_are_split_into_up_and_down():
+    변화 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["변화"]
+    assert 변화["기준일"] == "08-12" and 변화["비교일"] == "07-29"
+    # 서초맛집은 81위에서 순위권 밖으로 밀렸다 — 그것도 내림이다.
+    # 낙폭이 큰 순서로 선다.
+    assert [r["키워드"] for r in 변화["내림"]] == ["서초맛집", "방배동맛집"]
+    assert 변화["내림"][0]["전"] == "81위"
+    assert 변화["내림"][0]["후"] == "30위 밖"
+    assert [r["키워드"] for r in 변화["오름"]] == ["방배동 회식"]
+
+
+def test_hidden_keywords_carry_a_count():
+    히든 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["히든키워드"]
+    assert 히든["개수"] == 3
+    assert "예술의전당한우" in 히든["목록"]
+
+
+def test_reviews_drop_internal_marks_and_author_ids():
+    """실명여부·톰바설치는 우리 사정이고 작성자 아이디는 개인정보다."""
+    payload = build_payload(RICH_CLIENT, PLAN, PRODUCTS)
+    blob = json.dumps(payload, ensure_ascii=False)
+    assert "톰바" not in blob
+    assert "실명여부" not in blob
+    assert "ljw20566" not in blob
+    assert "작성자" not in blob
+    리뷰 = payload["진단자료"]["리뷰"]
+    assert 리뷰["방문자수"] == 775 and 리뷰["블로그수"] == 1415
+    assert 리뷰["많이읽힌"][0]["조회수"] == 1479
+
+
+def test_sections_vanish_when_there_is_nothing_to_show():
+    """기존 PDF 한 장만 넣은 매장은 네 장이 통째로 빠진다."""
+    진단 = build_payload(CLIENT, PLAN, PRODUCTS)["진단자료"]
+    assert 진단["기회표"] is None
+    assert 진단["헤드라인"] is None
+    assert 진단["변화"] is None
+    assert 진단["히든키워드"] is None
+
+
+def test_opportunity_table_needs_search_volume():
+    """순위만 있고 조회수가 없으면 기회표가 안 나온다."""
+    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
+    for row in snap["순위"]:
+        row["조회수"] = None
+    진단 = build_payload(dict(CLIENT, 스냅샷=[snap]), PLAN, PRODUCTS)["진단자료"]
+    assert 진단["기회표"] is None

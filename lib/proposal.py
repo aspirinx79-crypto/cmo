@@ -98,6 +98,119 @@ def _openub(client: dict) -> dict | None:
     return {k: 최신.get(k) for k in _OPENUB_KEYS}
 
 
+# 순위권 밖 표기. 애드로그가 30위까지만 추적한다.
+OUTSIDE_LABEL = "30위 밖"
+TOP_KEYWORDS = 8
+TOP_MOVES = 5
+TOP_REVIEWS = 3
+
+
+def _rank_label(row: dict) -> str:
+    if row.get("순위권밖"):
+        return OUTSIDE_LABEL
+    return f"{row['순위']}위" if row.get("순위") is not None else "—"
+
+
+def _opportunity(ranks: list[dict]) -> list[dict] | None:
+    """조회수 있는 줄만, 큰 순서로.
+
+    조회수가 하나도 없으면 장이 통째로 빠진다 — 빈 표를 만들면
+    「자료를 못 구했다」가 「그런 게 없다」로 읽힌다.
+    """
+    있는것 = [r for r in ranks if r.get("조회수") is not None]
+    if not 있는것:
+        return None
+    있는것 = sorted(있는것, key=lambda r: r["조회수"], reverse=True)
+    return [{"키워드": r["키워드"], "조회수": r["조회수"],
+             "순위표시": _rank_label(r)} for r in 있는것[:TOP_KEYWORDS]]
+
+
+def _headline(ranks: list[dict]) -> str | None:
+    """조회수가 가장 큰데 안 잡힌 키워드와, 1위인데 조회수가 작은 키워드를 짝짓는다.
+
+    **문장 틀을 코드에 고정한다.** 모델에게 문장을 짓게 하지 않는다 —
+    사장님 앞에 나가는 글이고, 판독이 흔들리는 날 문장까지 흔들리면
+    손쓸 수가 없다.
+    """
+    있는것 = [r for r in ranks if r.get("조회수") is not None]
+    놓친것 = [r for r in 있는것
+              if r.get("순위권밖") or (r.get("순위") or 0) > 10]
+    잡은것 = [r for r in 있는것
+              if not r.get("순위권밖") and (r.get("순위") or 99) <= 3]
+    if not 놓친것 or not 잡은것:
+        return None
+    큰것 = max(놓친것, key=lambda r: r["조회수"])
+    작은것 = min(잡은것, key=lambda r: r["조회수"])
+    return (f"월 {큰것['조회수']:,}번 검색되는 「{큰것['키워드']}」에서 "
+            f"아직 안 보입니다. 지금 {_rank_label(작은것)}인 "
+            f"「{작은것['키워드']}」는 월 {작은것['조회수']:,}건짜리입니다.")
+
+
+def _moves(ranks: list[dict], 진단: dict) -> dict | None:
+    """비교순위가 있는 줄만. 오른 것과 내린 것을 가른다."""
+    쓸것 = [r for r in ranks
+            if r.get("비교순위") is not None
+            and (r.get("순위") is not None or r.get("순위권밖"))]
+    if not 쓸것:
+        return None
+
+    def 지금(r):
+        return 999 if r.get("순위권밖") else r["순위"]
+
+    오름 = sorted((r for r in 쓸것 if 지금(r) < r["비교순위"]),
+                  key=lambda r: r["비교순위"] - 지금(r), reverse=True)
+    내림 = sorted((r for r in 쓸것 if 지금(r) > r["비교순위"]),
+                  key=lambda r: 지금(r) - r["비교순위"], reverse=True)
+    if not 오름 and not 내림:
+        return None
+
+    def 줄(r):
+        return {"키워드": r["키워드"], "전": f"{r['비교순위']}위",
+                "후": _rank_label(r)}
+
+    return {"기준일": 진단.get("기준일"), "비교일": 진단.get("비교일"),
+            "오름": [줄(r) for r in 오름[:TOP_MOVES]],
+            "내림": [줄(r) for r in 내림[:TOP_MOVES]]}
+
+
+def _hidden(진단: dict) -> dict | None:
+    목록 = 진단.get("히든키워드") or []
+    return {"개수": len(목록), "목록": 목록} if 목록 else None
+
+
+def _reviews(진단: dict, metrics: dict) -> dict | None:
+    """리뷰 제목만 싣는다.
+
+    실명여부·톰바설치는 우리 내부 사정이고 작성자 아이디는 개인정보다.
+    화이트리스트로 걸러 낸다 — 판독은 해 두되 여기서 안 내보낸다.
+    """
+    방문 = (진단.get("리뷰") or {}).get("방문자") or []
+    많이 = sorted((r for r in 방문 if r.get("조회수") is not None),
+                  key=lambda r: r["조회수"], reverse=True)[:TOP_REVIEWS]
+    if metrics.get("방문자리뷰") is None and not 많이:
+        return None
+    return {
+        "방문자수": metrics.get("방문자리뷰"),
+        "블로그수": metrics.get("블로그리뷰"),
+        "많이읽힌": [{"제목": r["제목"], "조회수": r["조회수"],
+                      "작성일": r.get("작성일", "")} for r in 많이],
+    }
+
+
+def _diagnosis(client: dict, metrics: dict) -> dict:
+    """검색 현황 네 장. 값이 없는 장은 None 이고 서식이 통째로 감춘다."""
+    snap = _latest_snapshot(client)
+    ranks = snap.get("순위") or []
+    진단 = snap.get("진단") or {}
+    return {
+        "기회표": _opportunity(ranks),
+        "헤드라인": _headline(ranks),
+        "변화": _moves(ranks, 진단),
+        "히든키워드": _hidden(진단),
+        "리뷰": _reviews(진단, metrics),
+    }
+
+
 def _quantity_label(product: dict, item: dict) -> str:
     unit = product.get("단위") or "건"
     if product["가격유형"] == "예산배율":
@@ -367,6 +480,7 @@ def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
         "진단": plan.get("진단메모", ""),
         "지표": _metrics(client),
         "오픈업": _openub(client),
+        "진단자료": _diagnosis(client, _metrics(client)),
         "구성": lines,
         "정가합": 정가합,
         "계약가": 계약가,
