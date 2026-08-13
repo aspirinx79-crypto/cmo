@@ -157,7 +157,7 @@ def test_parse_also_accepts_an_already_folded_month():
 
 def test_read_captures_sends_every_page_in_one_call(monkeypatch):
     """세 장을 한 번의 호출로 보낸다 — 성별과 연령이 다른 장에 걸쳐 있다."""
-    from cmo.lib import read_openub
+    from cmo.lib import captures, read_openub
 
     본것 = {}
 
@@ -166,7 +166,7 @@ def test_read_captures_sends_every_page_in_one_call(monkeypatch):
         본것["프롬프트"] = prompt
         return json.dumps(RAW, ensure_ascii=False)
 
-    monkeypatch.setattr(read_openub, "ask_model", fake_ask)
+    monkeypatch.setattr(captures, "ask_model", fake_ask)
     got = read_openub.read_captures(
         [(b"\x89PNG-1", "a.png"), (b"\x89PNG-2", "b.png"),
          (b"\x89PNG-3", "c.png")], "sk-test")
@@ -177,9 +177,9 @@ def test_read_captures_sends_every_page_in_one_call(monkeypatch):
 
 
 def test_read_captures_blocks_too_many(monkeypatch):
-    from cmo.lib import read_openub
+    from cmo.lib import captures, read_openub
 
-    monkeypatch.setattr(read_openub, "ask_model",
+    monkeypatch.setattr(captures, "ask_model",
                         lambda *a, **k: json.dumps(RAW, ensure_ascii=False))
     files = [(b"\x89PNG", f"{i}.png") for i in range(MAX_CAPTURES + 1)]
     with pytest.raises(ValueError, match="장까지"):
@@ -188,9 +188,9 @@ def test_read_captures_blocks_too_many(monkeypatch):
 
 def test_read_captures_blocks_too_big(monkeypatch):
     """합계로 본다. 한 장씩은 작아도 다 더하면 넘을 수 있다."""
-    from cmo.lib import read_doc, read_openub
+    from cmo.lib import captures, read_doc, read_openub
 
-    monkeypatch.setattr(read_openub, "ask_model",
+    monkeypatch.setattr(captures, "ask_model",
                         lambda *a, **k: json.dumps(RAW, ensure_ascii=False))
     절반 = b"x" * (read_doc.MAX_BYTES // 2 + 1)
     with pytest.raises(ValueError):
@@ -198,7 +198,7 @@ def test_read_captures_blocks_too_big(monkeypatch):
 
 
 def test_read_captures_needs_at_least_one_file(monkeypatch):
-    from cmo.lib import read_openub
+    from cmo.lib import captures, read_openub
 
     with pytest.raises(ValueError):
         read_openub.read_captures([], "sk-test")

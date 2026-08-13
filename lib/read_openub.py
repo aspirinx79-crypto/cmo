@@ -12,16 +12,12 @@ import json
 import re
 from datetime import date, datetime
 
-from .read_doc import (MAX_BYTES, MODEL, TOO_BIG, _num, _text, ask_model,
-                       render_pages)
-
-MAX_CAPTURES = 6
+from .captures import MAX_CAPTURES, NO_FILE, TOO_MANY, read_many
+from .read_doc import MODEL, _num, _text
 
 NOT_OPENUB = "오픈업 캡처가 아닌 것 같습니다"
 MIXED_MONTHS = ("캡처들의 기준월이 서로 다릅니다. "
                 "같은 달 화면만 모아서 다시 넣으십시오.")
-TOO_MANY = f"캡처는 {MAX_CAPTURES}장까지 넣을 수 있습니다."
-NO_FILE = "캡처를 한 장 이상 넣으십시오."
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 
@@ -166,22 +162,9 @@ def merge_openub(client: dict, entry: dict) -> dict:
 
 def read_captures(files: list[tuple[bytes, str]], api_key: str,
                   model: str = MODEL) -> dict:
-    """캡처 여러 장을 한 번의 호출로 판독한다. 아무것도 저장하지 않는다.
+    """오픈업 캡처 여러 장을 한 번의 호출로 판독한다.
 
-    **한 번의 호출로 보낸다.** 성별 비율과 연령대가 다른 장에 걸쳐 있어
-    같이 봐야 앞뒤가 맞는다. 애드로그 PDF 2쪽도 이미 그렇게 처리한다.
-
-    용량은 **합계로** 본다. 한 장씩은 작아도 여섯 장을 더하면 넘는다.
+    장수·용량 상한과 렌더는 `captures.read_many` 가 애드로그와 똑같이
+    한다 — 두 벌로 두면 한쪽 상한만 고치고 잊는 날이 온다.
     """
-    if not files:
-        raise ValueError(NO_FILE)
-    if len(files) > MAX_CAPTURES:
-        raise ValueError(TOO_MANY)
-    if sum(len(data) for data, _ in files) > MAX_BYTES:
-        raise ValueError(TOO_BIG)
-
-    images = []
-    for data, filename in files:
-        images.extend(render_pages(data, filename))
-
-    return parse_openub(ask_model(images, OPENUB_PROMPT, api_key, model))
+    return read_many(files, OPENUB_PROMPT, parse_openub, api_key, model)

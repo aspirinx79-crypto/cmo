@@ -366,3 +366,14 @@ def read_document(data: bytes, filename: str, api_key: str,
     """파일 한 개를 판독해 정규화된 dict 를 낸다. 아무것도 저장하지 않는다."""
     pages = render_pages(data, filename)
     return parse_reading(ask_model(pages, PROMPT, api_key, model))
+
+
+def read_captures(files: list[tuple[bytes, str]], api_key: str,
+                  model: str = MODEL) -> dict:
+    """애드로그 캡처 여러 장을 한 번의 호출로 판독한다.
+
+    조회수는 순위 추이 표에, 리뷰 목록은 기본정보 화면에 있다. 화면이
+    나뉘어 있어 여러 장을 함께 봐야 한 매장의 그림이 맞춰진다.
+    """
+    from .captures import read_many
+    return read_many(files, PROMPT, parse_reading, api_key, model)

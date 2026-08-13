@@ -434,3 +434,38 @@ def test_old_readings_without_the_new_fields_still_parse():
     assert got["리뷰"] == {"방문자": [], "블로그": []}
     assert got["순위"][0]["조회수"] is None
     assert got["순위"][0]["순위권밖"] is False
+
+
+def test_read_captures_sends_every_page_in_one_call(monkeypatch):
+    """애드로그도 여러 장을 한 번의 호출로 보낸다.
+
+    조회수는 순위 추이 표에, 리뷰 목록은 기본정보 화면에 있다. 나눠 보내면
+    한 매장의 그림이 안 맞춰진다.
+    """
+    from cmo.lib import captures, read_doc
+
+    본것 = {}
+
+    def fake_ask(images, prompt, api_key, model=None):
+        본것["장수"] = len(images)
+        본것["프롬프트"] = prompt
+        return json.dumps(RICH, ensure_ascii=False)
+
+    monkeypatch.setattr(captures, "ask_model", fake_ask)
+    got = read_doc.read_captures(
+        [(b"\x89PNG-1", "a.png"), (b"\x89PNG-2", "b.png")], "sk-test")
+
+    assert 본것["장수"] == 2
+    assert 본것["프롬프트"] is read_doc.PROMPT
+    assert got["순위"][0]["조회수"] == 5740
+
+
+def test_read_captures_keeps_the_same_limits(monkeypatch):
+    """장수 상한은 오픈업과 같은 한 곳에서 온다."""
+    from cmo.lib import captures, read_doc
+
+    monkeypatch.setattr(captures, "ask_model",
+                        lambda *a, **k: json.dumps(RICH, ensure_ascii=False))
+    files = [(b"\x89PNG", f"{i}.png") for i in range(captures.MAX_CAPTURES + 1)]
+    with pytest.raises(ValueError, match="장까지"):
+        read_doc.read_captures(files, "sk-test")

@@ -42,10 +42,14 @@ NO_READ_KEY = ("판독에 필요한 키가 없습니다. "
                "ANTHROPIC_API_KEY 를 환경변수에 넣으십시오.")
 
 
-def _read_document(data, filename, api_key, model=None):
-    """판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다."""
-    from cmo.lib.read_doc import read_document
-    return read_document(data, filename, api_key)
+def _read_document(files, api_key, model=None):
+    """판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다.
+
+    캡처 여러 장을 받는다 — 조회수는 순위 추이 표에, 리뷰 목록은 기본정보
+    화면에 있어 한 장으로는 그림이 안 맞춰진다.
+    """
+    from cmo.lib.read_doc import read_captures
+    return read_captures(files, api_key)
 
 
 def _read_captures(files, api_key):
@@ -144,12 +148,19 @@ def make_handler(store: Store, app_dir: Path):
             if not key:
                 return self._json({"오류": NO_READ_KEY}, 400)
 
+            # 옛 본문(파일명·내용 한 장)도 그대로 받는다 — 화면을 고치기
+            # 전에 서버만 올라가는 순간이 있고, 그때 판독이 죽으면 안 된다.
+            캡처 = body.get("캡처")
+            if 캡처 is None:
+                캡처 = [{"파일명": body.get("파일명") or "",
+                        "내용": body.get("내용") or ""}]
             try:
-                data = b64.b64decode(body["내용"])
+                files = [(b64.b64decode(c["내용"]), c.get("파일명") or "")
+                         for c in 캡처]
             except Exception:
                 return self._json({"오류": "파일을 읽지 못했습니다."}, 400)
 
-            reading = _read_document(data, body.get("파일명") or "", key)
+            reading = _read_document(files, key)
 
             mismatch = store_mismatch(reading, client)
             warnings = [w for w in (truncation_warning(reading),) if w]

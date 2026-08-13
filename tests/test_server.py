@@ -394,7 +394,11 @@ READING = {
 
 
 def _fake_reader(reading):
-    return lambda data, filename, api_key, model=None: dict(reading)
+    """판독 한 겹을 갈아 끼운다.
+
+    이제 캡처 여러 장을 받는다 — `[(바이트, 파일명)]` 이 첫 인자다.
+    """
+    return lambda files, api_key, model=None: dict(reading)
 
 
 def test_read_doc_ready_reports_missing_key(server, monkeypatch):
