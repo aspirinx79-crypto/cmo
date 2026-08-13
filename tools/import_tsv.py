@@ -150,7 +150,32 @@ def build_products(tsv: str, overrides: dict) -> list[dict]:
         p.pop("메모", None)
         products.append(p)
 
-    return products
+    return _drop_excluded(products, overrides.get("_제외") or {})
+
+
+def _drop_excluded(products: list[dict], rule: dict) -> list[dict]:
+    """상무님이 안 파는 상품을 목록에서 뺀다.
+
+    시트는 광고사업부가 관리하는 물건이라 우리가 고칠 수 없다. 그래서
+    시트는 그대로 두고 여기서 걸러낸다 — products.json 만 손으로 지우면
+    다음 임포트에 그대로 되살아난다.
+
+    빼는 기준은 셋이다:
+      · `상품id` — 이름으로 지목한 것
+      · `매체`  — 그 매체 전부
+      · `판매중지` — 없어진 상품 전부
+
+    판매중지 상품은 원래 목록에 남겨 잠가 뒀다. 「예전에 하던 그거」를
+    사장님이 물을 때 화면에서 짚어 주려던 것이다. 안 쓰기로 했으면
+    빼는 게 맞다 — 서랍이 짧을수록 미팅에서 손이 빠르다.
+    """
+    ids = set(rule.get("상품id") or [])
+    media = set(rule.get("매체") or [])
+    drop_dead = bool(rule.get("판매중지"))
+    return [p for p in products
+            if p["id"] not in ids
+            and p["매체"] not in media
+            and not (drop_dead and p["판매중지"])]
 
 
 def main() -> int:

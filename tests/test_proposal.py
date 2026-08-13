@@ -240,13 +240,57 @@ def test_no_internal_wording_across_every_real_product(products):
 # 있는 게 없는데, 대신 고객에게 보여줘야 할 줄을 죽이고 있었다.
 # `입금요청` 을 넣었다. 유출이라서가 아니라 문서 격 때문이다.
 
+# 목록에서 뺀 상품들(overrides.json 의 `_제외`). 일정표 필터가 막아야 할
+# 문구가 이 프로세스 안에 있는데, 남은 카탈로그에는 그 문구가 하나도 없다
+# — 「입금요청」·「클라이언트 소통」·「대행가」·밑줄 든 상품명 전부 0개다.
+#
+# 상품을 안 판다고 필터의 보호까지 없앨 수는 없다. 뺄 당시의 프로세스
+# 문구를 글자 그대로 고정해 둔다. 이제 이 테스트들은 상무님이 무엇을
+# 파느냐와 무관하게 `_client_facing_schedule` 의 동작만 본다.
+RETIRED = [
+    {"id": "네이버-카페_월_배너광고", "매체": "네이버", "상품명": "카페 월 배너광고",
+     "가격유형": "직접입력", "정가": None, "실비": None, "예산배율": None,
+     "최소수량": 1, "단위": "건", "판매중지": False, "고지사항": "",
+     "프로세스": "카페와 대행가 협의->클라이언트 소통 및 디자인 컨펌 -> 배너 진행"},
+    {"id": "IMC-CMO_서비스", "매체": "IMC", "상품명": "CMO 서비스",
+     "가격유형": "예산배율", "정가": None, "실비": None, "예산배율": 1.0,
+     "최소수량": 1, "단위": "원", "판매중지": False, "고지사항": "",
+     "프로세스": "예산 선정 -> 매월 시작 및 종료일 스케줄링 체크 ->수시 관리 -> 월별 관리->입금요청"},
+    {"id": "인스타-운영대행", "매체": "인스타", "상품명": "운영대행",
+     "가격유형": "예산배율", "정가": None, "실비": None, "예산배율": 1.0,
+     "최소수량": 1, "단위": "원", "판매중지": False, "고지사항": "",
+     "프로세스": "컨셉 및 기획 회의->미팅->운영대행"},
+    {"id": "네이버-1세대_블로거__케케케라인_12팀", "매체": "네이버",
+     "상품명": "1세대 블로거 _케케케라인 12팀", "가격유형": "고정",
+     "정가": 3000000, "실비": 0, "예산배율": None, "최소수량": 1, "단위": "팀",
+     "판매중지": False, "고지사항": "", "프로세스": "단톡 통해 일정 조율 및 진행"},
+    {"id": "구글-SA", "매체": "구글", "상품명": "SA", "가격유형": "예산배율",
+     "정가": None, "실비": None, "예산배율": 1.15, "최소수량": 1, "단위": "원",
+     "판매중지": False, "고지사항": "",
+     "프로세스": "상위대행사 이관-> 소재 세팅->통계보며 보고 및 피드백 -> 관리"},
+    {"id": "커뮤니티-전국_대학생_동아리_단톡_침투", "매체": "커뮤니티",
+     "상품명": "전국 대학생 동아리 단톡 침투", "가격유형": "고정",
+     "정가": 200000, "실비": 0, "예산배율": None, "최소수량": 1, "단위": "건",
+     "판매중지": False, "고지사항": "", "프로세스": ""},
+]
+
+
 def _schedule_of(products: list[dict], *ids: str) -> list[dict]:
-    """실제 카탈로그에서 상품 몇 개만 골라 기획안을 만들고 고객용 일정표를 낸다."""
-    chosen = [p for p in products if p["id"] in ids]
+    """카탈로그에서 상품 몇 개만 골라 기획안을 만들고 고객용 일정표를 낸다.
+
+    목록에서 뺀 상품(RETIRED)도 함께 본다 — 그 문구를 막는 게 이 테스트들의
+    일이고, 상품이 빠졌다고 검사까지 빠지면 안 된다.
+    """
+    # 이미 들어 있는 건 다시 붙이지 않는다 — `_catalog_with_process` 가
+    # 넘겨준 카탈로그에는 RETIRED 가 이미 섞여 있어 두 번 더하면 같은
+    # 상품이 두 벌이 된다.
+    있는것 = {p["id"] for p in products}
+    catalog = list(products) + [r for r in RETIRED if r["id"] not in 있는것]
+    chosen = [p for p in catalog if p["id"] in ids]
     assert len(chosen) == len(ids), f"카탈로그에 없는 id 가 있다: {ids}"
     plan = {"월": "2026-09", "계약가": 1000000, "진단메모": "",
             "항목": [_item_for(p) for p in chosen]}
-    return build_payload(CLIENT, plan, products)["일정"]
+    return build_payload(CLIENT, plan, catalog)["일정"]
 
 
 def _lines(weeks: list[dict]) -> list[str]:
@@ -314,11 +358,12 @@ def test_progress_line_is_suppressed_when_the_product_name_is_internal(products)
 
     `커뮤니티-전국_대학생_동아리_단톡_침투` 는 상품명에 `단톡` 이 들어 있다.
     지금은 프로세스가 비어 있어 일정표에 안 나오지만 시트는 손편집이라
-    언제든 채워진다. 그날 상품명으로 `단톡` 이 새어 나가면 안 된다."""
-    catalog = [dict(p) for p in products]
-    target = next(p for p in catalog
-                  if p["id"] == "커뮤니티-전국_대학생_동아리_단톡_침투")
-    target["프로세스"] = "실장님께 명단 전달"
+    언제든 채워진다. 그날 상품명으로 `단톡` 이 새어 나가면 안 된다.
+
+    이 상품은 목록에서 뺐다. 그래도 검사는 남긴다 — 막는 것은 상품이
+    아니라 상품명에 금칙어가 든 경우이고, 그런 상품은 또 생긴다."""
+    catalog, target = _catalog_with_process(
+        products, "커뮤니티-전국_대학생_동아리_단톡_침투", "실장님께 명단 전달")
 
     lines = _lines(_schedule_of(catalog, target["id"]))
     assert lines == [], f"상품명에 금칙어가 있는데 줄이 나갔다: {lines}"
@@ -349,8 +394,11 @@ def test_partially_filtered_product_gets_no_progress_line(products):
 
 
 def _catalog_with_process(products: list[dict], pid: str, process: str):
-    """실제 카탈로그를 얕게 복사해 상품 하나의 프로세스만 갈아 끼운다."""
-    catalog = [dict(p) for p in products]
+    """카탈로그를 얕게 복사해 상품 하나의 프로세스만 갈아 끼운다.
+
+    `_schedule_of` 와 같은 이유로 뺀 상품(RETIRED)도 함께 본다.
+    """
+    catalog = [dict(p) for p in list(products) + RETIRED]
     target = next(p for p in catalog if p["id"] == pid)
     target["프로세스"] = process
     return catalog, target

@@ -48,7 +48,13 @@ def test_parse_cost_non_numeric():
 
 
 def test_all_products_load(products):
-    assert len(products) >= 45, f"상품이 {len(products)}종뿐이다. 수입이 덜 됐다"
+    """수입이 덜 된 걸 잡는다.
+
+    기준이 45 였는데 25 로 내렸다 — 안 파는 상품 25종을 `_제외` 로
+    걸러내면서 목록이 30종이 됐다. 제외 규칙이 너무 넓어지는 쪽은
+    test_enough_products_survive_the_exclusion 이 따로 본다.
+    """
+    assert len(products) >= 25, f"상품이 {len(products)}종뿐이다. 수입이 덜 됐다"
 
 
 def test_every_product_has_valid_type(products):
@@ -68,16 +74,27 @@ def test_fixed_products_have_margin(products):
             assert p["정가"] >= p["실비"], f"{p['id']}: 정가 {p['정가']} < 실비 {p['실비']}"
 
 
-def test_discontinued_products_present_and_locked(products):
+def test_discontinued_products_are_dropped(products):
+    """없어진 상품은 목록에 아예 안 나온다.
+
+    예전에는 남겨 두고 잠갔다 — 「예전에 하던 그거」를 사장님이 물을 때
+    화면에서 짚어 주려던 것이다. 안 팔기로 하면서 뺐다. 서랍이 짧을수록
+    미팅에서 손이 빠르다. 규칙은 overrides.json 의 `_제외.판매중지` 다.
+    """
     by_name = {p["상품명"]: p for p in products}
     for name in DISCONTINUED:
-        assert name in by_name, f"판매중지 상품 '{name}' 이 없다"
-        assert by_name[name]["판매중지"] is True
+        assert name not in by_name, f"판매중지 상품 '{name}' 이 아직 있다"
 
 
-def test_active_products_are_not_locked(products):
-    active = [p for p in products if not p["판매중지"]]
-    assert len(active) >= 45
+def test_no_product_is_locked(products):
+    """판매중지를 전부 뺐으므로 목록에 잠긴 상품이 하나도 없어야 한다."""
+    locked = [p["상품명"] for p in products if p["판매중지"]]
+    assert locked == [], f"잠긴 상품이 남아 있다: {locked}"
+
+
+def test_enough_products_survive_the_exclusion(products):
+    """제외 규칙이 너무 넓어져 서랍이 텅 비면 여기서 잡는다."""
+    assert len(products) >= 25
 
 
 def test_budget_multiplier_products_have_rate(products):
@@ -153,6 +170,18 @@ def test_all_tsv_products_present(products, cmo_dir):
             tsv_name_only.add(name)
 
     tsv_pairs -= EXCLUDED_PAIRS
+
+    # 일부러 뺀 상품은 「조용히 사라진 것」이 아니다. overrides._제외 에
+    # 적힌 것만 면제한다 — 규칙을 여기 다시 적으면 두 벌이 된다.
+    from cmo.tools.import_tsv import make_id
+
+    overrides_for_drop = json.loads(
+        (cmo_dir / "data" / "overrides.json").read_text(encoding="utf-8"))
+    rule = overrides_for_drop.get("_제외") or {}
+    dropped_ids = set(rule.get("상품id") or [])
+    dropped_media = set(rule.get("매체") or [])
+    tsv_pairs = {(m, n) for m, n in tsv_pairs
+                 if m not in dropped_media and make_id(m, n) not in dropped_ids}
 
     product_pairs = {(p["매체"], p["상품명"]) for p in products}
     product_names = {p["상품명"] for p in products}
