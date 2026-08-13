@@ -35,6 +35,12 @@
        잘린다. 보조 정보라 한 단계 작게 찍고 대신 한 줄에 담는다. */
     .metric .value.small { font-size: 12pt; white-space: nowrap; }
     .note { font-size: 8pt; color: #6b7280; margin: 1mm 0 0; }
+    h3 { font-size: 12pt; margin: 6mm 0 2mm; }
+    .move { display: flex; gap: 3mm; padding: 1mm 0; }
+    .move .arrow { width: 5mm; font-weight: 800; }
+    .move .kw { width: 55mm; }
+    .down { color: #dc2626; }
+    .up { color: #2563eb; }
     ul { margin: 0; padding-left: 5mm; }
     li { margin-bottom: 2mm; }
     .week { margin-bottom: 4mm; }
@@ -59,6 +65,36 @@
     <div class="metrics" id="d-metrics"></div>
     <p id="d-metrics-note" class="note"></p>
     <p id="d-memo"></p>
+  </section>
+
+  <section id="s-diagnosis" hidden>
+    <h2>검색 현황</h2>
+    <div class="headline" id="d-headline"></div>
+
+    <div id="d-opportunity-wrap">
+      <h3>키워드 기회표</h3>
+      <table>
+        <thead><tr><th>키워드</th><th class="num">월 검색</th>
+                   <th class="num">지금</th></tr></thead>
+        <tbody id="d-opportunity"></tbody>
+      </table>
+    </div>
+
+    <div id="d-moves-wrap">
+      <h3 id="d-moves-title">순위 변화</h3>
+      <div id="d-moves"></div>
+    </div>
+
+    <div id="d-hidden-wrap">
+      <h3 id="d-hidden-title"></h3>
+      <p class="fine" id="d-hidden"></p>
+    </div>
+
+    <div id="d-reviews-wrap">
+      <h3>리뷰 현황</h3>
+      <p id="d-review-counts"></p>
+      <ul id="d-review-list"></ul>
+    </div>
   </section>
 
   <section>
@@ -160,6 +196,56 @@
         `<div class="week"><h3>${esc(w.주차)}주차</h3>
          <ul>${(w.항목.length ? w.항목 : ["—"]).map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`
       ).join("");
+
+      // 진단자료 — 값이 없는 장은 통째로 감춘다. 빈 표를 만들면
+      // 「자료를 못 구했다」가 「그런 게 없다」로 읽힌다.
+      const D = P.진단자료 || {};
+      const 보임 = (id, on) => { document.getElementById(id).hidden = !on; };
+
+      보임("s-diagnosis",
+           Boolean(D.기회표 || D.변화 || D.히든키워드 || D.리뷰));
+      document.getElementById("d-headline").textContent = D.헤드라인 || "";
+      보임("d-headline", Boolean(D.헤드라인));
+
+      보임("d-opportunity-wrap", Boolean(D.기회표));
+      if (D.기회표) {
+        document.getElementById("d-opportunity").innerHTML = D.기회표.map((r) =>
+          `<tr><td>${esc(r.키워드)}</td>
+           <td class="num">${Number(r.조회수).toLocaleString()}건</td>
+           <td class="num">${esc(r.순위표시)}</td></tr>`).join("");
+      }
+
+      보임("d-moves-wrap", Boolean(D.변화));
+      if (D.변화) {
+        document.getElementById("d-moves-title").textContent =
+          `순위 변화 (${D.변화.비교일} → ${D.변화.기준일})`;
+        const 줄 = (r, cls, mark) =>
+          `<div class="move ${cls}"><span class="arrow">${mark}</span>` +
+          `<span class="kw">${esc(r.키워드)}</span>` +
+          `<span>${esc(r.전)} → ${esc(r.후)}</span></div>`;
+        document.getElementById("d-moves").innerHTML =
+          D.변화.내림.map((r) => 줄(r, "down", "▼")).join("") +
+          D.변화.오름.map((r) => 줄(r, "up", "▲")).join("");
+      }
+
+      보임("d-hidden-wrap", Boolean(D.히든키워드));
+      if (D.히든키워드) {
+        document.getElementById("d-hidden-title").textContent =
+          `아직 안 잡은 키워드 ${D.히든키워드.개수}개`;
+        document.getElementById("d-hidden").textContent =
+          D.히든키워드.목록.join(" · ");
+      }
+
+      보임("d-reviews-wrap", Boolean(D.리뷰));
+      if (D.리뷰) {
+        document.getElementById("d-review-counts").textContent =
+          `방문자 리뷰 ${Number(D.리뷰.방문자수 || 0).toLocaleString()}건 · ` +
+          `블로그 리뷰 ${Number(D.리뷰.블로그수 || 0).toLocaleString()}건`;
+        document.getElementById("d-review-list").innerHTML =
+          D.리뷰.많이읽힌.map((r) =>
+            `<li>${esc(r.제목)} — ${Number(r.조회수).toLocaleString()}회 읽힘</li>`
+          ).join("");
+      }
 
       document.getElementById("n-list").innerHTML =
         P.고지사항.map((n) => `<li>${esc(n)}</li>`).join("");

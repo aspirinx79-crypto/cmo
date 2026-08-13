@@ -105,6 +105,20 @@ TOP_MOVES = 5
 TOP_REVIEWS = 3
 
 
+def _josa(word: str, 받침있을때: str, 받침없을때: str) -> str:
+    """받침에 따라 조사를 고른다 — 「식당은」과 「가원는」을 가른다.
+
+    고객이 받는 글이라 조사가 틀리면 눈에 띈다. 한글이 아닌 글자로
+    끝나면(영문 상품명 등) 받침 없는 쪽을 쓴다 — 「SA는」이 자연스럽다.
+    """
+    if not word:
+        return 받침없을때
+    last = word[-1]
+    if not ("가" <= last <= "힣"):
+        return 받침없을때
+    return 받침있을때 if (ord(last) - 0xAC00) % 28 else 받침없을때
+
+
 def _rank_label(row: dict) -> str:
     if row.get("순위권밖"):
         return OUTSIDE_LABEL
@@ -141,9 +155,10 @@ def _headline(ranks: list[dict]) -> str | None:
         return None
     큰것 = max(놓친것, key=lambda r: r["조회수"])
     작은것 = min(잡은것, key=lambda r: r["조회수"])
+    조사 = _josa(작은것["키워드"], "은", "는")
     return (f"월 {큰것['조회수']:,}번 검색되는 「{큰것['키워드']}」에서 "
             f"아직 안 보입니다. 지금 {_rank_label(작은것)}인 "
-            f"「{작은것['키워드']}」는 월 {작은것['조회수']:,}건짜리입니다.")
+            f"「{작은것['키워드']}」{조사} 월 {작은것['조회수']:,}건짜리입니다.")
 
 
 def _moves(ranks: list[dict], 진단: dict) -> dict | None:

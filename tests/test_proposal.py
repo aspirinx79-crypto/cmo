@@ -743,3 +743,20 @@ def test_opportunity_table_needs_search_volume():
         row["조회수"] = None
     진단 = build_payload(dict(CLIENT, 스냅샷=[snap]), PLAN, PRODUCTS)["진단자료"]
     assert 진단["기회표"] is None
+
+
+def test_headline_picks_the_right_particle():
+    """받침에 따라 은/는이 갈린다. 고객이 받는 글이라 눈에 띈다."""
+    from cmo.lib.proposal import _josa
+
+    assert _josa("예술의전당정육식당", "은", "는") == "은"   # 받침 있음
+    assert _josa("방배동맛집", "은", "는") == "은"
+    assert _josa("서초구", "은", "는") == "는"              # 받침 없음
+    assert _josa("한우", "은", "는") == "는"
+    assert _josa("SA", "은", "는") == "는"                  # 한글이 아니면 기본
+
+
+def test_headline_sentence_reads_correctly():
+    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["헤드라인"]
+    assert "「예술의전당정육식당」은" in 문장
+    assert "「예술의전당정육식당」는" not in 문장

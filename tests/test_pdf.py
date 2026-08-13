@@ -241,3 +241,73 @@ def test_quote_template_has_no_hardcoded_issuer():
     source = QUOTE.read_text(encoding="utf-8")
     for 값 in ("356-88-02874", "1688-2633", "210-112344-04-015", "압구정로2길"):
         assert 값 not in source, f"서식에 발주처 값 '{값}' 이 박혀 있다"
+
+
+# ── 검색 현황 네 장 ───────────────────────────────────────────
+
+RICH_CLIENT_PDF = {**CLIENT, "스냅샷": [{
+    "수집시각": "2026-08-13T09:00:00",
+    "플레이스": {"방문자리뷰": 775, "블로그리뷰": 1415},
+    "순위": [
+        {"키워드": "서초맛집", "순위": None, "순위권밖": True,
+         "조회수": 5740, "비교순위": 81},
+        {"키워드": "방배동맛집", "순위": 77, "순위권밖": False,
+         "조회수": 4900, "비교순위": 18},
+        {"키워드": "예술의전당정육식당", "순위": 1, "순위권밖": False,
+         "조회수": 50, "비교순위": 1},
+    ],
+    "예상매출": None,
+    "순위요약": {"총키워드": 51, "TOP3": 6, "TOP10": 11},
+    "진단": {"기준일": "08-12", "비교일": "07-29",
+             "대표키워드": [], "히든키워드": ["예술의전당한우", "방배역 곰탕"],
+             "리뷰": {"방문자": [{"제목": "아이들이 한우 먹고싶다고",
+                                  "조회수": 1479, "작성일": "2026-07-16",
+                                  "작성자": "ljw20566"}],
+                      "블로그": [{"제목": "방배동 소고기 맛집 추천",
+                                  "작성일": "2026-05-26",
+                                  "실명여부": "톰바미설치"}]}},
+}]}
+
+
+@pytest.fixture(scope="module")
+def rich_pdf_text(tmp_path_factory):
+    payload = build_payload(RICH_CLIENT_PDF, PLAN, PRODUCTS)
+    out = tmp_path_factory.mktemp("pdf") / "제안서_보강.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    text = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    return text
+
+
+def test_opportunity_table_is_printed(rich_pdf_text):
+    assert "서초맛집" in rich_pdf_text
+    assert "5,740" in rich_pdf_text
+    assert "30위 밖" in rich_pdf_text
+
+
+def test_headline_is_printed(rich_pdf_text):
+    assert "아직 안 보입니다" in rich_pdf_text
+
+
+def test_rank_moves_are_printed(rich_pdf_text):
+    assert "07-29" in rich_pdf_text and "08-12" in rich_pdf_text
+    assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
+
+
+def test_hidden_and_reviews_are_printed(rich_pdf_text):
+    assert "예술의전당한우" in rich_pdf_text
+    assert "1,479" in rich_pdf_text
+
+
+def test_internal_marks_never_reach_the_pdf(rich_pdf_text):
+    """블로그 실명여부·톰바설치와 작성자 아이디는 고객 문서에 없어야 한다."""
+    for word in ("톰바", "실명여부", "ljw20566"):
+        assert word not in rich_pdf_text, f"제안서에 '{word}' 가 찍혔다"
+
+
+def test_plain_client_pdf_has_no_diagnosis_section(pdf_text):
+    """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다."""
+    assert "30위 밖" not in pdf_text["text"]
+    assert "아직 안 보입니다" not in pdf_text["text"]
+    assert "키워드 기회표" not in pdf_text["text"]
