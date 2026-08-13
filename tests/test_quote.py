@@ -83,8 +83,10 @@ def test_header_is_built_from_the_store_name():
 
 
 def test_issuer_comes_from_the_constant():
+    """계좌만 환경변수에서 오고 나머지는 상수 한 곳에서 온다."""
     got = build_quote_payload(CLIENT, PLAN, PRODUCTS, today=TODAY)
-    assert got["발주처"] is QUOTE_ISSUER
+    for key, value in QUOTE_ISSUER.items():
+        assert got["발주처"][key] == value
     assert QUOTE_ISSUER["전화번호"] == "1688-2633"
     assert QUOTE_ISSUER["사업자등록번호"] == "356-88-02874"
 
@@ -101,3 +103,54 @@ def test_unknown_product_id_is_skipped_not_crashed():
     plan = {**PLAN, "항목": PLAN["항목"] + [{"상품id": "없는-상품", "수량": 1}]}
     got = build_quote_payload(CLIENT, plan, PRODUCTS, today=TODAY)
     assert len(got["항목"][0]["세부"]) == 2
+
+
+# ── 계좌번호는 저장소에 두지 않는다 ───────────────────────────
+
+def test_account_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("CMO_BANK_ACCOUNT", "○○은행 000-000-000 ㈜먹스타")
+    got = build_quote_payload(CLIENT, PLAN, PRODUCTS, today=TODAY)
+    assert got["발주처"]["계좌"] == "○○은행 000-000-000 ㈜먹스타"
+
+
+def test_account_line_is_empty_without_the_environment(monkeypatch):
+    """환경변수가 없으면 계좌 줄이 빈다. 지어내지 않는다."""
+    monkeypatch.delenv("CMO_BANK_ACCOUNT", raising=False)
+    got = build_quote_payload(CLIENT, PLAN, PRODUCTS, today=TODAY)
+    assert got["발주처"]["계좌"] == ""
+
+
+def test_the_constant_never_holds_an_account_number():
+    """상수에 계좌를 두면 저장소에 남고, 저장소는 언젠가 공개된다."""
+    assert "계좌" not in QUOTE_ISSUER
+
+
+def test_no_account_number_is_written_anywhere_in_the_source():
+    """계좌번호처럼 생긴 글자가 코드·서식 어디에도 없어야 한다.
+
+    한 번 커밋되면 히스토리에 영원히 남는다. 새로 들어가는 것만이라도
+    여기서 막는다.
+    """
+    import re
+    from pathlib import Path
+
+    CMO = Path(__file__).resolve().parent.parent
+    # 은행 계좌 꼴: 숫자 세 묶음 이상이 하이픈으로 이어진 것.
+    계좌꼴 = re.compile(r"\b\d{2,6}-\d{2,6}-\d{2,6}(?:-\d{2,6})?\b")
+    날짜꼴 = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    허용 = {"356-88-02874"}          # 사업자등록번호는 견적서에 찍히는 값이다
+
+    def 계좌인가(글자: str) -> bool:
+        if 글자 in 허용 or 날짜꼴.match(글자):
+            return False
+        return not 글자.startswith("0")   # 0 으로 시작하면 전화번호다
+
+    샌것 = []
+    for path in list(CMO.rglob("*.py")) + list(CMO.rglob("*.html")):
+        if "__pycache__" in str(path) or path.name == Path(__file__).name:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for m in 계좌꼴.finditer(line):
+                if 계좌인가(m.group()):
+                    샌것.append(f"{path.name}:{n} {m.group()}")
+    assert 샌것 == [], f"계좌번호처럼 생긴 값이 남아 있다: {샌것}"

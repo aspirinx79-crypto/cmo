@@ -7,9 +7,17 @@
 **회사 정보는 이 파일 상수 하나에서만 온다.** 받은 견적서 세 건에서
 사업장·전화·계좌가 전부 달랐다. 매번 예전 파일을 복사해 고쳐 쓴 탓이다.
 """
+import os
 from datetime import date
 
 VAT_RATE = 0.1
+
+# 계좌번호는 환경변수에서만 온다.
+#
+# 저장소에 적으면 히스토리에 영원히 남고, 저장소는 언젠가 공개되거나
+# 다른 사람 손에 들어간다. 나머지 발주처 정보(상호·사업자등록번호·주소)는
+# 견적서에 찍혀 고객에게 나가는 값이라 여기 둔다 — 계좌만 다르다.
+BANK_ENV = "CMO_BANK_ACCOUNT"
 
 # 발주처. 서식이 아니라 여기서만 고친다.
 QUOTE_ISSUER = {
@@ -22,8 +30,16 @@ QUOTE_ISSUER = {
     "팩스번호": "050-4024-9029",
     "이메일": "ssavengers@ssagroup.co.kr",
     "홈페이지": "winwin-avengers.com",
-    "계좌": "기업은행 210-112344-04-015 주식회사 먹스타",
 }
+
+
+def issuer() -> dict:
+    """발주처 정보에 계좌를 얹은 사본. 계좌는 환경변수에서 읽는다.
+
+    환경변수가 없으면 빈 글자다 — 견적서에서 그 줄이 통째로 빠진다.
+    지어내지 않는다.
+    """
+    return {**QUOTE_ISSUER, "계좌": (os.environ.get(BANK_ENV) or "").strip()}
 
 NO_PRICE = "계약가를 먼저 넣으십시오. 0원짜리 견적서는 만들지 않습니다."
 
@@ -79,5 +95,5 @@ def build_quote_payload(client: dict, plan: dict, products: list[dict], *,
         "부가세": 부가세,
         "총합": 계약가 + 부가세,
         "부가세문구": "총합 (vat별도)" if 부가세별도 else "총합 (vat포함)",
-        "발주처": QUOTE_ISSUER,
+        "발주처": issuer(),
     }

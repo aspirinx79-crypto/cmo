@@ -214,7 +214,9 @@ def test_quote_prints_the_issuer_from_the_constant(quote_pdf_text):
     text = quote_pdf_text["text"]
     assert QUOTE_ISSUER["사업자등록번호"] in text
     assert QUOTE_ISSUER["전화번호"] in text
-    assert QUOTE_ISSUER["계좌"].split()[0] in text
+    # 계좌는 상수가 아니라 환경변수에서 온다. 없으면 그 줄이 통째로
+    # 빠지는 게 맞다 — 빈 「기업은행 :」 이 찍히면 더 이상하다.
+    assert "계좌" not in QUOTE_ISSUER
 
 
 def test_quote_never_shows_cost_words(quote_pdf_text):
@@ -239,7 +241,7 @@ def test_quote_template_has_no_hardcoded_issuer():
     from cmo.build_pdf import QUOTE
 
     source = QUOTE.read_text(encoding="utf-8")
-    for 값 in ("356-88-02874", "1688-2633", "210-112344-04-015", "압구정로2길"):
+    for 값 in ("356-88-02874", "1688-2633", "압구정로2길"):
         assert 값 not in source, f"서식에 발주처 값 '{값}' 이 박혀 있다"
 
 

@@ -120,8 +120,12 @@
         ["사업장", I.사업장], ["이메일", I.이메일],
         ["홈페이지", I.홈페이지], ["", I.계좌],
       ];
-      document.getElementById("q-issuer").innerHTML = 줄.map(([k, v]) =>
-        `<div>${k ? esc(k) + " : " : ""}${esc(v)}</div>`).join("");
+      // 값이 빈 줄은 안 그린다 — 계좌가 환경변수에 없으면 그 자리가
+      // 통째로 빠진다. 빈 「기업은행 :」 이 찍히면 더 이상하다.
+      document.getElementById("q-issuer").innerHTML = 줄
+        .filter(([, v]) => (v || "").trim())
+        .map(([k, v]) => `<div>${k ? esc(k) + " : " : ""}${esc(v)}</div>`)
+        .join("");
     }
   </script>
 </body>
