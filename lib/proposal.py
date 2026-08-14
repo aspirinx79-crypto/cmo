@@ -116,6 +116,23 @@ def _openub(client: dict) -> dict | None:
     return {k: 최신.get(k) for k in _OPENUB_KEYS}
 
 
+# 상권 이름을 붙이는 문턱. 애매한 구간에 억지로 이름을 붙이지 않는다 —
+# 55%를 「평일 상권」이라 부르면 그 뒤 문장이 전부 틀어진다.
+WEEKDAY_FLOOR = 60
+WEEKEND_CEILING = 40
+
+
+def _trade_area(평일비율) -> str | None:
+    """평일비율에서 상권 한 줄. 애매하면 아무 말도 하지 않는다."""
+    if 평일비율 is None:
+        return None
+    if 평일비율 >= WEEKDAY_FLOOR:
+        return "평일 상권입니다"
+    if 평일비율 <= WEEKEND_CEILING:
+        return "주말 상권입니다"
+    return None
+
+
 # 순위권 밖 표기. 애드로그가 30위까지만 추적한다.
 OUTSIDE_LABEL = "30위 밖"
 TOP_KEYWORDS = 8

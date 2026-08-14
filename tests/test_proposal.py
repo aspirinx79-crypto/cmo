@@ -794,3 +794,26 @@ def test_all_empty_snapshots_give_nothing():
     껍데기 = {"수집시각": "2026-08-14", "플레이스": {"방문자리뷰": None}, "순위": []}
     assert _latest_snapshot({"스냅샷": [껍데기, 껍데기]}) == {}
     assert _latest_snapshot({"스냅샷": []}) == {}
+
+
+# ── 상권 한 줄 ────────────────────────────────────────────
+
+def test_weekday_heavy_is_called_a_weekday_trade_area():
+    from cmo.lib.proposal import _trade_area
+    assert _trade_area(63) == "평일 상권입니다"
+    assert _trade_area(60) == "평일 상권입니다"
+
+
+def test_weekend_heavy_is_called_a_weekend_trade_area():
+    from cmo.lib.proposal import _trade_area
+    assert _trade_area(37) == "주말 상권입니다"
+    assert _trade_area(40) == "주말 상권입니다"
+
+
+def test_the_middle_gets_no_name():
+    """55%를 「평일 상권」이라 부르면 그 뒤 문장이 전부 틀어진다."""
+    from cmo.lib.proposal import _trade_area
+    assert _trade_area(55) is None
+    assert _trade_area(41) is None
+    assert _trade_area(59) is None
+    assert _trade_area(None) is None
