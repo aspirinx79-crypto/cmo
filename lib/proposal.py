@@ -59,9 +59,27 @@ class ProposalBlocked(Exception):
     """정가가 비어 제안서를 만들 수 없다."""
 
 
+def _has_data(snap: dict) -> bool:
+    """자료가 든 스냅샷인가.
+
+    셋 중 하나라도 참이면 자료가 있는 것으로 본다.
+    """
+    if snap.get("순위"):
+        return True
+    if snap.get("진단"):
+        return True
+    return any(v is not None for v in (snap.get("플레이스") or {}).values())
+
+
 def _latest_snapshot(client: dict) -> dict:
-    snaps = client.get("스냅샷") or []
-    return snaps[-1] if snaps else {}
+    """자료가 있는 마지막 스냅샷.
+
+    **`snaps[-1]` 을 쓰면 안 된다.** 고장난 순위조회가 값이 전부 `null`
+    인 스냅샷을 뒤에 계속 붙이는데, 그러면 애드로그로 읽어 둔 자료가
+    통째로 가려진다. 실제로 그렇게 나간 제안서가 있다.
+    """
+    있는것 = [s for s in (client.get("스냅샷") or []) if _has_data(s)]
+    return 있는것[-1] if 있는것 else {}
 
 
 def _metrics(client: dict) -> dict:

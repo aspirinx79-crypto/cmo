@@ -760,3 +760,37 @@ def test_headline_sentence_reads_correctly():
     문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["헤드라인"]
     assert "「예술의전당정육식당」은" in 문장
     assert "「예술의전당정육식당」는" not in 문장
+
+
+# ── 빈 스냅샷이 진단을 덮지 않는다 ───────────────────────────
+
+def test_empty_snapshot_does_not_bury_the_reading():
+    """고장난 순위조회가 뒤에 붙어도 판독 자료가 살아 있어야 한다.
+
+    실제로 이것 때문에 제안서 진단 장이 통째로 비어 나갔다.
+    """
+    from cmo.lib.proposal import _latest_snapshot
+    좋은것 = {"수집시각": "2026-08-12T08:52:26",
+              "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170},
+              "순위": [{"키워드": "잠실맛집", "순위": 8}]}
+    껍데기 = {"수집시각": "2026-08-14T00:26:35",
+              "플레이스": {"방문자리뷰": None, "블로그리뷰": None},
+              "순위": []}
+    got = _latest_snapshot({"스냅샷": [좋은것, 껍데기, 껍데기]})
+    assert got is 좋은것
+
+
+def test_latest_of_several_real_snapshots_wins():
+    """자료가 여럿이면 그중 가장 늦은 것을 쓴다."""
+    from cmo.lib.proposal import _latest_snapshot
+    앞 = {"수집시각": "2026-08-01", "순위": [{"키워드": "가", "순위": 1}]}
+    뒤 = {"수집시각": "2026-08-10", "순위": [{"키워드": "나", "순위": 2}]}
+    assert _latest_snapshot({"스냅샷": [앞, 뒤]}) is 뒤
+
+
+def test_all_empty_snapshots_give_nothing():
+    """전부 껍데기면 빈 것을 준다 — 없는 자료를 지어내지 않는다."""
+    from cmo.lib.proposal import _latest_snapshot
+    껍데기 = {"수집시각": "2026-08-14", "플레이스": {"방문자리뷰": None}, "순위": []}
+    assert _latest_snapshot({"스냅샷": [껍데기, 껍데기]}) == {}
+    assert _latest_snapshot({"스냅샷": []}) == {}
