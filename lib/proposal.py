@@ -5,6 +5,7 @@
 실수하는 날이 오는데, 그때 값이 없으면 새어 나갈 수가 없다.
 """
 from .pricing import line_amount
+from .prescription import prescribe
 from .schedule import weekly_plan
 
 FORBIDDEN_KEYS = ("실비", "실비_내부이체", "원가", "마진", "마진율")
@@ -247,16 +248,52 @@ def _reviews(진단: dict, metrics: dict) -> dict | None:
     }
 
 
-def _diagnosis(client: dict, metrics: dict) -> dict:
-    """검색 현황 네 장. 값이 없는 장은 None 이고 서식이 통째로 감춘다."""
+def _customer(client: dict) -> dict | None:
+    """1장 — 이 가게에 오는 손님. 오픈업이 없으면 장이 통째로 사라진다."""
+    U = _openub(client)
+    if not U:
+        return None
+    return {**U, "상권": _trade_area(U.get("평일비율"))}
+
+
+def _search(client: dict, metrics: dict) -> dict:
+    """2장 — 검색에서의 자리.
+
+    `총키워드`·`TOP3`·`TOP10`·`저장수` 는 판독기가 읽어 놓고 제안서로
+    한 번도 안 나가던 값이다. 여기서 쓴다.
+    """
+    snap = _latest_snapshot(client)
+    ranks = snap.get("순위") or []
+    진단 = snap.get("진단") or {}
+    place = snap.get("플레이스") or {}
+
+    수치 = []
+    for 이름, 값 in (("추적 키워드", 진단.get("총키워드")),
+                     ("TOP 3", 진단.get("TOP3")),
+                     ("TOP 10", 진단.get("TOP10")),
+                     ("방문자 리뷰", metrics.get("방문자리뷰")),
+                     ("저장수", place.get("저장수"))):
+        if 값 is not None:
+            수치.append({"이름": 이름, "값": f"{int(값):,}개"
+                         if 이름 != "방문자 리뷰" else f"{int(값):,}건"})
+
+    return {
+        "헤드라인": _headline(ranks),
+        "수치": 수치,
+        "기회표": _opportunity(ranks),
+        "히든키워드": _hidden(진단),
+    }
+
+
+def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
+    """진단 세 장. 값이 없는 장은 None 이고 서식이 통째로 감춘다."""
     snap = _latest_snapshot(client)
     ranks = snap.get("순위") or []
     진단 = snap.get("진단") or {}
     return {
-        "기회표": _opportunity(ranks),
-        "헤드라인": _headline(ranks),
-        "변화": _moves(ranks, 진단),
-        "히든키워드": _hidden(진단),
+        "손님": _customer(client),
+        "검색": _search(client, metrics),
+        "처방": prescribe(_moves(ranks, 진단), lines),
         "리뷰": _reviews(진단, metrics),
     }
 
@@ -508,6 +545,7 @@ def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
         amount = line_amount(product, item)
         정가합 += amount["정가"]
         lines.append({
+            "상품id": product["id"],
             "매체": product["매체"],
             "상품명": product["상품명"],
             "수량표시": _quantity_label(product, item),
@@ -530,7 +568,7 @@ def build_payload(client: dict, plan: dict, products: list[dict]) -> dict:
         "진단": plan.get("진단메모", ""),
         "지표": _metrics(client),
         "오픈업": _openub(client),
-        "진단자료": _diagnosis(client, _metrics(client)),
+        "진단자료": _diagnosis(client, _metrics(client), lines),
         "구성": lines,
         "정가합": 정가합,
         "계약가": 계약가,

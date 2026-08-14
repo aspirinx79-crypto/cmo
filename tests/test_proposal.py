@@ -682,7 +682,7 @@ RICH_CLIENT = dict(CLIENT, 스냅샷=[RICH_SNAP])
 
 
 def test_opportunity_table_is_sorted_by_search_volume():
-    표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["기회표"]
+    표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["기회표"]
     assert [r["키워드"] for r in 표][:2] == ["서초맛집", "방배동맛집"]
     assert 표[0]["조회수"] == 5740
     assert 표[0]["순위표시"] == "30위 밖"
@@ -691,14 +691,14 @@ def test_opportunity_table_is_sorted_by_search_volume():
 
 def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
     """조회수가 가장 큰데 안 잡힌 키워드와, 1위인데 조회수가 작은 키워드."""
-    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["헤드라인"]
+    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["헤드라인"]
     assert "5,740" in 문장
     assert "서초맛집" in 문장
     assert "예술의전당정육식당" in 문장
 
 
 def test_rank_moves_are_split_into_up_and_down():
-    변화 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["변화"]
+    변화 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["처방"]
     assert 변화["기준일"] == "08-12" and 변화["비교일"] == "07-29"
     # 서초맛집은 81위에서 순위권 밖으로 밀렸다 — 그것도 내림이다.
     # 낙폭이 큰 순서로 선다.
@@ -709,7 +709,7 @@ def test_rank_moves_are_split_into_up_and_down():
 
 
 def test_hidden_keywords_carry_a_count():
-    히든 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["히든키워드"]
+    히든 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["히든키워드"]
     assert 히든["개수"] == 3
     assert "예술의전당한우" in 히든["목록"]
 
@@ -730,10 +730,10 @@ def test_reviews_drop_internal_marks_and_author_ids():
 def test_sections_vanish_when_there_is_nothing_to_show():
     """기존 PDF 한 장만 넣은 매장은 네 장이 통째로 빠진다."""
     진단 = build_payload(CLIENT, PLAN, PRODUCTS)["진단자료"]
-    assert 진단["기회표"] is None
-    assert 진단["헤드라인"] is None
-    assert 진단["변화"] is None
-    assert 진단["히든키워드"] is None
+    assert 진단["검색"]["기회표"] is None
+    assert 진단["검색"]["헤드라인"] is None
+    assert 진단["처방"] is None
+    assert 진단["검색"]["히든키워드"] is None
 
 
 def test_opportunity_table_needs_search_volume():
@@ -742,7 +742,7 @@ def test_opportunity_table_needs_search_volume():
     for row in snap["순위"]:
         row["조회수"] = None
     진단 = build_payload(dict(CLIENT, 스냅샷=[snap]), PLAN, PRODUCTS)["진단자료"]
-    assert 진단["기회표"] is None
+    assert 진단["검색"]["기회표"] is None
 
 
 def test_headline_picks_the_right_particle():
@@ -757,7 +757,7 @@ def test_headline_picks_the_right_particle():
 
 
 def test_headline_sentence_reads_correctly():
-    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["헤드라인"]
+    문장 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["헤드라인"]
     assert "「예술의전당정육식당」은" in 문장
     assert "「예술의전당정육식당」는" not in 문장
 
@@ -817,3 +817,54 @@ def test_the_middle_gets_no_name():
     assert _trade_area(41) is None
     assert _trade_area(59) is None
     assert _trade_area(None) is None
+
+
+# ── 진단 세 장 ────────────────────────────────────────────
+
+def test_lines_carry_the_product_id():
+    """처방이 갈래를 판정하려면 줄에 상품id 가 있어야 한다."""
+    got = build_payload(CLIENT, PLAN, PRODUCTS)
+    assert all("상품id" in ln for ln in got["구성"])
+
+
+def test_diagnosis_has_three_parts():
+    got = build_payload(CLIENT, PLAN, PRODUCTS)["진단자료"]
+    assert set(got) == {"손님", "검색", "처방", "리뷰"}
+
+
+def test_customer_page_vanishes_without_openub():
+    """빈 카드를 만들지 않는다."""
+    got = build_payload(CLIENT, PLAN, PRODUCTS)["진단자료"]
+    assert got["손님"] is None
+
+
+def test_customer_page_carries_openub_and_trade_area():
+    client = {**CLIENT, "오픈업": [{
+        "기준월": "2026-06",
+        "매출": {"하한": 46000000, "상한": 56000000},
+        "성별최다": {"값": "남성", "비율": 62},
+        "연령최다": {"값": "30대", "비율": 34},
+        "요일최다": {"값": "금요일", "비율": 21},
+        "시간대최다": {"값": "19~21시", "비율": 41},
+        "평일비율": 63,
+    }]}
+    손님 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["손님"]
+    assert 손님["기준월"] == "2026-06"
+    assert 손님["상권"] == "평일 상권입니다"
+    assert 손님["평일비율"] == 63
+
+
+def test_search_page_carries_the_idle_numbers():
+    """총키워드·TOP3·TOP10·저장수는 읽어 놓고 안 쓰던 값이다."""
+    client = {**CLIENT, "스냅샷": [{
+        "수집시각": "2026-08-12T08:52:26",
+        "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100},
+        "순위": [{"키워드": "잠실맛집", "순위": 8}],
+        "진단": {"총키워드": 47, "TOP3": 3, "TOP10": 11},
+    }]}
+    수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
+    이름들 = [c["이름"] for c in 수치]
+    assert "추적 키워드" in 이름들
+    assert "TOP 3" in 이름들
+    assert "TOP 10" in 이름들
+    assert "저장수" in 이름들
