@@ -78,6 +78,7 @@
     <tr class="total"><th id="q-total-label"></th><td class="num" id="q-total"></td></tr>
   </table>
 
+  <p class="note" id="q-notice"></p>
   <div class="issuer" id="q-issuer"></div>
 
   <script src="../app/util.js"></script>
@@ -109,6 +110,11 @@
       document.getElementById("q-vat").textContent = won(P.부가세);
       document.getElementById("q-total-label").textContent = P.부가세문구;
       document.getElementById("q-total").textContent = won(P.총합);
+
+      // 받치기 항목이 없는 달에는 줄이 통째로 빈다.
+      const 고지 = document.getElementById("q-notice");
+      고지.textContent = P.고지 || "";
+      고지.hidden = !P.고지;
 
       // 발주처는 payload 에서만 온다. 서식에 박아 두지 않는다 — 값을
       // 고치러 서식을 열게 되면 서식이 조금씩 달라진다.

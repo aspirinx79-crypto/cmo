@@ -125,6 +125,23 @@ def test_the_constant_never_holds_an_account_number():
     assert "계좌" not in QUOTE_ISSUER
 
 
+# ── 공정위 대가성 문구 ────────────────────────────────────
+
+def test_ad_notice_appears_when_content_items_are_sold():
+    """제안서에서 고지사항 장을 뺐다. 이 고지는 계약 문서에 남아야 한다."""
+    from cmo.lib.quote import AD_NOTICE
+    got = build_quote_payload(CLIENT, PLAN, PRODUCTS, today=TODAY)
+    assert got["고지"] == AD_NOTICE
+    assert "공정위" in AD_NOTICE
+
+
+def test_no_ad_notice_without_content_items():
+    """서비스툴관리만 파는 달에는 붙이지 않는다."""
+    plan = {**PLAN, "항목": [{"상품id": "네이버-서비스툴관리", "수량": 1}]}
+    got = build_quote_payload(CLIENT, plan, PRODUCTS, today=TODAY)
+    assert got["고지"] == ""
+
+
 def test_no_account_number_is_written_anywhere_in_the_source():
     """계좌번호처럼 생긴 글자가 코드·서식 어디에도 없어야 한다.
 

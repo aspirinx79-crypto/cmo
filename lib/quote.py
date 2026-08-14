@@ -10,6 +10,18 @@
 import os
 from datetime import date
 
+from cmo.lib.prescription import SUPPORT, role_of
+
+# 공정위 대가성 문구.
+#
+# 제안서에서 고지사항 장을 뺐다. 이 한 줄까지 사라지면 사장님이
+# 「내 블로그 리뷰에 광고 표기가 붙는다」는 사실을 모른 채 계약한다.
+# 계약 문서 쪽에 남긴다.
+#
+# 받치기 갈래가 곧 대가성 표기 대상이라 목록을 따로 만들지 않는다 —
+# 분류표 하나를 제안서와 견적서가 같이 쓴다.
+AD_NOTICE = "체험단·배포 콘텐츠에는 공정위 규정에 따른 대가성 문구가 삽입됩니다."
+
 VAT_RATE = 0.1
 
 # 계좌번호는 환경변수에서만 온다.
@@ -78,6 +90,9 @@ def build_quote_payload(client: dict, plan: dict, products: list[dict], *,
             if product:                      # 지워진 상품은 그 줄만 빠진다
                 세부.append(_detail(product, item))
 
+    받치기있음 = any(role_of(it.get("상품id", "")) == SUPPORT
+                     for it in (plan.get("항목") or []))
+
     부가세 = 0 if 부가세별도 else int(round(계약가 * VAT_RATE))
     이름 = client["이름"]
     today = today or date.today()
@@ -96,4 +111,5 @@ def build_quote_payload(client: dict, plan: dict, products: list[dict], *,
         "총합": 계약가 + 부가세,
         "부가세문구": "총합 (vat별도)" if 부가세별도 else "총합 (vat포함)",
         "발주처": issuer(),
+        "고지": AD_NOTICE if 받치기있음 else "",
     }
