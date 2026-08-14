@@ -5,7 +5,17 @@
 import json
 from pathlib import Path
 
-from cmo.lib.prescription import NONE, PUSH, ROLE, SUPPORT, role_of
+from cmo.lib.prescription import (
+    DOWN_LINE,
+    NONE,
+    PUSH,
+    ROLE,
+    SUPPORT,
+    UP_LINE,
+    placements,
+    prescribe,
+    role_of,
+)
 
 CMO = Path(__file__).resolve().parent.parent
 
@@ -37,3 +47,63 @@ def test_role_counts_match_the_design():
 def test_unknown_product_falls_back_to_none():
     """지워진 상품이 기획안에 남아 있어도 터지지 않는다."""
     assert role_of("없는-상품") == NONE
+
+
+LINES = [
+    {"상품id": "네이버-서비스툴관리", "상품명": "서비스툴관리", "수량표시": "1건"},
+    {"상품id": "네이버-자동완성어", "상품명": "자동완성어", "수량표시": "1건"},
+    {"상품id": "네이버-SA", "상품명": "SA", "수량표시": "월 150,000원 집행"},
+    {"상품id": "네이버-블로그_일반_체험단", "상품명": "블로그 일반 체험단",
+     "수량표시": "5팀"},
+    {"상품id": "카카오-리뷰작업", "상품명": "리뷰작업", "수량표시": "5건"},
+    {"상품id": "인스타-먹스타_PPL", "상품명": "먹스타 PPL", "수량표시": "1식"},
+]
+변화 = {
+    "기준일": "2026-08-12", "비교일": "2026-06-12",
+    "오름": [{"키워드": "잠실종합운동장맛집", "전": "12위", "후": "8위"}],
+    "내림": [{"키워드": "송파양꼬치", "전": "7위", "후": "14위"}],
+}
+
+
+def test_placements_pick_only_that_role():
+    """기반(서비스툴관리)과 브랜딩(PPL)은 어느 쪽에도 안 붙는다."""
+    assert placements(LINES, PUSH) == ["자동완성어 1건", "SA 월 150,000원 집행"]
+    assert placements(LINES, SUPPORT) == ["블로그 일반 체험단 5팀", "리뷰작업 5건"]
+
+
+def test_prescription_carries_both_directions():
+    got = prescribe(변화, LINES)
+    assert got["오름문장"] == UP_LINE
+    assert got["내림문장"] == DOWN_LINE
+    assert got["오름배치"] == ["자동완성어 1건", "SA 월 150,000원 집행"]
+    assert got["내림배치"] == ["블로그 일반 체험단 5팀", "리뷰작업 5건"]
+    assert got["기준일"] == "2026-08-12"
+
+
+def test_no_matching_items_means_no_placement_line():
+    """빈 약속을 만들지 않는다. 「이번 달 배치 —」 뒤가 비면 안 된다."""
+    기반만 = [LINES[0], LINES[5]]
+    got = prescribe(변화, 기반만)
+    assert got["오름배치"] == []
+    assert got["내림배치"] == []
+    assert got["오름문장"] == UP_LINE      # 원칙 문장은 남는다
+
+
+def test_one_sided_movement_keeps_only_that_side():
+    한쪽 = {**변화, "내림": []}
+    got = prescribe(한쪽, LINES)
+    assert got["내림"] == []
+    assert got["내림문장"] is None
+    assert got["내림배치"] == []
+
+
+def test_no_movement_at_all_gives_nothing():
+    assert prescribe(None, LINES) is None
+    assert prescribe({"오름": [], "내림": []}, LINES) is None
+
+
+def test_sentences_never_claim_a_cause():
+    """원인은 확인할 수 없다. 한 번 틀리면 제안서 전체가 무너진다."""
+    for 문장 in (UP_LINE, DOWN_LINE):
+        for 금칙 in ("때문", "탓", "경쟁", "원인"):
+            assert 금칙 not in 문장

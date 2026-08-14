@@ -67,3 +67,38 @@ ROLE = {
 def role_of(product_id: str) -> str:
     """상품의 갈래. 표에 없으면 제외다 — 모르는 것을 처방에 넣지 않는다."""
     return ROLE.get(product_id, NONE)
+
+
+# 원칙 문장. 관측된 것과 우리가 할 것만 쓴다 — 원인은 한 글자도 없다.
+UP_LINE = "상승 중인 키워드는 지금 밀어붙일 때 효과가 가장 큽니다."
+DOWN_LINE = "떨어진 키워드는 콘텐츠와 리뷰 총량으로 되돌립니다."
+
+
+def placements(lines: list[dict], role: str) -> list[str]:
+    """기획안 줄 중 그 갈래인 것의 이름과 수량.
+
+    수량표시는 실행 구성이 쓰는 것을 그대로 받는다. 같은 항목이 3장에서
+    「5팀」인데 4장에서 「5건」이면 서로 다른 것으로 읽힌다.
+    """
+    return [f"{ln['상품명']} {ln['수량표시']}".strip()
+            for ln in lines if role_of(ln.get("상품id", "")) == role]
+
+
+def prescribe(변화: dict | None, lines: list[dict]) -> dict | None:
+    """순위 변동에 이번 달 항목을 붙인다. 변동이 없으면 None 이다."""
+    if not 변화:
+        return None
+    오름 = 변화.get("오름") or []
+    내림 = 변화.get("내림") or []
+    if not 오름 and not 내림:
+        return None
+    return {
+        "기준일": 변화.get("기준일"),
+        "비교일": 변화.get("비교일"),
+        "오름": 오름,
+        "내림": 내림,
+        "오름문장": UP_LINE if 오름 else None,
+        "내림문장": DOWN_LINE if 내림 else None,
+        "오름배치": placements(lines, PUSH) if 오름 else [],
+        "내림배치": placements(lines, SUPPORT) if 내림 else [],
+    }
