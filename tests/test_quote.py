@@ -142,6 +142,47 @@ def test_no_ad_notice_without_content_items():
     assert got["고지"] == ""
 
 
+def test_ad_notice_appears_for_ppl_even_though_it_is_not_a_support_item():
+    """PPL 은 처방에서 브랜딩으로 빠지지만, 대가성 표기 대상은 맞다.
+
+    처방의 갈래(밀기·받치기·제외)는 **마케팅 판단**이고 대가성 표기는
+    **법 문제**다. 둘을 같은 표 하나로 묶어 두면, 브랜딩 판단으로
+    갈래를 옮기는 순간 고지가 같이 사라진다.
+    """
+    from cmo.lib.quote import AD_NOTICE
+    products = PRODUCTS + [
+        {"id": "인스타-먹스타_PPL", "매체": "인스타", "상품명": "먹스타 PPL",
+         "가격유형": "고정", "정가": 400000, "실비": 200000, "최소수량": 1,
+         "단위": "식", "판매중지": False, "고지사항": "광고문구 삽입 고지",
+         "프로세스": ""},
+    ]
+    plan = {**PLAN, "항목": [{"상품id": "인스타-먹스타_PPL", "수량": 1}]}
+    got = build_quote_payload(CLIENT, plan, products, today=TODAY)
+    assert got["고지"] == AD_NOTICE
+
+
+def test_every_catalog_product_that_needs_the_notice_triggers_it():
+    """카탈로그가 스스로 「공정위 문구 고지」라고 적어 둔 상품 전수.
+
+    한 건이라도 고지 없이 팔리면 그 달 계약서에 표기 안내가 없다.
+    새 상품이 카탈로그에 들어와도 이 검사가 알아서 잡는다.
+    """
+    from pathlib import Path
+    from cmo.lib.quote import AD_NOTICE, NOTICE_MARKS
+
+    raw = json.loads(Path("cmo/data/products.json").read_text(encoding="utf-8"))
+    catalog = raw if isinstance(raw, list) else (raw.get("상품") or raw.get("products"))
+
+    대상 = [p for p in catalog if not p.get("판매중지")
+            and any(m in (p.get("고지사항") or "") for m in NOTICE_MARKS)]
+    assert 대상, "카탈로그에서 고지 대상을 한 건도 못 찾았다 — 열쇠 이름이 바뀌었다"
+
+    for p in 대상:
+        plan = {**PLAN, "항목": [{"상품id": p["id"], "수량": 1}]}
+        got = build_quote_payload(CLIENT, plan, catalog, today=TODAY)
+        assert got["고지"] == AD_NOTICE, f"{p['id']} 만 파는 달에 고지가 안 붙는다"
+
+
 def test_no_account_number_is_written_anywhere_in_the_source():
     """계좌번호처럼 생긴 글자가 코드·서식 어디에도 없어야 한다.
 
