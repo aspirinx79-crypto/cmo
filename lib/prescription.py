@@ -69,9 +69,19 @@ def role_of(product_id: str) -> str:
     return ROLE.get(product_id, NONE)
 
 
-# 원칙 문장. 관측된 것과 우리가 할 것만 쓴다 — 원인은 한 글자도 없다.
-UP_LINE = "상승 중인 키워드는 지금 밀어붙일 때 효과가 가장 큽니다."
-DOWN_LINE = "떨어진 키워드는 콘텐츠와 리뷰 총량으로 되돌립니다."
+# 원칙 문장. 관측된 것과 **우리가 할 것**만 쓴다.
+#
+# 원인은 한 글자도 없다 — 순위가 왜 움직였는지는 확인할 수 없다.
+# 결과도 약속하지 않는다. 처음에 `DOWN_LINE` 이 "…총량으로 되돌립니다"
+# 였는데, 떨어진 키워드 바로 옆에서 순위를 되돌려 주겠다고 말한 셈이다.
+# 카탈로그는 같은 상품에 「상위노출 보장은 아니란거 고지」를 달고 있다.
+# 효과 크기를 단정하는 말(`가장`·`확실`)도 안 쓴다 — 스냅샷은 순위를 재지
+# 효과 크기를 재지 않는다.
+#
+# 두 검사가 이 선을 지킨다: `test_sentences_never_claim_a_cause`,
+# `test_sentences_never_promise_a_result`.
+UP_LINE = "상승 중인 키워드에는 이번 달 노출을 더 얹습니다."
+DOWN_LINE = "떨어진 키워드는 콘텐츠와 리뷰 총량을 늘려 받칩니다."
 
 
 def placements(lines: list[dict], role: str) -> list[str]:
