@@ -81,10 +81,6 @@ def test_totals_and_multiplier_sentence(pdf_text):
     assert "1.5배" in pdf_text["text"]
 
 
-def test_notices_are_printed(pdf_text):
-    assert "공정위" in pdf_text["text"]
-
-
 def test_schedule_is_printed(pdf_text):
     assert "1주차" in pdf_text["text"] and "4주차" in pdf_text["text"]
     assert "모집" in pdf_text["text"]
@@ -107,14 +103,26 @@ def test_differentiators_are_printed(pdf_text):
     assert "매주" in pdf_text["text"] and "다음 달" in pdf_text["text"]
 
 
-def test_rank_metric_is_printed(pdf_text):
-    assert "인계동 삼겹살" in pdf_text["text"] and "17" in pdf_text["text"]
+def test_bare_rank_without_search_signal_is_not_printed(pdf_text):
+    """진단자료가 손님·검색·처방 세 장으로 바뀌면서, 조회수도 비교순위도 없는
+
+    맨 순위 한 줄은 더 이상 실릴 자리가 없다(기회표는 조회수가, 처방은
+    비교순위가 있어야 뜬다). 대신 판독이 안 된 클라이언트도 검색 장의
+    일반 수치(방문자 리뷰 등)는 그대로 뜬다 — 세 장이 아예 안 뜨는 게
+    아니라 키워드 카드만 없는 것이다.
+    """
+    assert "인계동 삼겹살" not in pdf_text["text"]
+    assert "312건" in pdf_text["text"]
 
 
 def test_absolute_revenue_is_not_printed(pdf_text):
-    """오픈업 추정 매출 절대금액은 싣지 않는다. 반박당하면 제안서 전체가 흔들린다."""
+    """오픈업 추정 매출 절대금액은 싣지 않는다. 반박당하면 제안서 전체가 흔들린다.
+
+    상권순위(예: "상위 40%")는 예전 「매장 진단」 장의 카드였다. 손님·검색·
+    처방 세 장으로 바뀌며 이 값을 쓰는 자리가 없어졌다 — 실을 자리가
+    없어졌을 뿐 일부러 가린 게 아니다.
+    """
     assert "42,000,000" not in pdf_text["text"]
-    assert "상위 40%" in pdf_text["text"]
 
 
 # ── 오픈업 카드 ───────────────────────────────────────────────
@@ -313,3 +321,92 @@ def test_plain_client_pdf_has_no_diagnosis_section(pdf_text):
     assert "30위 밖" not in pdf_text["text"]
     assert "아직 안 보입니다" not in pdf_text["text"]
     assert "키워드 기회표" not in pdf_text["text"]
+
+
+# ── 처방 장, 고지사항 장 삭제 ───────────────────────────────────
+
+
+def test_proposal_has_no_notice_page(tmp_path):
+    """고지사항 장을 뺐다. 대가성 고지는 견적서로 갔다."""
+    payload = build_payload(CLIENT, PLAN, PRODUCTS)
+    out = tmp_path / "p.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    글자 = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    assert "고지사항" not in 글자
+
+
+def test_prescription_page_prints_placements(tmp_path):
+    payload = build_payload(CLIENT, PLAN, PRODUCTS)
+    payload["진단자료"] = {
+        "손님": None, "검색": {"헤드라인": None, "수치": [],
+                               "기회표": None, "히든키워드": None},
+        "리뷰": None,
+        "처방": {
+            "기준일": "2026-08-12", "비교일": "2026-06-12",
+            "오름": [{"키워드": "잠실종합운동장맛집", "전": "12위", "후": "8위"}],
+            "내림": [{"키워드": "송파양꼬치", "전": "7위", "후": "14위"}],
+            "오름문장": "상승 중인 키워드는 지금 밀어붙일 때 효과가 가장 큽니다.",
+            "내림문장": "떨어진 키워드는 콘텐츠와 리뷰 총량으로 되돌립니다.",
+            "오름배치": ["자동완성어 1건"],
+            "내림배치": ["블로그 일반 체험단 5팀"],
+        },
+    }
+    out = tmp_path / "r.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    글자 = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    assert "잠실종합운동장맛집" in 글자
+    assert "이번 달 배치" in 글자
+    assert "자동완성어 1건" in 글자
+    assert "블로그 일반 체험단 5팀" in 글자
+
+
+def test_placement_line_disappears_when_empty(tmp_path):
+    """빈 약속을 만들지 않는다."""
+    payload = build_payload(CLIENT, PLAN, PRODUCTS)
+    payload["진단자료"] = {
+        "손님": None, "검색": {"헤드라인": None, "수치": [],
+                               "기회표": None, "히든키워드": None},
+        "리뷰": None,
+        "처방": {
+            "기준일": None, "비교일": None,
+            "오름": [{"키워드": "잠실맛집", "전": "12위", "후": "8위"}],
+            "내림": [],
+            "오름문장": "상승 중인 키워드는 지금 밀어붙일 때 효과가 가장 큽니다.",
+            "내림문장": None, "오름배치": [], "내림배치": [],
+        },
+    }
+    out = tmp_path / "e.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    글자 = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    assert "잠실맛집" in 글자
+    assert "이번 달 배치" not in 글자
+
+
+def test_no_null_is_ever_printed(tmp_path):
+    """판독 날짜가 없어도 「null」이 고객 문서에 찍히면 안 된다."""
+    payload = build_payload(CLIENT, PLAN, PRODUCTS)
+    payload["진단자료"] = {
+        "손님": None,
+        "검색": {"헤드라인": None, "수치": [], "기회표": None, "히든키워드": None},
+        "리뷰": None,
+        "처방": {
+            "기준일": None, "비교일": None,
+            "오름": [{"키워드": "잠실맛집", "전": "12위", "후": "8위"}],
+            "내림": [],
+            "오름문장": "상승 중인 키워드는 지금 밀어붙일 때 효과가 가장 큽니다.",
+            "내림문장": None, "오름배치": [], "내림배치": [],
+        },
+    }
+    out = tmp_path / "n.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    글자 = "".join(doc[i].get_text() for i in range(doc.page_count))
+    doc.close()
+    assert "null" not in 글자
+    assert "undefined" not in 글자

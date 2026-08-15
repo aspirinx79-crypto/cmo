@@ -59,17 +59,18 @@
     </div>
   </section>
 
-  <section>
-    <h2>매장 진단</h2>
+  <section id="s-customer" hidden>
+    <h2>이 가게에 오는 손님</h2>
     <div id="d-basic"></div>
-    <div class="metrics" id="d-metrics"></div>
+    <div class="metrics" id="d-customer"></div>
+    <p id="d-trade"></p>
     <p id="d-metrics-note" class="note"></p>
-    <p id="d-memo"></p>
   </section>
 
-  <section id="s-diagnosis" hidden>
-    <h2>검색 현황</h2>
+  <section id="s-search" hidden>
+    <h2>검색에서의 자리</h2>
     <div class="headline" id="d-headline"></div>
+    <div class="metrics" id="d-numbers"></div>
 
     <div id="d-opportunity-wrap">
       <h3>키워드 기회표</h3>
@@ -80,14 +81,27 @@
       </table>
     </div>
 
-    <div id="d-moves-wrap">
-      <h3 id="d-moves-title">순위 변화</h3>
-      <div id="d-moves"></div>
-    </div>
-
     <div id="d-hidden-wrap">
       <h3 id="d-hidden-title"></h3>
       <p class="fine" id="d-hidden"></p>
+    </div>
+  </section>
+
+  <section id="s-prescription" hidden>
+    <h2 id="d-moves-title">순위 변동과 이번 달 처방</h2>
+
+    <div id="d-up-wrap">
+      <h3>▲ 순위가 오르는 중</h3>
+      <div id="d-up"></div>
+      <p id="d-up-line"></p>
+      <p class="fine" id="d-up-place"></p>
+    </div>
+
+    <div id="d-down-wrap">
+      <h3>▼ 순위가 내려간 키워드</h3>
+      <div id="d-down"></div>
+      <p id="d-down-line"></p>
+      <p class="fine" id="d-down-place"></p>
     </div>
 
     <div id="d-reviews-wrap">
@@ -112,11 +126,6 @@
   </section>
 
   <section>
-    <h2>고지사항</h2>
-    <ul id="n-list"></ul>
-  </section>
-
-  <section>
     <h2>저희가 다른 점</h2>
     <ul id="x-list"></ul>
   </section>
@@ -132,54 +141,6 @@
       document.getElementById("c-month").textContent = P.월 + " 마케팅 제안";
       document.getElementById("c-name").textContent = P.매장명;
       document.getElementById("c-where").textContent = [P.지역, P.업종].filter(Boolean).join(" · ");
-
-      document.getElementById("d-basic").textContent =
-        [P.업종, P.지역, P.평수 ? P.평수 + "평" : null].filter(Boolean).join(" · ");
-
-      const M = P.지표, cards = [];
-      if (M.블로그리뷰 !== null && M.블로그리뷰 !== undefined)
-        cards.push({ label: "블로그 리뷰", value: M.블로그리뷰 + "건" });
-      if (M.방문자리뷰 !== null && M.방문자리뷰 !== undefined)
-        cards.push({ label: "방문자 리뷰", value: M.방문자리뷰 + "건" });
-      for (const r of (M.순위 || []))
-        cards.push({ label: "「" + r.키워드 + "」", value: r.순위 + "위" });
-      if (M.상권순위) cards.push({ label: "동일 상권 내", value: M.상권순위 });
-
-      // 오픈업 추정치. 확정 숫자로 읽히지 않게 구간으로 적고 각주에
-      // 출처와 기준월을 함께 찍는다.
-      const U = P.오픈업;
-      if (U) {
-        // 값을 짧게 끊어 카드마다 한 줄에 담는다. 「4,600만~5,600만원」은
-        // 18pt 굵은 글씨로는 카드를 넘겨 「4,600만~5,600 / 만원」으로
-        // 잘린다. 잘린 숫자가 제안서 첫 장에 찍히면 안 된다.
-        const 만 = (n) => Math.round(n / 10000).toLocaleString();
-        if (U.매출)
-          cards.push({ label: "월 추정매출", small: true,
-                       value: 만(U.매출.하한) + "~" + 만(U.매출.상한) + "만원" });
-        if (U.성별최다)
-          cards.push({ label: "주 고객", small: true,
-                       value: U.성별최다.값 + " " + U.성별최다.비율 + "%" });
-        if (U.연령최다)
-          cards.push({ label: "최다 연령", small: true,
-                       value: U.연령최다.값 + " " + U.연령최다.비율 + "%" });
-        if (U.요일최다 || U.시간대최다)
-          cards.push({ label: "붐비는 때", small: true,
-                       value: [U.요일최다 ? U.요일최다.값 + " " + U.요일최다.비율 + "%" : null,
-                               U.시간대최다 ? U.시간대최다.값 + " " + U.시간대최다.비율 + "%" : null]
-                              .filter(Boolean).join(" · ") });
-      }
-
-      document.getElementById("d-metrics").innerHTML = cards.map((c) =>
-        `<div class="metric"><div class="label">${esc(c.label)}</div>
-         <div class="value${c.small ? " small" : ""}">${esc(c.value)}</div></div>`).join("");
-
-      const 각주 = document.getElementById("d-metrics-note");
-      if (U && 각주) {
-        const [연, 월] = (U.기준월 || "-").split("-");
-        각주.textContent = `매출·고객 구성은 오픈업 추정(${연}년 ${Number(월)}월)`;
-      }
-
-      document.getElementById("d-memo").textContent = P.진단 || "";
 
       document.getElementById("t-body").innerHTML =
         P.구성.map((c) =>
@@ -197,44 +158,99 @@
          <ul>${(w.항목.length ? w.항목 : ["—"]).map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`
       ).join("");
 
-      // 진단자료 — 값이 없는 장은 통째로 감춘다. 빈 표를 만들면
+      // 진단 세 장 — 값이 없는 장은 통째로 감춘다. 빈 표를 만들면
       // 「자료를 못 구했다」가 「그런 게 없다」로 읽힌다.
       const D = P.진단자료 || {};
       const 보임 = (id, on) => { document.getElementById(id).hidden = !on; };
+      const 카드 = (list) => list.map((c) =>
+        `<div class="metric"><div class="label">${esc(c.label ?? c.이름)}</div>
+         <div class="value${c.small ? " small" : ""}">${esc(c.value ?? c.값)}</div>
+         </div>`).join("");
 
-      보임("s-diagnosis",
-           Boolean(D.기회표 || D.변화 || D.히든키워드 || D.리뷰));
-      document.getElementById("d-headline").textContent = D.헤드라인 || "";
-      보임("d-headline", Boolean(D.헤드라인));
+      // ── 1장 손님
+      const U = D.손님;
+      보임("s-customer", Boolean(U));
+      if (U) {
+        document.getElementById("d-basic").textContent =
+          [P.업종, P.지역, P.평수 ? P.평수 + "평" : null].filter(Boolean).join(" · ");
+        const 만 = (n) => Math.round(n / 10000).toLocaleString();
+        const cards = [];
+        if (U.매출) cards.push({ label: "월 추정매출", small: true,
+          value: 만(U.매출.하한) + "~" + 만(U.매출.상한) + "만원" });
+        if (U.성별최다) cards.push({ label: "주 고객", small: true,
+          value: U.성별최다.값 + " " + U.성별최다.비율 + "%" });
+        if (U.연령최다) cards.push({ label: "최다 연령", small: true,
+          value: U.연령최다.값 + " " + U.연령최다.비율 + "%" });
+        if (U.요일최다 || U.시간대최다) cards.push({ label: "붐비는 때", small: true,
+          value: [U.요일최다 ? U.요일최다.값 + " " + U.요일최다.비율 + "%" : null,
+                  U.시간대최다 ? U.시간대최다.값 + " " + U.시간대최다.비율 + "%" : null]
+                 .filter(Boolean).join(" · ") });
+        document.getElementById("d-customer").innerHTML = 카드(cards);
 
-      보임("d-opportunity-wrap", Boolean(D.기회표));
-      if (D.기회표) {
-        document.getElementById("d-opportunity").innerHTML = D.기회표.map((r) =>
+        const 상권 = document.getElementById("d-trade");
+        const 비율 = (U.평일비율 === null || U.평일비율 === undefined) ? null
+          : `평일 ${U.평일비율}% · 주말 ${100 - U.평일비율}%`;
+        상권.textContent = [비율, U.상권].filter(Boolean).join(" — ");
+        상권.hidden = !상권.textContent;
+
+        const [연, 월] = (U.기준월 || "-").split("-");
+        document.getElementById("d-metrics-note").textContent =
+          `매출·고객 구성은 오픈업 추정(${연}년 ${Number(월)}월)`;
+      }
+
+      // ── 2장 검색
+      const S = D.검색 || {};
+      보임("s-search", Boolean(S.헤드라인 || (S.수치 || []).length ||
+                                S.기회표 || S.히든키워드));
+      document.getElementById("d-headline").textContent = S.헤드라인 || "";
+      보임("d-headline", Boolean(S.헤드라인));
+      document.getElementById("d-numbers").innerHTML = 카드(S.수치 || []);
+
+      보임("d-opportunity-wrap", Boolean(S.기회표));
+      if (S.기회표) {
+        document.getElementById("d-opportunity").innerHTML = S.기회표.map((r) =>
           `<tr><td>${esc(r.키워드)}</td>
            <td class="num">${Number(r.조회수).toLocaleString()}건</td>
            <td class="num">${esc(r.순위표시)}</td></tr>`).join("");
       }
 
-      보임("d-moves-wrap", Boolean(D.변화));
-      if (D.변화) {
-        document.getElementById("d-moves-title").textContent =
-          `순위 변화 (${D.변화.비교일} → ${D.변화.기준일})`;
-        const 줄 = (r, cls, mark) =>
-          `<div class="move ${cls}"><span class="arrow">${mark}</span>` +
-          `<span class="kw">${esc(r.키워드)}</span>` +
-          `<span>${esc(r.전)} → ${esc(r.후)}</span></div>`;
-        document.getElementById("d-moves").innerHTML =
-          D.변화.내림.map((r) => 줄(r, "down", "▼")).join("") +
-          D.변화.오름.map((r) => 줄(r, "up", "▲")).join("");
+      보임("d-hidden-wrap", Boolean(S.히든키워드));
+      if (S.히든키워드) {
+        document.getElementById("d-hidden-title").textContent =
+          `아직 안 잡은 키워드 ${S.히든키워드.개수}개`;
+        document.getElementById("d-hidden").textContent =
+          S.히든키워드.목록.join(" · ");
       }
 
-      보임("d-hidden-wrap", Boolean(D.히든키워드));
-      if (D.히든키워드) {
-        document.getElementById("d-hidden-title").textContent =
-          `아직 안 잡은 키워드 ${D.히든키워드.개수}개`;
-        document.getElementById("d-hidden").textContent =
-          D.히든키워드.목록.join(" · ");
-      }
+      // ── 3장 처방
+      const R = D.처방;
+      보임("s-prescription", Boolean(R || D.리뷰));
+      const 줄 = (r, cls, mark) =>
+        `<div class="move ${cls}"><span class="arrow">${mark}</span>` +
+        `<span class="kw">${esc(r.키워드)}</span>` +
+        `<span>${esc(r.전)} → ${esc(r.후)}</span></div>`;
+      // 날짜를 못 읽은 날 「(null → null)」 이 사장님께 나갔다.
+      const 기간 = (R && R.비교일 && R.기준일) ? ` (${R.비교일} → ${R.기준일})` : "";
+      document.getElementById("d-moves-title").textContent =
+        `순위 변동과 이번 달 처방${기간}`;
+
+      const 한쪽 = (있나, wrapId, listId, lineId, placeId, rows, line, place, cls, mark) => {
+        보임(wrapId, 있나);
+        if (!있나) return;
+        document.getElementById(listId).innerHTML =
+          rows.map((r) => 줄(r, cls, mark)).join("");
+        document.getElementById(lineId).textContent = line || "";
+        // 빈 약속을 만들지 않는다 — 배치가 없으면 줄이 통째로 사라진다.
+        const p = document.getElementById(placeId);
+        p.textContent = place.length ? `이번 달 배치 — ${place.join(" · ")}` : "";
+        p.hidden = !place.length;
+      };
+      한쪽(Boolean(R && R.오름.length), "d-up-wrap", "d-up", "d-up-line",
+           "d-up-place", R ? R.오름 : [], R && R.오름문장,
+           R ? R.오름배치 : [], "up", "▲");
+      한쪽(Boolean(R && R.내림.length), "d-down-wrap", "d-down", "d-down-line",
+           "d-down-place", R ? R.내림 : [], R && R.내림문장,
+           R ? R.내림배치 : [], "down", "▼");
 
       보임("d-reviews-wrap", Boolean(D.리뷰));
       if (D.리뷰) {
@@ -247,8 +263,6 @@
           ).join("");
       }
 
-      document.getElementById("n-list").innerHTML =
-        P.고지사항.map((n) => `<li>${esc(n)}</li>`).join("");
       document.getElementById("x-list").innerHTML =
         P.차별점.map((n) => `<li>${esc(n)}</li>`).join("");
     }
