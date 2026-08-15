@@ -241,6 +241,18 @@ def test_quote_details_carry_no_money(quote_pdf_text):
     assert "30,000" not in text
 
 
+def test_quote_pdf_prints_the_ad_notice(quote_pdf_text):
+    """대가성 고지는 payload 에 담기는 것으로 끝나지 않는다.
+
+    고객이 받는 종이에 찍혀야 지킨 것이다. 서식의 `#q-notice` 배선이
+    끊기면 payload 검사는 그대로 통과하면서 종이에서만 사라진다.
+    """
+    from cmo.lib.quote import AD_NOTICE
+
+    assert AD_NOTICE in quote_pdf_text["text"]
+    assert "공정위" in quote_pdf_text["text"]
+
+
 def test_quote_template_has_no_hardcoded_issuer():
     """서식과 값이 한 파일에 있으면 값을 고치러 서식을 열게 된다.
 
