@@ -282,7 +282,15 @@
         const r = await savePlanAskingToOverwrite(plan);
         if (!r.saved) return;
         const made = await window.API.proposal(slug(), plan.월);
-        alert(`제안서를 만들었습니다.\n${made.경로}`);
+        // 빠진 진단 장을 먼저 읽게 놓는다. 경로 아래에 붙이면 경로만
+        // 보고 확인을 눌러 버린다 — 실제로 진단 세 장이 빠진 제안서가
+        // 그렇게 조용히 나갔다.
+        const 경고 = made.경고 || [];
+        alert(경고.length
+          ? `제안서를 만들었습니다. 다만 진단 ${경고.length}장이 빠졌습니다.\n\n`
+            + 경고.map((w) => `• ${w}`).join("\n")
+            + `\n\n${made.경로}`
+          : `제안서를 만들었습니다.\n${made.경로}`);
       } catch (err) {
         alert(`제안서 생성 실패: ${err.message}`);
       }

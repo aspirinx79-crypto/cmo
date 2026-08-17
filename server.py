@@ -314,7 +314,8 @@ def make_handler(store: Store, app_dir: Path):
 
                 if path == "/api/proposal":
                     from cmo.build_pdf import build
-                    from cmo.lib.proposal import ProposalBlocked, build_payload
+                    from cmo.lib.proposal import (ProposalBlocked,
+                                                  build_payload, missing_pages)
                     slug, month = body["slug"], body["월"]
                     try:
                         payload = build_payload(store.client_read(slug),
@@ -323,7 +324,10 @@ def make_handler(store: Store, app_dir: Path):
                     except ProposalBlocked as exc:
                         return self._json({"오류": str(exc)}, 400)
                     out = CMO / "out" / f"{slug}_{month}_제안서.pdf"
-                    return self._json({"경로": str(build(payload, out))})
+                    # 막지 않는다. 진단 없이 나가야 하는 달도 있다 — 다만
+                    # 빠진 줄 모르고 나가는 일은 없어야 한다.
+                    return self._json({"경로": str(build(payload, out)),
+                                       "경고": missing_pages(payload)})
 
                 if path == "/api/quote":
                     from cmo.build_pdf import QUOTE, build

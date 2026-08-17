@@ -310,6 +310,49 @@ def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
     }
 
 
+# 빠진 진단 장 경고.
+#
+# 자료가 없으면 장이 사라지는 것은 **맞는 동작이다** — 빈 표를 만들면
+# 「자료를 못 구했다」가 「그런 게 없다」로 읽힌다. 사고는 장이 빠지는 게
+# 아니라 **빠진 줄 모르고 나가는 것**이다. 실제로 방이점 제안서가 진단
+# 세 장 없이 4장짜리로 조용히 나갔고, 뽑은 사람은 그걸 사장님께 보내기
+# 직전에야 알았다.
+#
+# ┌─ 여기는 `templates/proposal.html` 의 거울이다 ────────────────────┐
+# │ 아래 세 조건은 서식이 장을 띄우는 `보임(...)` 세 줄과 글자 그대로 │
+# │ 같은 뜻이어야 한다. 두 벌이라 언젠가 어긋나는데, 어긋나면 서 있는 │
+# │ 장을 빠졌다 하거나(경고가 거짓말) 빠진 장을 조용히 넘긴다(경고가  │
+# │ 무의미). 서식의 노출 조건을 고치면 여기도 같이 고칠 것.           │
+# │ `test_pdf.py` 가 실제로 PDF 를 찍어서 둘을 대조한다.              │
+# └───────────────────────────────────────────────────────────────────┘
+MISSING_CUSTOMER = ("「이 가게에 오는 손님」장이 빠집니다 — "
+                    "오픈업 캡처를 판독해 넣으십시오.")
+MISSING_SEARCH = ("「검색에서의 자리」장이 빠집니다 — "
+                  "애드로그 캡처를 판독해 넣으십시오.")
+MISSING_MOVES = ("「순위 변동과 이번 달 처방」장이 빠집니다 — "
+                 "애드로그 판독에 비교순위가 있어야 합니다.")
+
+
+def missing_pages(payload: dict) -> list[str]:
+    """제안서에서 빠진 진단 장을 사람 말로 낸다. payload 는 읽기만 한다.
+
+    막지 않는다. 진단 없이 나가야 하는 달도 있고, 자료가 늦는 매장도
+    있다. 판단은 상무님이 하고 이 함수는 사실만 알린다.
+    """
+    D = payload.get("진단자료") or {}
+    S = D.get("검색") or {}
+
+    빠짐 = []
+    if not D.get("손님"):
+        빠짐.append(MISSING_CUSTOMER)
+    if not (S.get("헤드라인") or S.get("수치") or S.get("기회표")
+            or S.get("히든키워드")):
+        빠짐.append(MISSING_SEARCH)
+    if not (D.get("처방") or D.get("리뷰")):
+        빠짐.append(MISSING_MOVES)
+    return 빠짐
+
+
 def _quantity_label(product: dict, item: dict) -> str:
     unit = product.get("단위") or "건"
     if product["가격유형"] == "예산배율":

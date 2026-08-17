@@ -703,3 +703,56 @@ def test_quote_without_a_contract_price_is_blocked(server):
 
     assert status == 400
     assert "계약가" in body["오류"]
+
+
+# ── 제안서 응답이 빠진 진단 장을 알린다 ────────────────────────
+#
+# 자료 없는 매장의 제안서가 4장으로 조용히 나갔고, 뽑은 사람은 사장님께
+# 보내기 직전에야 알았다. 경고를 응답에 실어 화면이 그 자리에서 띄운다.
+
+def test_proposal_response_warns_about_missing_diagnosis_pages(server,
+                                                               monkeypatch):
+    """PDF 는 찍지 않는다 — 여기서 보는 건 경고가 실려 오는가 하나다."""
+    import cmo.build_pdf
+    monkeypatch.setattr(cmo.build_pdf, "build",
+                        lambda payload, out, **kw: out)
+
+    _post(server, "/api/clients/하루인_인계점", CLIENT)
+    _post(server, "/api/clients/하루인_인계점/plans/2026-09", PLAN)
+    status, body = _post(server, "/api/proposal",
+                         {"slug": "하루인_인계점", "월": "2026-09"})
+
+    assert status == 200
+    assert body["경로"]
+    붙인것 = " ".join(body["경고"])
+    assert "이 가게에 오는 손님" in 붙인것
+    assert "검색에서의 자리" in 붙인것
+    assert "순위 변동과 이번 달 처방" in 붙인것
+
+
+def test_proposal_response_is_quiet_when_nothing_is_missing(server,
+                                                            monkeypatch):
+    """늘 짖는 경고는 아무도 안 본다."""
+    import cmo.build_pdf
+    monkeypatch.setattr(cmo.build_pdf, "build",
+                        lambda payload, out, **kw: out)
+
+    client = dict(CLIENT, 스냅샷=[{
+        "수집시각": "2026-08-14T00:26:31",
+        "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100},
+        "순위": [{"키워드": "인계동맛집", "순위": 3, "순위권밖": False,
+                 "조회수": 4800, "비교순위": 7}],
+        "진단": {"기준일": "08-13", "비교일": "07-30",
+                "리뷰": {"방문자": [], "블로그": []}},
+    }], 오픈업=[{"기준월": "2026-07",
+                "매출": {"하한": 46000000, "상한": 56000000},
+                "성별최다": {"값": "남성", "비율": 62},
+                "연령최다": {"값": "남성 30대", "비율": 28},
+                "요일최다": {"값": "금", "비율": 22},
+                "시간대최다": {"값": "밤", "비율": 45}, "평일비율": 64}])
+    _post(server, "/api/clients/하루인_인계점", client)
+    _post(server, "/api/clients/하루인_인계점/plans/2026-09", PLAN)
+    _, body = _post(server, "/api/proposal",
+                    {"slug": "하루인_인계점", "월": "2026-09"})
+
+    assert body["경고"] == []

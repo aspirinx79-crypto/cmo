@@ -39,12 +39,19 @@ def main() -> int:
     from cmo.lib.proposal import build_payload
     from cmo.lib.storage import Store
 
+    from cmo.lib.proposal import missing_pages
+
     slug, month = sys.argv[1], sys.argv[2]
     store = Store(CMO / "data")
     payload = build_payload(store.client_read(slug), store.plan_read(slug, month),
                             store.products())
     out = CMO / "out" / f"{slug}_{month}_제안서.pdf"
     print(build(payload, out))
+
+    # 빠진 진단 장은 stderr 로 알린다 — 경로만 파이프로 받아 쓰는
+    # 사용처가 있어서 stdout 에 섞지 않는다. 막지는 않는다.
+    for 줄 in missing_pages(payload):
+        print(줄, file=sys.stderr)
     return 0
 
 

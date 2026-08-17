@@ -839,3 +839,110 @@ def test_search_page_carries_the_idle_numbers():
     assert "TOP 3" in 이름들
     assert "TOP 10" in 이름들
     assert "저장수" in 이름들
+
+
+# ── 빠진 진단 장 경고 ─────────────────────────────────────
+#
+# 실제로 이것 때문에 방이점 제안서가 4장으로 조용히 나갔다. 자료가 없으면
+# 장이 사라지는 것은 맞는 동작이지만, **사라진 줄 모르고 나가는 것**이
+# 사고다. 뽑는 사람에게 그 자리에서 알린다.
+
+# 방이점 실물 모양 — 자동수집만 두 번 눌려 껍데기 스냅샷만 쌓인 매장.
+BARE_CLIENT = {
+    "이름": "미친양꼬치 방이점", "업종": "", "지역": "", "평수": None,
+    "스냅샷": [
+        {"수집시각": "2026-08-15T21:37:12",
+         "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+         "순위": [], "예상매출": None},
+        {"수집시각": "2026-08-15T21:37:21",
+         "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+         "순위": [], "예상매출": None},
+    ],
+}
+
+WARN_OPENUB = {
+    "기준월": "2026-07", "매출": {"하한": 46000000, "상한": 56000000},
+    "성별최다": {"값": "남성", "비율": 62},
+    "연령최다": {"값": "남성 30대", "비율": 28},
+    "요일최다": {"값": "금", "비율": 22},
+    "시간대최다": {"값": "밤", "비율": 45},
+    "평일비율": 64,
+}
+
+
+def _warnings(client, plan=None):
+    from cmo.lib.proposal import missing_pages
+    return missing_pages(build_payload(client, plan or PLAN, PRODUCTS))
+
+
+def test_bare_client_warns_about_all_three_diagnosis_pages():
+    """자료가 한 줄도 없는 매장은 세 장이 전부 빠진다. 셋 다 알린다."""
+    경고 = _warnings(BARE_CLIENT)
+    붙인것 = " ".join(경고)
+    assert len(경고) == 3
+    assert "이 가게에 오는 손님" in 붙인것
+    assert "검색에서의 자리" in 붙인것
+    assert "순위 변동과 이번 달 처방" in 붙인것
+
+
+def test_warnings_say_which_capture_to_upload():
+    """무엇이 빠졌는지만 알리면 다음에 뭘 해야 할지 모른다."""
+    경고 = _warnings(BARE_CLIENT)
+    손님 = next(w for w in 경고 if "손님" in w)
+    검색 = next(w for w in 경고 if "검색에서의 자리" in w)
+    처방 = next(w for w in 경고 if "처방" in w)
+    assert "오픈업" in 손님
+    assert "애드로그" in 검색
+    assert "애드로그" in 처방 and "비교순위" in 처방
+
+
+def test_a_client_with_everything_gets_no_warning():
+    """세 장이 다 서면 조용해야 한다. 늘 짖는 경고는 아무도 안 본다."""
+    client = dict(RICH_CLIENT, 오픈업=[WARN_OPENUB])
+    assert _warnings(client) == []
+
+
+def test_openub_alone_still_warns_about_the_two_adlog_pages():
+    """오픈업만 넣으면 손님 장만 선다."""
+    경고 = _warnings(dict(BARE_CLIENT, 오픈업=[WARN_OPENUB]))
+    붙인것 = " ".join(경고)
+    assert "이 가게에 오는 손님" not in 붙인것
+    assert "검색에서의 자리" in 붙인것
+    assert "순위 변동과 이번 달 처방" in 붙인것
+
+
+def test_adlog_alone_still_warns_about_the_customer_page():
+    """애드로그만 넣으면 손님 장이 빈다 — 오픈업은 따로 넣어야 한다."""
+    경고 = _warnings(RICH_CLIENT)
+    붙인것 = " ".join(경고)
+    assert "이 가게에 오는 손님" in 붙인것
+    assert "검색에서의 자리" not in 붙인것
+    assert "순위 변동과 이번 달 처방" not in 붙인것
+
+
+def test_a_half_filled_search_page_is_not_reported_missing():
+    """방문자 리뷰 하나만 있어도 검색 장은 선다 — 선 장을 빠졌다고 하지 않는다.
+
+    서식은 `헤드라인·수치·기회표·히든키워드` 중 **하나만** 있어도 장을
+    띄운다(`proposal.html:203`). 경고가 그보다 엄하면 거짓말이 된다.
+    """
+    경고 = " ".join(_warnings(CLIENT))
+    assert "검색에서의 자리" not in 경고
+
+
+def test_reviews_alone_keep_the_prescription_page_standing():
+    """처방이 없어도 리뷰 현황이 있으면 그 장은 선다(`proposal.html:227`)."""
+    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
+    for row in snap["순위"]:
+        row["비교순위"] = None            # 처방은 죽이고 리뷰는 살린다
+    경고 = " ".join(_warnings(dict(CLIENT, 스냅샷=[snap])))
+    assert "순위 변동과 이번 달 처방" not in 경고
+
+
+def test_warning_does_not_touch_the_payload():
+    """경고는 읽기만 한다. 뽑는 값을 건드리면 안 된다."""
+    from cmo.lib.proposal import missing_pages
+    payload = build_payload(BARE_CLIENT, PLAN, PRODUCTS)
+    before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    missing_pages(payload)
+    assert json.dumps(payload, ensure_ascii=False, sort_keys=True) == before

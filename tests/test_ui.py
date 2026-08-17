@@ -844,6 +844,52 @@ def test_make_proposal_on_a_fresh_month_does_not_ask(page_with_client):
         f"덮어쓸 게 없는데 확인창을 띄웠다: {dialogs}")
 
 
+# --- 빠진 진단 장은 확인창에서 읽혀야 한다 ---
+# 진단 세 장이 빠진 제안서가 조용히 나갔다. 서버가 경고를 실어 보내도
+# 확인창이 안 보여주면 없는 것과 같다.
+
+def _make_proposal_reading_the_alert(page, 응답: dict) -> str:
+    """제안서 만들기를 누르고 확인창 글을 돌려준다."""
+    page.select_option("#client-select", CLIENT_SLUG)
+    page.fill("#month", "2026-11")
+    page.fill("#contract-price", "1000000")
+    page.click('.add-btn[data-id="네이버-블로그_일반_체험단"]')
+    card = page.locator('.board-card[data-id="네이버-블로그_일반_체험단"]')
+    card.locator(".qty-input").fill("10")
+    card.locator(".qty-input").dispatch_event("change")
+    page.wait_for_timeout(300)
+
+    page.route("**/api/proposal", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(응답, ensure_ascii=False)))
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append((d.type, d.message)), d.accept()))
+    page.click("#make-proposal")
+    page.wait_for_timeout(500)
+    return next(m for t, m in dialogs if t == "alert")
+
+
+def test_make_proposal_alert_shows_the_missing_pages_before_the_path(
+        page_with_client):
+    """경로 아래에 붙이면 경로만 보고 확인을 눌러 버린다."""
+    손님 = "「이 가게에 오는 손님」장이 빠집니다 — 오픈업 캡처를 판독해 넣으십시오."
+    처방 = "「순위 변동과 이번 달 처방」장이 빠집니다 — 애드로그 판독에 비교순위가 있어야 합니다."
+    메시지 = _make_proposal_reading_the_alert(
+        page_with_client, {"경로": "fake.pdf", "경고": [손님, 처방]})
+
+    assert 손님 in 메시지 and 처방 in 메시지
+    assert "2장이 빠졌습니다" in 메시지
+    assert 메시지.index(손님) < 메시지.index("fake.pdf"), "경로가 경고보다 위에 있다"
+
+
+def test_make_proposal_alert_is_quiet_when_nothing_is_missing(page_with_client):
+    """늘 짖는 확인창은 아무도 안 읽는다."""
+    메시지 = _make_proposal_reading_the_alert(
+        page_with_client, {"경로": "fake.pdf", "경고": []})
+    assert "빠집니다" not in 메시지 and "빠졌습니다" not in 메시지
+    assert "fake.pdf" in 메시지
+
+
 def test_copy_to_next_month_carries_items_and_updates_month_field(page_with_client):
     page = page_with_client
     page.select_option("#client-select", CLIENT_SLUG)
