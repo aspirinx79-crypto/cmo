@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -47,6 +48,26 @@ RENDER_DPI = 140
 
 TOO_BIG = "파일이 10MB 를 넘습니다."
 BAD_FILE = "파일을 열지 못했습니다. 애드로그에서 다시 내보내 보십시오."
+BAD_IMAGE = ("이 그림 형식은 판독하지 못합니다. PNG 나 JPG 로 올리십시오. "
+             "아이폰 사진(HEIC)이면 공유 → 「사진 변환」에서 JPEG 를 고르거나, "
+             "화면 캡처로 다시 찍으면 PNG 로 저장됩니다.")
+
+# 그림 첫머리 몇 바이트로 형식을 가린다.
+#
+# 확장자를 믿으면 안 된다. 아이폰에서 받은 파일이 `.jpg` 인데 속은 HEIC 인
+# 일이 흔하고, 카톡을 거치면 이름이 통째로 바뀐다. 게다가 PDF 에서 렌더한
+# 그림에는 파일명이라는 게 아예 없다.
+#
+# 원래 여기가 없어서 **모든 그림을 `image/png` 라고 못박아** 보냈다. 화면은
+# `accept="image/*"` 로 JPG 를 받으니(`app/index.html`), JPG 캡처를 올리면
+# API 가 400 으로 되돌렸고 상무님에게는 「판독 호출이 실패했습니다」 한 줄만
+# 보였다. 애드로그도 오픈업도 이 통로를 지나서 **둘 다** 죽었다.
+IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
 
 PROMPT = """이 그림은 애드로그(adlog)의 「플레이스 종합분석」 화면이다.
 아래 JSON 만 출력하라. 설명·인사·코드 울타리를 붙이지 마라.
@@ -330,6 +351,49 @@ def render_pages(data: bytes, filename: str) -> list[bytes]:
         doc.close()
 
 
+def image_media_type(data: bytes) -> str:
+    """그림 바이트를 보고 형식 이름을 낸다. 모르면 ValueError 로 멈춘다.
+
+    API 가 받는 네 가지(PNG·JPEG·GIF·WebP)만 안다. 모르는 걸 아무 이름이나
+    붙여 보내면 400 이 오고, 그 400 은 「호출이 실패했습니다」로 뭉개져서
+    무엇이 잘못됐는지 아무도 모르게 된다. 여기서 이름을 대고 멈춘다.
+    """
+    for 머리, 이름 in IMAGE_MAGIC:
+        if data.startswith(머리):
+            return 이름
+    # WebP 는 첫 4바이트가 RIFF, 파일 크기 네 자리를 건너뛴 8번째부터 WEBP.
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    raise ValueError(BAD_IMAGE)
+
+
+KEY_LOOKING = re.compile(r"sk-[A-Za-z0-9_\-]+")
+
+
+def api_reason(exc: Exception) -> str | None:
+    """API 가 400 으로 되돌리며 적어 준 이유를 꺼낸다. 없으면 None.
+
+    400 은 **우리가 잘못 보낸 것**이고, API 는 대개 뭘 잘못했는지 정확히
+    적어 준다. 그걸 「조회 실패」로 뭉개면 고칠 수가 없다 — 실제로
+    「image/png 라고 했는데 jpeg 로 보인다」는 문장이 그렇게 지워졌고,
+    상무님은 캡처가 왜 안 들어가는지 모른 채 제안서를 뽑았다.
+
+    400 만이다. 401·403 은 `short_error` 의 짧은 말이 더 낫고(키가 틀린
+    것뿐이다), 5xx 는 저쪽 사정이라 본문에 쓸 말이 없다.
+
+    본문은 우리가 쓴 글이 아니다. 키처럼 생긴 토막은 지우고 내보낸다 —
+    이 말은 화면에도 가고 클라이언트 JSON 에도 남을 수 있다.
+    """
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 400:
+        return None
+    try:
+        말 = json.loads(exc.read().decode("utf-8"))["error"]["message"]
+    except Exception:
+        return None                      # 본문이 JSON 이 아니면 조용히 포기
+    말 = KEY_LOOKING.sub("[가림]", str(말)).strip()
+    return 말[:300] or None
+
+
 def ask_model(images: list[bytes], prompt: str, api_key: str,
               model: str = MODEL) -> str:
     """그림들과 프롬프트를 보내 **글자**를 받는다. 파싱은 부르는 쪽 몫이다.
@@ -342,10 +406,14 @@ def ask_model(images: list[bytes], prompt: str, api_key: str,
     """
     require_https(ANTHROPIC_ENDPOINT)
 
+    # 형식은 그림마다 따로 본다. PDF 에서 렌더한 PNG 와 손으로 찍은 JPG 가
+    # 한 번에 섞여 들어온다. 그리고 **보내기 전에** 다 본다 — 세 장 중 하나가
+    # HEIC 인데 두 장 값을 태우고 나서 거절당할 이유가 없다.
     content = [{"type": "image",
-                "source": {"type": "base64", "media_type": "image/png",
-                           "data": base64.b64encode(png).decode("ascii")}}
-               for png in images]
+                "source": {"type": "base64",
+                           "media_type": image_media_type(그림),
+                           "data": base64.b64encode(그림).decode("ascii")}}
+               for 그림 in images]
     content.append({"type": "text", "text": prompt})
 
     body = json.dumps({
@@ -364,7 +432,8 @@ def ask_model(images: list[bytes], prompt: str, api_key: str,
             payload = json.loads(res.read().decode("utf-8"))
     except Exception as exc:
         # 원문을 print 하지 마라 — 여기에 키가 들어 있다.
-        raise ValueError(f"판독 호출이 실패했습니다({short_error(exc)}).") from None
+        이유 = api_reason(exc) or short_error(exc)
+        raise ValueError(f"판독 호출이 실패했습니다({이유}).") from None
 
     return "".join(block.get("text", "")
                    for block in (payload.get("content") or [])

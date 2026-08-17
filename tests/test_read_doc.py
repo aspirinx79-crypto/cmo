@@ -6,6 +6,7 @@
 import io
 import json
 import os
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -322,7 +323,10 @@ def test_ask_model_returns_text_not_a_dict(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    got = read_doc.ask_model([b"\x89PNG-1", b"\x89PNG-2"], "읽어라", "sk-test")
+    # 진짜 PNG 머리(8바이트)로 시작해야 한다 — `ask_model` 이 바이트를 보고
+    # 형식을 정하기 때문에 「PNG 비슷한 것」으로는 통과하지 않는다.
+    got = read_doc.ask_model([b"\x89PNG\r\n\x1a\n1", b"\x89PNG\r\n\x1a\n2"],
+                             "읽어라", "sk-test")
 
     assert got == "안녕"
     # 키는 헤더로만 간다. 본문·URL 에 실으면 로그에 남는다.
@@ -473,3 +477,160 @@ def test_read_captures_keeps_the_same_limits(monkeypatch):
     files = [(b"\x89PNG", f"{i}.png") for i in range(captures.MAX_CAPTURES + 1)]
     with pytest.raises(ValueError, match="장까지"):
         read_doc.read_captures(files, "sk-test")
+
+
+# ── 그림 종류를 사실대로 적어 보낸다 ───────────────────────────
+#
+# `ask_model` 이 모든 그림을 `image/png` 로 못박아 보내고 있었다. 화면은
+# `accept="image/*"` 로 JPG 를 받는데(`index.html:98·109`), JPG 를 PNG 라고
+# 우기면 API 가 400 으로 되돌린다. 상무님에게는 「판독 호출이 실패했습니다」
+# 한 줄로만 보이고, 애드로그도 오픈업도 같은 통로라 **둘 다** 죽는다.
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"0" * 20
+GIF_BYTES = b"GIF89a" + b"0" * 20
+WEBP_BYTES = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"0" * 20
+
+
+def _capture_sent_body(monkeypatch, images):
+    """ask_model 이 실제로 보낸 본문을 돌려준다."""
+    from cmo.lib import read_doc
+
+    보낸것 = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"content": [{"type": "text", "text": "{}"}]}
+                              ).encode("utf-8")
+
+    def fake_urlopen(req, timeout=None):
+        보낸것["본문"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    read_doc.ask_model(images, "읽어라", "sk-test")
+    return 보낸것["본문"]
+
+
+@pytest.mark.parametrize("바이트,기대", [
+    (PNG_BYTES, "image/png"),
+    (JPEG_BYTES, "image/jpeg"),
+    (GIF_BYTES, "image/gif"),
+    (WEBP_BYTES, "image/webp"),
+])
+def test_media_type_follows_the_actual_bytes(monkeypatch, 바이트, 기대):
+    """파일명이 아니라 **바이트**를 보고 정한다 — 확장자는 거짓말을 한다."""
+    본문 = _capture_sent_body(monkeypatch, [바이트])
+    assert 본문["messages"][0]["content"][0]["source"]["media_type"] == 기대
+
+
+def test_mixed_captures_each_keep_their_own_type(monkeypatch):
+    """PDF 에서 렌더한 PNG 와 손으로 찍은 JPG 가 한 번에 섞여 들어온다."""
+    본문 = _capture_sent_body(monkeypatch, [PNG_BYTES, JPEG_BYTES, PNG_BYTES])
+    보낸종류 = [c["source"]["media_type"]
+                for c in 본문["messages"][0]["content"] if c["type"] == "image"]
+    assert 보낸종류 == ["image/png", "image/jpeg", "image/png"]
+
+
+def test_unknown_image_type_is_refused_with_a_usable_message(monkeypatch):
+    """모르는 형식을 PNG 라고 우기면 API 가 400 을 주고 이유는 안 남는다.
+
+    아이폰 기본 형식(HEIC)이 여기로 들어온다. 「실패했습니다」 대신
+    무엇을 어떻게 하라는 말을 준다.
+    """
+    from cmo.lib import read_doc
+
+    with pytest.raises(ValueError) as err:
+        read_doc.ask_model([b"ftypheic" + b"0" * 20], "읽어라", "sk-test")
+    말 = str(err.value)
+    assert "PNG" in 말 and "JPG" in 말
+
+
+def test_refusal_happens_before_the_network_call(monkeypatch):
+    """모르는 형식이면 부르지도 않는다 — 어차피 거절당할 요청이다."""
+    from cmo.lib import read_doc
+
+    def boom(req, timeout=None):
+        raise AssertionError("보내면 안 되는 요청을 보냈다")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(ValueError) as err:
+        read_doc.ask_model([PNG_BYTES, b"ftypheic" + b"0" * 20], "읽어라", "k")
+
+    # `ValueError` 만 보면 안 된다. ask_model 은 호출 중 **아무 예외나** 잡아
+    # 「판독 호출이 실패했습니다」라는 ValueError 로 바꿔 던진다 — boom 이
+    # 터져도 그 모양이 되니, 형식을 안 보고 그냥 보내도 이 시험이 통과해
+    # 버렸다(실제로 그렇게 확인했다). 낸 말이 형식 거절인지까지 본다.
+    assert "PNG" in str(err.value), f"보내고 나서 실패한 것이다: {err.value}"
+
+
+# ── 400 이 왜 났는지 말하게 한다 ────────────────────────────────
+#
+# 위의 형식 사고가 며칠을 먹은 진짜 이유는 형식이 틀렸다는 게 아니라
+# **틀린 줄 몰랐다는 것**이다. API 는 「image/png 라고 했는데 jpeg 로
+# 보인다」고 정확히 알려줬는데, `short_error` 가 그걸 「조회 실패」로
+# 뭉갰다. 상무님 화면에는 「판독 호출이 실패했습니다(조회 실패)」만
+# 남았다.
+#
+# `short_error` 자체는 못 건드린다 — `collect.py` 도 같이 쓰는데 거기
+# 응답 본문에는 매장 정보가 들어 있고 그게 클라이언트 JSON 에 박힌다.
+# 그래서 여기 400 자리에서만 API 가 준 이유를 꺼내 붙인다.
+
+
+def _http_error(code, body):
+    return urllib.error.HTTPError(
+        ANTHROPIC_ENDPOINT, code, "err", {},
+        io.BytesIO(json.dumps(body).encode("utf-8")))
+
+
+def _ask_with_error(monkeypatch, err):
+    from cmo.lib import read_doc
+
+    def fake_urlopen(req, timeout=None):
+        raise err
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError) as caught:
+        read_doc.ask_model([PNG_BYTES], "읽어라", "sk-ant-SECRET")
+    return str(caught.value)
+
+
+def test_a_400_repeats_what_the_api_actually_said(monkeypatch):
+    """400 은 대개 우리가 잘못 보낸 것이다. 뭘 잘못했는지가 필요하다."""
+    말 = _ask_with_error(monkeypatch, _http_error(400, {"error": {
+        "type": "invalid_request_error",
+        "message": "The image was specified using the image/png media type, "
+                   "but the image appears to be a image/jpeg image"}}))
+    assert "image/jpeg" in 말, f"API 가 준 이유가 사라졌다: {말}"
+
+
+def test_the_key_never_rides_along_in_the_400_message(monkeypatch):
+    """본문에 키처럼 생긴 게 섞여 있어도 화면·로그로 내보내지 않는다.
+
+    응답 본문은 우리가 만든 글이 아니다. 언젠가 요청 일부를 되비추면
+    거기 키가 실릴 수 있다. 그 한 번이면 키가 클라이언트 JSON 에 박힌다.
+    """
+    말 = _ask_with_error(monkeypatch, _http_error(400, {"error": {
+        "message": "bad header x-api-key: sk-ant-SECRET"}}))
+    assert "sk-ant-SECRET" not in 말, f"키가 새어 나왔다: {말}"
+
+
+def test_auth_failures_keep_their_own_short_message(monkeypatch):
+    """401 은 이유를 되풀이할 게 없다 — 키가 틀린 것이고 본문은 군더더기다."""
+    말 = _ask_with_error(monkeypatch, _http_error(401, {"error": {
+        "message": "invalid x-api-key"}}))
+    assert "invalid x-api-key" not in 말
+
+
+def test_a_400_without_a_readable_body_still_fails_cleanly(monkeypatch):
+    """본문이 JSON 이 아니어도 터지면 안 된다 — 프록시가 HTML 을 준다."""
+    err = urllib.error.HTTPError(ANTHROPIC_ENDPOINT, 400, "err", {},
+                                 io.BytesIO(b"<html>Bad Request</html>"))
+    말 = _ask_with_error(monkeypatch, err)
+    assert 말 and "판독" in 말
