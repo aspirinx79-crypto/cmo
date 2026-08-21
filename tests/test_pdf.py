@@ -634,7 +634,10 @@ _DENSE_SNAP = {
             "리뷰": {"방문자": [{"제목": "양꼬치가 두툼합니다", "조회수": 900,
                               "작성일": "2026-07-16"}], "블로그": []}},
 }
-_DENSE_CLIENT = {**_BARE_CLIENT, "스냅샷": [_DENSE_SNAP], "오픈업": _OPENUB}
+# 업종·지역·평수를 채운다. 빈 매장으로 재면 이 줄들이 아예 안 찍혀서
+# 「같은 정보가 두 번 나오는지」를 볼 수가 없다(잠실점 실물이 이 모양이다).
+_DENSE_CLIENT = {**_BARE_CLIENT, "스냅샷": [_DENSE_SNAP], "오픈업": _OPENUB,
+                 "업종": "양꼬치", "지역": "잠실새내역", "평수": 55}
 
 
 def _쪽별글_밀도(tmp_path, 이름):
@@ -693,3 +696,20 @@ def test_stacked_sections_are_not_glued_together(tmp_path):
                 좁은곳.append(f"{번호 + 1}쪽 「{제목}」 위 틈 {틈:.1f}pt")
     doc.close()
     assert not 좁은곳, "장 경계가 붙어 있다: " + " / ".join(좁은곳)
+
+
+def test_the_store_line_is_printed_only_once(tmp_path):
+    """머리글과 「손님」장이 같은 지역·업종을 두 번 찍으면 안 된다.
+
+    표지가 따로 있던 시절엔 둘이 다른 쪽에 있어 눈에 안 띄었다. 이제
+    한 쪽에 4cm 간격으로 나란히 선다.
+    """
+    쪽들 = _쪽별글_밀도(tmp_path, "한번만.pdf")
+    assert 쪽들[0].count("잠실새내역") == 1, (
+        f"1쪽에 지역이 {쪽들[0].count('잠실새내역')}번 나온다: {쪽들[0][:220]!r}")
+
+
+def test_the_floor_area_survives(tmp_path):
+    """중복을 지우면서 평수까지 버리면 안 된다 — 머리글엔 평수가 없었다."""
+    쪽들 = _쪽별글_밀도(tmp_path, "평수.pdf")
+    assert "55평" in 쪽들[0], f"평수가 사라졌다: {쪽들[0][:220]!r}"

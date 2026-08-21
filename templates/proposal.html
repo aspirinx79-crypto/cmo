@@ -78,7 +78,6 @@
   <div class="쪽" id="p-diagnosis">
   <section id="s-customer" hidden>
     <h2>이 가게에 오는 손님</h2>
-    <div id="d-basic"></div>
     <div class="metrics" id="d-customer"></div>
     <p id="d-trade"></p>
     <p id="d-metrics-note" class="note"></p>
@@ -170,7 +169,12 @@
 
       document.getElementById("c-month").textContent = P.월 + " 마케팅 제안";
       document.getElementById("c-name").textContent = P.매장명;
-      document.getElementById("c-where").textContent = [P.지역, P.업종].filter(Boolean).join(" · ");
+      // 지역·업종·평수는 **여기서만** 찍는다. 예전엔 「손님」장에도 같은 줄이
+      // 있었는데, 표지가 따로 있던 시절엔 다른 쪽이라 안 보였다. 한 쪽에
+      // 모이니 4cm 간격으로 같은 말이 두 번 섰다. 평수는 머리글에 없었으므로
+      // 지우는 대신 여기로 옮겨 왔다 — 버리는 정보는 없다.
+      document.getElementById("c-where").textContent =
+        [P.지역, P.업종, P.평수 ? P.평수 + "평" : null].filter(Boolean).join(" · ");
 
       document.getElementById("t-body").innerHTML =
         P.구성.map((c) =>
@@ -201,8 +205,6 @@
       const U = D.손님;
       보임("s-customer", Boolean(U));
       if (U) {
-        document.getElementById("d-basic").textContent =
-          [P.업종, P.지역, P.평수 ? P.평수 + "평" : null].filter(Boolean).join(" · ");
         const 만 = (n) => Math.round(n / 10000).toLocaleString();
         const cards = [];
         if (U.매출) cards.push({ label: "월 추정매출", small: true,
