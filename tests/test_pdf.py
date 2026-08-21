@@ -504,3 +504,192 @@ def test_missing_page_warning_matches_what_the_pdf_prints(사례, tmp_path):
             f"[{사례}] 「{이름}」— 경고는 "
             f"{'빠졌다' if 문구 in 경고 else '있다'}는데 종이에는 "
             f"{'없다' if 이름 not in text else '있다'}")
+
+
+# ── 제안서는 네 쪽이다 ──
+#
+# 상무님이 일곱 쪽은 너무 복잡하다고 하셨다. 쪽 수는 서식을 손볼 때마다
+# 조용히 늘어나는 값이라 사람 눈으로 지킬 수 없다. 여기서 못박는다.
+
+def _쪽별글(client, tmp_path, 이름="쪽수.pdf"):
+    """PDF 를 뽑아 쪽마다의 글을 리스트로 낸다."""
+    payload = build_payload(client, PLAN, PRODUCTS)
+    out = tmp_path / 이름
+    build(payload, out)
+    doc = fitz.open(out)
+    쪽들 = [doc[i].get_text().strip() for i in range(doc.page_count)]
+    doc.close()
+    return 쪽들
+
+
+def test_a_full_proposal_fits_on_four_pages(tmp_path):
+    """자료가 다 찬 매장이라도 네 쪽을 넘지 않는다."""
+    쪽들 = _쪽별글(_CASES["다찬매장"], tmp_path)
+    assert len(쪽들) == 4, (
+        f"네 쪽이 아니라 {len(쪽들)}쪽이다. 쪽별 첫 줄: "
+        + " / ".join(글.splitlines()[0] if 글 else "(빈 쪽)" for 글 in 쪽들))
+
+
+def test_the_four_pages_carry_the_agreed_grouping(tmp_path):
+    """묶기로 한 대로 붙었는지 본다. 쪽 수만 맞고 순서가 엉키면 소용없다."""
+    쪽들 = _쪽별글(_CASES["다찬매장"], tmp_path, "묶음.pdf")
+    # 손님과 처방을 한 쪽에 두고 「검색에서의 자리」를 2쪽 통째로 준다.
+    # 검색 장은 기회표 여덟 줄에 미확보 키워드 목록까지 붙어서 제일 길다 —
+    # 손님과 같은 쪽에 묶으면 A4 를 넘긴다(방이점 실물로 확인).
+    묶음 = [("이 가게에 오는 손님", "순위 변동과 이번 달 처방"),
+            ("검색에서의 자리",),
+            ("실행 구성", "저희가 다른 점"),
+            ("1개월차 실행 일정",)]
+    for 번호, (글, 제목들) in enumerate(zip(쪽들, 묶음), start=1):
+        for 제목 in 제목들:
+            assert 제목 in 글, f"{번호}쪽에 「{제목}」이 없다. 있는 글: {글[:80]!r}"
+
+
+def test_the_first_page_names_the_month_and_the_store(tmp_path):
+    """표지를 없앴으니 그 정보가 첫 쪽 머리글로 살아 있어야 한다."""
+    쪽들 = _쪽별글(_CASES["다찬매장"], tmp_path, "머리글.pdf")
+    assert "2026-09" in 쪽들[0], f"첫 쪽에 월이 없다: {쪽들[0][:120]!r}"
+    assert "미친양꼬치 방이점" in 쪽들[0], f"첫 쪽에 상호가 없다: {쪽들[0][:120]!r}"
+
+
+def test_the_issuer_still_appears_somewhere(tmp_path):
+    """표지에 있던 회사 정보가 사라지면 안 된다 — 어느 쪽이든 남아야 한다."""
+    쪽들 = _쪽별글(_CASES["다찬매장"], tmp_path, "발행처.pdf")
+    전체 = "".join(쪽들)
+    assert "상생어벤져스" in 전체, "발행처가 통째로 사라졌다"
+    assert "1551-0723" in 전체, "연락처가 통째로 사라졌다"
+
+
+# 서식에 있는 장 제목 전부. 쪽마다 이 중 하나는 있어야 한다.
+_장제목 = ("이 가게에 오는 손님", "검색에서의 자리", "순위 변동과 이번 달 처방",
+           "실행 구성", "저희가 다른 점", "1개월차 실행 일정")
+
+
+@pytest.mark.parametrize("사례", list(_CASES))
+def test_every_page_carries_a_real_section(사례, tmp_path):
+    """진단 장이 숨으면 묶음 껍데기가 남아 머리글만 있는 쪽이 생긴다.
+
+    「빈 쪽」을 보면 안 잡힌다 — 껍데기 쪽에도 머리글 두 줄은 찍혀서
+    글자가 있긴 있다(실제로 그렇게 넣어 보고 확인했다). 장 제목이
+    하나도 없는 쪽을 찾아야 잡힌다.
+    """
+    쪽들 = _쪽별글(_CASES[사례], tmp_path, f"{사례}_껍데기.pdf")
+    맹탕 = [번호 for 번호, 글 in enumerate(쪽들, start=1)
+            if not any(제목 in 글 for 제목 in _장제목)]
+    assert not 맹탕, (
+        f"[{사례}] {맹탕} 쪽에 장이 하나도 없다 (전체 {len(쪽들)}쪽). "
+        f"그 쪽 내용: {쪽들[맹탕[0] - 1][:80]!r}")
+
+
+# ── 실물 밀도로 다시 본다 ──
+#
+# 위의 `다찬매장` 은 키워드가 두 개뿐이라 헐겁다. 그걸로 「네 쪽」을 재면
+# 통과하지만 방이점 실물은 다섯 쪽이 나왔다. 종이가 넘치는지는 **자료가
+# 많을 때**만 드러나므로, 실물만큼 채운 사례를 따로 둔다.
+
+_DENSE_PRODUCTS = PRODUCTS + [
+    {"id": "네이버-SA", "매체": "네이버", "상품명": "SA", "가격유형": "예산배율",
+     "정가": None, "실비": None, "예산배율": 1.15, "최소수량": 1, "단위": "건",
+     "고지사항": "상위대행사에 마크업 필수", "판매중지": False,
+     "프로세스": "상위대행사 이관-> 소재 세팅->통계보며 보고 및 피드백 -> 관리"},
+    {"id": "메타-타겟광고", "매체": "메타", "상품명": "타겟광고", "가격유형": "예산배율",
+     "정가": None, "실비": None, "예산배율": 1.3, "최소수량": 1, "단위": "건",
+     "고지사항": "운용수수료 별도", "판매중지": False,
+     "프로세스": "기획회의-> 디자인 및 영상소재 제작->타겟광고 ->통계 분석"},
+    {"id": "네이버-카페_여론형성형_침투_바이럴", "매체": "네이버",
+     "상품명": "카페 여론형성형 침투 바이럴", "가격유형": "고정", "정가": 50000,
+     "실비": 9000, "최소수량": 1, "단위": "건", "고지사항": "조회수 보고",
+     "판매중지": False, "프로세스": "단톡방 컨트롤"},
+    {"id": "네이버-자동완성어", "매체": "네이버", "상품명": "자동완성어",
+     "가격유형": "고정", "정가": 250000, "실비": 60000, "최소수량": 1, "단위": "건",
+     "고지사항": "", "판매중지": False, "프로세스": "단톡방 컨트롤"},
+    {"id": "카카오-리뷰작업", "매체": "카카오", "상품명": "리뷰작업",
+     "가격유형": "고정", "정가": 5000, "실비": 1500, "최소수량": 10, "단위": "건",
+     "고지사항": "", "판매중지": False, "프로세스": "실장님께 알바풀 전달"},
+]
+_DENSE_PLAN = {**PLAN, "항목": [
+    {"상품id": "네이버-서비스툴관리", "수량": 1},
+    {"상품id": "네이버-SA", "수량": 1, "예산": 300000},
+    {"상품id": "메타-타겟광고", "수량": 1, "예산": 500000},
+    {"상품id": "네이버-블로그_일반_체험단", "수량": 5},
+    {"상품id": "네이버-카페_여론형성형_침투_바이럴", "수량": 3},
+    {"상품id": "네이버-자동완성어", "수량": 1},
+    {"상품id": "카카오-리뷰작업", "수량": 10},
+]}
+# 조회수가 큰 키워드 17개 → 기회표가 8줄까지 선다. 방이점 실물과 같은 수다.
+_DENSE_RANKS = [
+    {"키워드": f"방이동맛집{i}", "순위": 20 + i, "순위권밖": False,
+     "조회수": 30000 - i * 1500, "비교순위": 5 + i} for i in range(17)
+]
+_DENSE_SNAP = {
+    "수집시각": "2026-08-15T21:37:21",
+    "플레이스": {"방문자리뷰": 826, "블로그리뷰": 25, "저장수": 100},
+    "순위": _DENSE_RANKS,
+    "예상매출": None,
+    "순위요약": {"총키워드": 60, "TOP3": 2, "TOP10": 5},
+    "진단": {"기준일": "08-13", "비교일": "07-30",
+            "대표키워드": ["양꼬치무한리필", "방이동양꼬치"],
+            # 방이점 실물과 같은 43개. 이 글자벽이 1쪽을 넘긴 주범이었다.
+            "히든키워드": [f"방이동 회식 후보 {i}" for i in range(43)],
+            "리뷰": {"방문자": [{"제목": "양꼬치가 두툼합니다", "조회수": 900,
+                              "작성일": "2026-07-16"}], "블로그": []}},
+}
+_DENSE_CLIENT = {**_BARE_CLIENT, "스냅샷": [_DENSE_SNAP], "오픈업": _OPENUB}
+
+
+def _쪽별글_밀도(tmp_path, 이름):
+    payload = build_payload(_DENSE_CLIENT, _DENSE_PLAN, _DENSE_PRODUCTS)
+    out = tmp_path / 이름
+    build(payload, out)
+    doc = fitz.open(out)
+    쪽들 = [doc[i].get_text().strip() for i in range(doc.page_count)]
+    doc.close()
+    return 쪽들
+
+
+def test_a_dense_real_world_proposal_still_fits_on_four_pages(tmp_path):
+    """키워드 17개·히든 43개·상품 7종이라도 네 쪽이다.
+
+    상품 일곱 종은 잠실점 실물 구성이다. 다섯 종짜리로 재면 일정이 한 장에
+    들어가 버려서 넘침을 못 본다 — 실제로 그 상태로 통과했다.
+    """
+    쪽들 = _쪽별글_밀도(tmp_path, "밀도.pdf")
+    assert len(쪽들) == 4, (
+        f"네 쪽이 아니라 {len(쪽들)}쪽이다. 쪽별 첫 줄: "
+        + " / ".join((글.splitlines() or ["(빈 쪽)"])[0] for 글 in 쪽들))
+
+
+def test_the_dense_proposal_keeps_every_keyword(tmp_path):
+    """쪽을 맞추려고 자료를 조용히 잘라내면 안 된다."""
+    쪽들 = _쪽별글_밀도(tmp_path, "밀도_보존.pdf")
+    전체 = "".join(쪽들)
+    assert "방이동맛집7" in 전체, "기회표 8번째 줄이 잘렸다"
+    assert "방이동 회식 후보 42" in 전체, "히든키워드 43번째가 잘렸다"
+
+
+def test_stacked_sections_are_not_glued_together(tmp_path):
+    """한 쪽에 장 둘이 쌓이면 그 사이에 눈에 보이는 틈이 있어야 한다.
+
+    장마다 쪽이 따로였을 때는 간격이 필요 없었다. 이제 손님과 처방이,
+    실행 구성과 차별점이 한 쪽에 붙으므로 아래 장 제목이 위 장 끝줄에
+    달라붙는다(실측 11pt — 문단 사이 간격과 구별이 안 된다).
+    """
+    최소틈 = 22        # pt. 문단 사이(11pt)의 두 배는 되어야 장 경계로 읽힌다.
+    payload = build_payload(_DENSE_CLIENT, _DENSE_PLAN, _DENSE_PRODUCTS)
+    out = tmp_path / "틈.pdf"
+    build(payload, out)
+    doc = fitz.open(out)
+    좁은곳 = []
+    for 번호 in range(doc.page_count):
+        덩이 = sorted(doc[번호].get_text("blocks"), key=lambda b: b[1])
+        for i, b in enumerate(덩이):
+            if i == 0:
+                continue                      # 쪽 첫 덩이는 위가 없다
+            제목 = next((t for t in _장제목 if b[4].strip().startswith(t)), None)
+            if 제목 is None:
+                continue
+            틈 = b[1] - 덩이[i - 1][3]
+            if 틈 < 최소틈:
+                좁은곳.append(f"{번호 + 1}쪽 「{제목}」 위 틈 {틈:.1f}pt")
+    doc.close()
+    assert not 좁은곳, "장 경계가 붙어 있다: " + " / ".join(좁은곳)

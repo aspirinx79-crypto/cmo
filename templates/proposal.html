@@ -12,13 +12,28 @@
     @page { size: A4 portrait; margin: 16mm 14mm; }
     * { box-sizing: border-box; }
     body { font-family: "Pretendard", sans-serif; color: #14181f; font-size: 11pt; margin: 0; }
-    section { page-break-after: always; }
-    section:last-child { page-break-after: auto; }
-    h1 { font-size: 26pt; margin: 0 0 6mm; }
+    /* 쪽 경계는 섹션이 아니라 「묶음」이 정한다.
+       예전엔 `section { page-break-after: always }` 라 섹션 하나가 곧 한 쪽이었고,
+       그래서 일곱 쪽이 나왔다. 이제 끊을 자리에만 `.쪽` 을 씌운다.
+       섹션 자체는 절대 끊지 않는다 — 안 그러면 묶어 놔도 도로 갈라진다. */
+    section { page-break-after: auto; }
+    /* 한 쪽에 장이 둘 쌓이면 아래 장 제목이 위 장 끝줄에 달라붙는다.
+       장마다 쪽이 달랐을 때는 없던 문제다. 문단 사이 간격(11pt)과
+       구별되도록 넉넉히 띄운다. */
+    section + section { margin-top: 10mm; }
+    .쪽 { page-break-after: always; }
+    .쪽:last-child { page-break-after: auto; }
     h2 { font-size: 15pt; border-bottom: 2px solid #3E8AFF; padding-bottom: 2mm; margin: 0 0 5mm; }
-    .cover { height: 240mm; display: flex; flex-direction: column; justify-content: center; }
-    .cover .month { color: #3E8AFF; font-size: 14pt; font-weight: 700; }
-    .cover .company { margin-top: 20mm; color: #6b7280; }
+    /* 표지를 없앤 자리. 첫 쪽 맨 위에 월과 상호만 얹는다.
+       아래 여백이 곧 첫 장과의 간격이다 — 머리글 다음에 오는 것은 묶음
+       <div> 라서 위의 `section + section` 이 여기까지 닿지 않는다. */
+    .doc-head { margin-bottom: 10mm; }
+    .doc-head .month { color: #3E8AFF; font-size: 11pt; font-weight: 700; }
+    .doc-head h1 { font-size: 20pt; margin: 1mm 0 0; }
+    .doc-head .where { color: #6b7280; font-size: 10pt; }
+    /* 표지에 있던 발행처. 마지막 쪽 바닥으로 내렸다. */
+    .issuer { margin-top: 10mm; padding-top: 3mm; border-top: 1px solid #e5e7eb;
+              color: #6b7280; font-size: 9pt; }
     table { width: 100%; border-collapse: collapse; }
     th, td { border-bottom: 1px solid #e5e7eb; padding: 3mm 2mm; text-align: left; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -43,48 +58,30 @@
     .up { color: #2563eb; }
     ul { margin: 0; padding-left: 5mm; }
     li { margin-bottom: 2mm; }
-    .week { margin-bottom: 4mm; }
+    /* 상품이 다섯 종을 넘으면 주차 목록이 한 장을 넘긴다(잠실점 실물).
+       글씨를 줄이는 대신 두 단으로 앉힌다 — 버리는 줄이 없다.
+       주차 한 덩이가 단 경계에서 쪼개지면 읽기 나쁘므로 통째로 넘긴다. */
+    #s-weeks { column-count: 2; column-gap: 8mm; }
+    .week { margin-bottom: 4mm; break-inside: avoid; }
     .week h3 { margin: 0 0 1mm; font-size: 11pt; color: #3E8AFF; }
     .fine { color: #6b7280; font-size: 9pt; }
   </style>
 </head>
 <body>
-  <section class="cover">
+  <header class="doc-head">
     <div class="month" id="c-month"></div>
     <h1 id="c-name"></h1>
-    <div id="c-where"></div>
-    <div class="company">
-      (주)상생어벤져스컴퍼니 · SSAvengers Group<br>
-      서울특별시 강남구 압구정로2길 60, MG타워 6F · 1551-0723
-    </div>
-  </section>
+    <div class="where" id="c-where"></div>
+  </header>
 
+  <!-- 1쪽 — 손님과 처방. 안쪽이 다 숨으면 묶음도 숨긴다(머리글만 있는 쪽 방지). -->
+  <div class="쪽" id="p-diagnosis">
   <section id="s-customer" hidden>
     <h2>이 가게에 오는 손님</h2>
     <div id="d-basic"></div>
     <div class="metrics" id="d-customer"></div>
     <p id="d-trade"></p>
     <p id="d-metrics-note" class="note"></p>
-  </section>
-
-  <section id="s-search" hidden>
-    <h2>검색에서의 자리</h2>
-    <div class="headline" id="d-headline"></div>
-    <div class="metrics" id="d-numbers"></div>
-
-    <div id="d-opportunity-wrap">
-      <h3>키워드 기회표</h3>
-      <table>
-        <thead><tr><th>키워드</th><th class="num">월 검색</th>
-                   <th class="num">지금</th></tr></thead>
-        <tbody id="d-opportunity"></tbody>
-      </table>
-    </div>
-
-    <div id="d-hidden-wrap">
-      <h3 id="d-hidden-title"></h3>
-      <p class="fine" id="d-hidden"></p>
-    </div>
   </section>
 
   <section id="s-prescription" hidden>
@@ -110,7 +107,34 @@
       <ul id="d-review-list"></ul>
     </div>
   </section>
+  </div>
 
+  <!-- 2쪽 — 검색. 기회표 8줄과 미확보 키워드 목록이 통째로 들어간다.
+       손님·처방과 같은 쪽에 두면 A4 한 장을 넘긴다(방이점 실물로 확인). -->
+  <div class="쪽" id="p-search">
+  <section id="s-search" hidden>
+    <h2>검색에서의 자리</h2>
+    <div class="headline" id="d-headline"></div>
+    <div class="metrics" id="d-numbers"></div>
+
+    <div id="d-opportunity-wrap">
+      <h3>키워드 기회표</h3>
+      <table>
+        <thead><tr><th>키워드</th><th class="num">월 검색</th>
+                   <th class="num">지금</th></tr></thead>
+        <tbody id="d-opportunity"></tbody>
+      </table>
+    </div>
+
+    <div id="d-hidden-wrap">
+      <h3 id="d-hidden-title"></h3>
+      <p class="fine" id="d-hidden"></p>
+    </div>
+  </section>
+  </div>
+
+  <!-- 3쪽 — 가격과 약속. 둘 다 늘 나오므로 조건 없이 묶는다. -->
+  <div class="쪽">
   <section>
     <h2>실행 구성</h2>
     <table>
@@ -121,13 +145,19 @@
   </section>
 
   <section>
-    <h2>1개월차 실행 일정</h2>
-    <div id="s-weeks"></div>
-  </section>
-
-  <section>
     <h2>저희가 다른 점</h2>
     <ul id="x-list"></ul>
+  </section>
+  </div>
+
+  <!-- 4쪽 — 일정. 맨 뒤라 끊지 않는다. -->
+  <section>
+    <h2>1개월차 실행 일정</h2>
+    <div id="s-weeks"></div>
+    <div class="issuer">
+      (주)상생어벤져스컴퍼니 · SSAvengers Group<br>
+      서울특별시 강남구 압구정로2길 60, MG타워 6F · 1551-0723
+    </div>
   </section>
 
   <script src="../app/util.js"></script>
@@ -202,6 +232,7 @@
       const S = D.검색 || {};
       보임("s-search", Boolean(S.헤드라인 || (S.수치 || []).length ||
                                 S.기회표 || S.히든키워드));
+
       document.getElementById("d-headline").textContent = S.헤드라인 || "";
       보임("d-headline", Boolean(S.헤드라인));
       document.getElementById("d-numbers").innerHTML = 카드(S.수치 || []);
@@ -265,6 +296,19 @@
 
       document.getElementById("x-list").innerHTML =
         P.차별점.map((n) => `<li>${esc(n)}</li>`).join("");
+
+      // ── 쪽 묶음. **세 장의 표시가 다 정해진 뒤에** 본다.
+      //
+      // 묶음의 표시는 안쪽 장을 따라간다. 안쪽이 다 숨었는데 묶음만 남으면
+      // 쪽 끊김은 그대로 일어나서 **머리글 두 줄만 있는 쪽**이 튀어나온다.
+      // 빈 쪽이 아니라 「글자가 있나」로는 안 잡힌다 — 넣어 보고 확인했다.
+      //
+      // 여기가 render 의 맨 끝인 것이 중요하다. 위에 두면 `s-prescription`
+      // 이 아직 서식에 적힌 `hidden` 그대로라, 오픈업 없이 애드로그만 있는
+      // 매장에서 처방 장이 통째로 숨은 묶음에 갇힌다.
+      const 숨김 = (id) => document.getElementById(id).hidden;
+      보임("p-diagnosis", !숨김("s-customer") || !숨김("s-prescription"));
+      보임("p-search", !숨김("s-search"));
     }
   </script>
 </body>
