@@ -4,3 +4,7 @@ data/_raw_kakao/
 # API 키 실값. 이름표는 .env.example 에만 둔다.
 .env
 .env.local
+
+# 캐시·산출물
+__pycache__/
+.pytest_cache/
