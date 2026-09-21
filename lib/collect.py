@@ -12,12 +12,8 @@
 상대 서버 입장에서 그건 수집이 아니라 공격이고, 계정이 막히면 도구가 아니라
 거래가 끊긴다.
 
-┌─ 애드로그 엔드포인트·필드명은 아직 추정값이다 ────────────────────────┐
-│ ADLOG_ENDPOINT 와 응답 필드(`rank`·`score`·`date`)는 확인되지 않았다.  │
-│ **실제 API 문서로 교정하기 전까지 순위는 수동 입력으로 쓴다.**         │
-│ 추정 필드 위에 정교한 파싱을 쌓지 않는다 — 없으면 None 으로 둔다.      │
-│ 확인은 `-m network` 테스트 하나로만 한다.                              │
-└────────────────────────────────────────────────────────────────────────┘
+애드로그 순위는 `adlog.py` 가 API 로 받는다. 원장 병합과 스냅샷 파생만
+여기서 한다 — 고객사 모양을 아는 건 이 모듈이다.
 
 스냅샷에 들어가는 값은 그대로 클라이언트 JSON 이 되고 제안서까지 흘러간다.
 그래서 예외 원문을 스냅샷에 넣지 않는다. 짧은 사람 말로 바꾸고 원문은
@@ -25,22 +21,12 @@ stderr 로만 보낸다.
 """
 import json
 import re
-import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime
 
 VISITOR_RE = re.compile(r"방문자\s*리뷰\s*([\d,]+)")
 BLOG_RE = re.compile(r"블로그\s*리뷰\s*([\d,]+)")
 SAVE_RE = re.compile(r"저장\s*([\d,]+)")
-
-# 추정값 — 위 상자 참고. 반드시 https 여야 한다. Authorization 헤더에 키를
-# 평문으로 싣기 때문에 http 로 나가면 중간에서 키가 그대로 읽힌다.
-ADLOG_ENDPOINT = "https://adlog.ai.kr/api/place/rank"
-
-# 키는 환경변수에서만 읽는다. 파일에 적지 않는다.
-ADLOG_KEY_ENV = "ADLOG_API_KEY"
 
 FETCH_FAILED = "조회 실패"
 BAD_FORMAT = "응답 형식 오류"
@@ -84,22 +70,6 @@ def fetch_place(url: str, timeout_ms: int = 15000) -> dict:
     return {"매장명": name, "플레이스URL": url, **counts}
 
 
-def api_key_from_env() -> str | None:
-    """애드로그 키를 환경변수에서 읽는다. 없으면 None 을 돌려주고 알린다.
-
-    키가 없다고 수집 전체가 멈추면 안 된다 — 플레이스·매출은 그대로 모으고
-    순위만 건너뛴다.
-    """
-    import os
-
-    key = (os.environ.get(ADLOG_KEY_ENV) or "").strip()
-    if not key:
-        print(f"{ADLOG_KEY_ENV} 환경변수가 없습니다. 순위 조회는 건너뜁니다"
-              " (나머지 수집은 계속합니다).", file=sys.stderr)
-        return None
-    return key
-
-
 def require_https(endpoint: str) -> None:
     """평문 http 로는 요청을 만들지도 않는다.
 
@@ -130,36 +100,6 @@ def short_error(exc: Exception) -> str:
     return FETCH_FAILED
 
 
-def fetch_ranks(api_key: str, place_id: str, keywords: list[str]) -> list[dict]:
-    """애드로그 공식 API 로 키워드별 순위를 읽는다.
-
-    순위·지수는 10일 전 기준이다. 실시간처럼 쓰면 안 된다.
-    응답 필드명은 추정값이라 없으면 None 이다(모듈 상단 상자 참고).
-
-    키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나 때문에
-    아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다.
-    """
-    require_https(ADLOG_ENDPOINT)
-
-    out = []
-    for kw in keywords:
-        req = urllib.request.Request(
-            f"{ADLOG_ENDPOINT}?place_id={urllib.parse.quote(str(place_id))}"
-            f"&keyword={urllib.parse.quote(kw)}",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                data = json.loads(res.read().decode("utf-8"))
-            out.append({"키워드": kw, "순위": data.get("rank"),
-                        "지수": data.get("score"), "기준일": data.get("date")})
-        except Exception as exc:  # 실패해도 나머지 키워드는 계속 본다
-            print(f"[애드로그] {kw!r} 조회 실패: {exc!r}", file=sys.stderr)
-            out.append({"키워드": kw, "순위": None, "지수": None,
-                        "오류": short_error(exc)})
-    return out
-
-
 def make_snapshot(place: dict, ranks: list[dict], revenue: dict | None) -> dict:
     return {
         "수집시각": datetime.now().isoformat(timespec="seconds"),
@@ -174,3 +114,88 @@ def append_snapshot(client: dict, snapshot: dict) -> dict:
     updated = dict(client)
     updated["스냅샷"] = [*(updated.get("스냅샷") or []), snapshot]
     return updated
+
+
+def merge_ranks(ledger: dict, 플레이스ID: str, rows: list[dict]) -> dict:
+    """새로 받은 순위를 원장에 얹은 사본을 돌려준다. 원본은 안 건드린다.
+
+    날짜가 키라서 같은 날을 두 번 넣어도 한 벌이다. 이게 빈 스냅샷이
+    쌓이던 자리를 막는다 — 예전에는 누를 때마다 껍데기가 한 건씩
+    늘었고, 잠실점에만 그런 게 다섯 건이다.
+
+    지난 날짜는 지우지 않는다. 그게 다음 달 재계약 자리에서 내놓을
+    증거다.
+    """
+    out = {**ledger}
+    out["플레이스ID"] = 플레이스ID
+    out["갱신시각"] = datetime.now().isoformat(timespec="seconds")
+
+    키워드 = {k: {**v} for k, v in (ledger.get("키워드") or {}).items()}
+    for row in rows:
+        이름 = row["키워드"]
+        칸 = {**키워드.get(이름, {})}
+        칸["api_no"] = row.get("api_no")
+        칸["월검색수"] = row.get("월검색수")
+        칸["경쟁업체수"] = row.get("경쟁업체수")
+        칸["순위"] = {**(칸.get("순위") or {}), **(row.get("순위") or {})}
+        키워드[이름] = 칸
+    out["키워드"] = 키워드
+
+    지표 = {**(ledger.get("매장지표") or {})}
+    for row in rows:
+        지표.update(row.get("매장지표") or {})
+    out["매장지표"] = 지표
+
+    return out
+
+
+def _latest(by_date: dict):
+    """날짜 키 중 가장 늦은 것의 값. 비었으면 None."""
+    if not by_date:
+        return None
+    return by_date[max(by_date)]
+
+
+def snapshot_from_ranks(ledger: dict) -> dict | None:
+    """원장에서 스냅샷 한 건을 만든다. 값이 없으면 None 이다.
+
+    제안서가 읽는 모양 그대로 만든다(`proposal._metrics`). 새 저장
+    형식을 만들지 않는다 — `read_doc.snapshot_from()` 이 같은 이유로
+    그렇게 돼 있다.
+
+    순위는 **키워드마다 가장 늦은 체크일**을 쓴다. 키워드별로 마지막
+    체크일이 달라서 한 날짜로 자르면 그날 안 돈 키워드가 통째로 빈다.
+
+    저장수는 숫자로 접는다. 원장에는 `"8,000+"` 원문이 남아 있고,
+    여기서 접는 이유는 `proposal._search()` 가 `int(값)` 으로 찍기
+    때문이다 — 문자열이 그대로 가면 제안서 생성이 터진다.
+    """
+    from .adlog import as_int
+
+    키워드 = ledger.get("키워드") or {}
+    순위 = []
+    for 이름, 칸 in 키워드.items():
+        값 = _latest(칸.get("순위") or {})
+        if 값 is not None:
+            순위.append({"키워드": 이름, "순위": 값})
+
+    지표 = _latest(ledger.get("매장지표") or {}) or {}
+    place = {
+        "방문자리뷰": 지표.get("방문자리뷰"),
+        "블로그리뷰": 지표.get("블로그리뷰"),
+        "저장수": as_int(지표.get("저장수")),
+    }
+
+    if not 순위 and not any(v is not None for v in place.values()):
+        return None
+
+    순위값 = [r["순위"] for r in 순위]
+    return {
+        "수집시각": datetime.now().isoformat(timespec="seconds"),
+        "플레이스": place,
+        "순위": 순위,
+        "순위요약": {"총키워드": len(키워드),
+                     "TOP3": sum(1 for v in 순위값 if v <= 3),
+                     "TOP10": sum(1 for v in 순위값 if v <= 10)},
+        "예상매출": None,
+    }

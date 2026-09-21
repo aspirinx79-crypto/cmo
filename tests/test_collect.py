@@ -18,13 +18,11 @@ import pytest
 
 from cmo.lib import collect
 from cmo.lib.collect import (
-    ADLOG_ENDPOINT,
-    ADLOG_KEY_ENV,
-    api_key_from_env,
     append_snapshot,
-    fetch_ranks,
     make_snapshot,
+    merge_ranks,
     parse_place_counts,
+    snapshot_from_ranks,
 )
 from cmo.lib.proposal import build_payload
 from cmo.lib.storage import Store
@@ -107,147 +105,112 @@ def test_append_snapshot_does_not_mutate_input():
     assert client["스냅샷"] == []
 
 
-# --- 애드로그 전송 안전 -----------------------------------------------
+# --- 순위 원장 --------------------------------------------------------
 
-class _FakeResponse:
-    def __init__(self, body: bytes):
-        self._body = body
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
+ROWS = [
+    {"키워드": "잠실새내 맛집", "api_no": 2978093, "월검색수": 22160,
+     "경쟁업체수": 2520, "순위": {"2026-09-19": 26, "2026-09-18": 27},
+     "매장지표": {"2026-09-19": {"방문자리뷰": 895, "블로그리뷰": 619,
+                                 "저장수": "8,000+"}}},
+]
 
 
-def _install_urlopen(monkeypatch, handler):
-    """urllib.request.urlopen 을 대역으로 갈아 끼우고 호출 기록을 돌려준다."""
-    calls = []
-
-    def fake(req, timeout=None):
-        calls.append((req.full_url, req.get_header("Authorization")))
-        return handler(len(calls))
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
-    return calls
+def test_merge_ranks_into_an_empty_ledger():
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert 원장["플레이스ID"] == "2069074461"
+    assert 원장["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26,
+                                                      "2026-09-18": 27}
 
 
-def test_adlog_endpoint_is_https():
-    """평문 http 로 Bearer 키를 실어 보내면 중간에서 키가 그대로 읽힌다."""
-    assert ADLOG_ENDPOINT.startswith("https://")
+def test_merge_ranks_records_when_it_ran():
+    assert merge_ranks({}, "2069074461", ROWS)["갱신시각"]
 
 
-def test_fetch_ranks_refuses_http_before_touching_network(monkeypatch):
-    """http 로 바뀌어 있으면 요청을 아예 만들지 않고 거절한다."""
-    def _boom(index):
-        raise AssertionError("http 인데 네트워크를 탔다")
-
-    calls = _install_urlopen(monkeypatch, _boom)
-    monkeypatch.setattr(collect, "ADLOG_ENDPOINT", "http://adlog.ai.kr/api/place/rank")
-
-    with pytest.raises(ValueError) as exc:
-        fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
-
-    assert "https" in str(exc.value).lower()
-    assert calls == []
+def test_merge_ranks_is_idempotent():
+    """같은 날을 두 번 넣어도 한 벌이다. 이게 빈 스냅샷이 쌓이던 자리다."""
+    한번 = merge_ranks({}, "2069074461", ROWS)
+    두번 = merge_ranks(한번, "2069074461", ROWS)
+    assert 두번["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26,
+                                                      "2026-09-18": 27}
+    assert len(두번["매장지표"]) == 1
 
 
-def test_fetch_ranks_sends_key_in_header_over_https(monkeypatch):
-    calls = _install_urlopen(monkeypatch, lambda index: _FakeResponse(b"{}"))
-
-    fetch_ranks("테스트키", "2069074461", ["인계동 삼겹살"])
-
-    assert len(calls) == 1
-    url, auth = calls[0]
-    assert url.startswith("https://")
-    assert auth == "Bearer 테스트키"
-    assert "인계동" not in url  # 한글은 퍼센트 인코딩되어야 한다
-    assert "%EC%9D%B8%EA%B3%84%EB%8F%99" in url
+def test_merge_ranks_keeps_older_dates():
+    """새 갱신이 지난 날짜를 지우면 성과의 증거가 사라진다."""
+    옛날 = merge_ranks({}, "2069074461", [
+        {**ROWS[0], "순위": {"2026-08-01": 40}, "매장지표": {}}])
+    새것 = merge_ranks(옛날, "2069074461", ROWS)
+    순위 = 새것["키워드"]["잠실새내 맛집"]["순위"]
+    assert 순위["2026-08-01"] == 40
+    assert 순위["2026-09-19"] == 26
 
 
-def test_fetch_ranks_reads_fields_from_response(monkeypatch):
-    payload = json.dumps({"rank": 17, "score": 812, "date": "2026-07-26"})
-    _install_urlopen(monkeypatch,
-                     lambda index: _FakeResponse(payload.encode("utf-8")))
-
-    rows = fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
-
-    assert rows == [{"키워드": "인계동 삼겹살", "순위": 17,
-                     "지수": 812, "기준일": "2026-07-26"}]
+def test_merge_ranks_does_not_touch_the_original():
+    원본 = merge_ranks({}, "2069074461", ROWS)
+    복사 = json.loads(json.dumps(원본, ensure_ascii=False))
+    merge_ranks(원본, "2069074461", [
+        {**ROWS[0], "순위": {"2026-09-20": 25}, "매장지표": {}}])
+    assert 원본 == 복사
 
 
-def test_fetch_ranks_missing_fields_become_none(monkeypatch):
-    """필드명이 추정값이다. 없으면 None 으로 두고 수동 입력으로 간다."""
-    _install_urlopen(monkeypatch, lambda index: _FakeResponse(b"{}"))
+def test_merge_ranks_keeps_save_count_verbatim():
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert 원장["매장지표"]["2026-09-19"]["저장수"] == "8,000+"
 
-    rows = fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
 
-    assert rows == [{"키워드": "인계동 삼겹살", "순위": None,
-                     "지수": None, "기준일": None}]
+# --- 스냅샷 파생 ------------------------------------------------------
+
+def test_snapshot_takes_the_latest_rank_per_keyword():
+    """키워드마다 마지막 체크일이 다르다. 한 날짜로 못 자른다."""
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "잠실새내 맛집", "api_no": 1, "월검색수": 100,
+         "경쟁업체수": 10, "순위": {"2026-09-19": 26}, "매장지표": {}},
+        {"키워드": "잠실 맛집", "api_no": 2, "월검색수": 200,
+         "경쟁업체수": 20, "순위": {"2026-09-17": 59}, "매장지표": {}},
+    ])
+    순위 = {r["키워드"]: r["순위"] for r in snapshot_from_ranks(원장)["순위"]}
+    assert 순위 == {"잠실새내 맛집": 26, "잠실 맛집": 59}
+
+
+def test_snapshot_counts_tops():
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "가", "api_no": 1, "월검색수": 1, "경쟁업체수": 1,
+         "순위": {"2026-09-19": 2}, "매장지표": {}},
+        {"키워드": "나", "api_no": 2, "월검색수": 1, "경쟁업체수": 1,
+         "순위": {"2026-09-19": 9}, "매장지표": {}},
+        {"키워드": "다", "api_no": 3, "월검색수": 1, "경쟁업체수": 1,
+         "순위": {"2026-09-19": 40}, "매장지표": {}},
+    ])
+    assert snapshot_from_ranks(원장)["순위요약"] == {"총키워드": 3, "TOP3": 1,
+                                                    "TOP10": 2}
+
+
+def test_snapshot_folds_save_count_into_a_number():
+    """proposal 이 int() 로 찍는다. 문자열이 그대로 가면 제안서가 터진다."""
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert snapshot_from_ranks(원장)["플레이스"]["저장수"] == 8000
+
+
+def test_snapshot_carries_reviews():
+    snap = snapshot_from_ranks(merge_ranks({}, "2069074461", ROWS))
+    assert snap["플레이스"]["방문자리뷰"] == 895
+    assert snap["플레이스"]["블로그리뷰"] == 619
+
+
+def test_snapshot_of_an_empty_ledger_is_none():
+    """값이 없으면 안 쌓는다. 수집시각만 든 스냅샷은 증거가 아니라 잡음이다."""
+    assert snapshot_from_ranks({}) is None
+    assert snapshot_from_ranks({"플레이스ID": "1", "키워드": {}}) is None
+
+
+def test_snapshot_keeps_the_shape_the_proposal_reads():
+    """제안서가 읽는 네 칸이 그대로 있어야 한다."""
+    snap = snapshot_from_ranks(merge_ranks({}, "2069074461", ROWS))
+    assert set(snap) == {"수집시각", "플레이스", "순위", "순위요약", "예상매출"}
+    assert snap["예상매출"] is None
 
 
 # --- 누출 차단 --------------------------------------------------------
-
-@pytest.mark.parametrize("raiser,expected", [
-    (lambda: (_ for _ in ()).throw(
-        urllib.error.HTTPError("https://adlog.ai.kr/", 401, SENSITIVE, {}, None)),
-     "인증 실패"),
-    (lambda: (_ for _ in ()).throw(
-        urllib.error.URLError(SENSITIVE)),
-     "조회 실패"),
-])
-def test_fetch_ranks_error_is_a_short_human_phrase(monkeypatch, raiser, expected):
-    """예외 원문은 스냅샷에 넣지 않는다 — 그 스냅샷이 클라이언트 JSON 이 된다."""
-    _install_urlopen(monkeypatch, lambda index: raiser())
-
-    rows = fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
-
-    assert rows[0]["오류"] == expected
-    assert rows[0]["순위"] is None and rows[0]["지수"] is None
-    assert SENSITIVE not in json.dumps(rows, ensure_ascii=False)
-
-
-def test_fetch_ranks_bad_json_is_format_error(monkeypatch):
-    _install_urlopen(monkeypatch,
-                     lambda index: _FakeResponse(SENSITIVE.encode("utf-8")))
-
-    rows = fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
-
-    assert rows[0]["오류"] == "응답 형식 오류"
-    assert SENSITIVE not in json.dumps(rows, ensure_ascii=False)
-
-
-def test_fetch_ranks_original_error_goes_to_stderr_only(monkeypatch, capsys):
-    def _raise(index):
-        raise urllib.error.URLError(SENSITIVE)
-
-    _install_urlopen(monkeypatch, _raise)
-
-    rows = fetch_ranks("키값", "2069074461", ["인계동 삼겹살"])
-
-    assert SENSITIVE in capsys.readouterr().err
-    assert SENSITIVE not in json.dumps(rows, ensure_ascii=False)
-
-
-def test_fetch_ranks_continues_after_one_keyword_fails(monkeypatch):
-    payload = json.dumps({"rank": 3, "score": 900, "date": "2026-07-26"})
-
-    def handler(index):
-        if index == 1:
-            raise urllib.error.URLError(SENSITIVE)
-        return _FakeResponse(payload.encode("utf-8"))
-
-    _install_urlopen(monkeypatch, handler)
-
-    rows = fetch_ranks("키값", "2069074461", ["망한키워드", "인계동 삼겹살"])
-
-    assert len(rows) == 2
-    assert rows[0]["오류"] == "조회 실패" and rows[0]["순위"] is None
-    assert rows[1]["순위"] == 3 and "오류" not in rows[1]
-
 
 def test_revenue_amount_never_reaches_proposal_payload():
     """스냅샷에 월매출이 있어도 제안서로는 상권순위만 나간다.
@@ -269,33 +232,6 @@ def test_revenue_amount_never_reaches_proposal_payload():
     assert "42000000" not in dumped and "42,000,000" not in dumped
     assert payload["지표"]["상권순위"] == "상위 40%"
     assert payload["지표"]["방문자리뷰"] == 312
-
-
-# --- API 키 ------------------------------------------------------------
-
-def test_api_key_comes_from_environment(monkeypatch):
-    monkeypatch.setenv(ADLOG_KEY_ENV, "  진짜키값  ")
-    assert api_key_from_env() == "진짜키값"
-
-
-def test_api_key_absent_returns_none_with_a_message(monkeypatch, capsys):
-    """키가 없다고 수집 전체가 멈추면 안 된다. 순위만 건너뛴다."""
-    monkeypatch.delenv(ADLOG_KEY_ENV, raising=False)
-    assert api_key_from_env() is None
-    assert ADLOG_KEY_ENV in capsys.readouterr().err
-
-
-def test_env_example_names_the_key_without_a_value(cmo_dir):
-    """.env.example 에는 이름만 둔다. 값이 붙는 순간 키가 저장소에 올라간다."""
-    path = cmo_dir / ".env.example"
-    assert path.exists(), ".env.example 이 없다"
-    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
-    assert f"{ADLOG_KEY_ENV}=" in lines
-    for line in lines:
-        if not line or line.startswith("#"):
-            continue
-        name, _, value = line.partition("=")
-        assert value == "", f"{name} 에 값이 들어 있다"
 
 
 # --- 서버 경로 ---------------------------------------------------------
@@ -410,13 +346,3 @@ def test_fetch_place_real():
     got = fetch_place("https://m.place.naver.com/restaurant/2069074461")
     assert got["매장명"]
     assert got["방문자리뷰"] is None or isinstance(got["방문자리뷰"], int)
-
-
-@pytest.mark.network
-def test_fetch_ranks_real():
-    """애드로그 실제 호출. 엔드포인트·필드명 교정 전까지 이걸로만 확인한다."""
-    key = api_key_from_env()
-    if not key:
-        pytest.skip(f"{ADLOG_KEY_ENV} 가 없습니다")
-    rows = fetch_ranks(key, "2069074461", ["인계동 삼겹살"])
-    assert rows and rows[0]["키워드"] == "인계동 삼겹살"
