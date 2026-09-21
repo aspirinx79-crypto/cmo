@@ -110,6 +110,37 @@ class Store:
         _write(path, {**data, "slug": slug})
         return slug
 
+    # --- 순위 원장 ---
+    #
+    # 스냅샷과 따로 두는 이유. 애드로그는 한 번에 석 달치 일자별 순위를
+    # 준다. 그걸 스냅샷 한 건에 접으면 날짜가 뭉개지고, 날짜마다 스냅샷을
+    # 쌓으면 같은 자료가 수십 건으로 불어난다. 원장은 날짜가 키라서
+    # 몇 번을 갱신해도 한 벌이다.
+    def _ranks_path(self, slug: str) -> Path:
+        return self._client_dir(slug) / "ranks.json"
+
+    def ranks_read(self, slug: str) -> dict:
+        path = self._ranks_path(slug)
+        return _read(path) if path.exists() else {}
+
+    def ranks_write(self, slug: str, data: dict) -> None:
+        _write(self._ranks_path(slug), data)
+
+    # --- 애드로그 등록 목록 캐시 ---
+    #
+    # 목록 한 번에 20 회를 부른다. 매장 정보를 열 때마다 부르면 그것만으로
+    # 하루 한도를 갉는다. 고객사 자료가 아니라 언제든 지워도 되는
+    # 물건이라 `clients/` 밖에 둔다. `.gitignore` 가 `data/_cache/` 를 뺀다.
+    def _adlog_cache_path(self) -> Path:
+        return self.data / "_cache" / "adlog_places.json"
+
+    def adlog_cache_read(self) -> dict:
+        path = self._adlog_cache_path()
+        return _read(path) if path.exists() else {}
+
+    def adlog_cache_write(self, data: dict) -> None:
+        _write(self._adlog_cache_path(), data)
+
     # --- 월 기획안 ---
     def _plan_path(self, slug: str, month: str) -> Path:
         month = _validate_segment(month, "month")
