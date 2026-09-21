@@ -8,3 +8,7 @@ data/_raw_kakao/
 # 캐시·산출물
 __pycache__/
 .pytest_cache/
+.venv/
+data/_cache/
+# 고객사에 나간 제안서·견적서 PDF — 매장명·계약 금액 포함. 저장소에 올리지 않는다.
+out/
