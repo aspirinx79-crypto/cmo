@@ -2089,3 +2089,119 @@ def test_doc_blocks_more_than_six(page_at, no_network):
         for i in range(7)])
     expect(page_at.locator("#doc-msg")).to_contain_text("6장")
     expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+# --- 애드로그 연결 ----------------------------------------------------
+
+ADLOG_PLACES = {
+    "갱신시각": "2026-09-21T14:00:00",
+    "items": [
+        {"api_no": 1, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+         "keyword": "잠실새내 맛집", "month_count": 22160},
+        {"api_no": 2, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+         "keyword": "잠실 맛집", "month_count": 77000},
+        {"api_no": 3, "place_id": "1446675910", "place_name": "로얄피그 한남점",
+         "keyword": "한남 맛집", "month_count": 5000},
+    ],
+}
+
+
+@pytest.fixture
+def page_with_adlog(page_at):
+    page_at.route("**/api/adlog/places*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(ADLOG_PLACES, ensure_ascii=False)))
+    page_at.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 2, "경고": None, "스냅샷": {
+            "수집시각": "2026-09-21T14:30:00",
+            "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+            "순위": [{"키워드": "잠실새내 맛집", "순위": 26}],
+            "순위요약": {"총키워드": 2, "TOP3": 0, "TOP10": 0},
+            "예상매출": None}}, ensure_ascii=False)))
+    return page_at
+
+
+def _open_new_store(page, 이름):
+    page.click("#new-client")
+    page.fill("#f-name", 이름)
+    page.click("#save-client")
+    page.wait_for_selector("#client-msg.ok")
+
+
+def test_adlog_box_is_locked_before_saving(page_at):
+    """저장 전에는 잠겨 있다 — 자료 넣기 칸과 같은 규칙이다."""
+    page_at.click("#new-client")
+    assert page_at.locator("#adlog").get_attribute("disabled") is not None
+
+
+def test_find_lists_places_grouped_by_store(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    텍스트 = page_with_adlog.locator("#adlog-candidates").inner_text()
+    assert "미친양꼬치 잠실점" in 텍스트
+    assert "로얄피그 한남점" in 텍스트
+
+
+def test_matching_store_comes_first(page_with_adlog):
+    """이름이 같은 후보를 위에 올린다. 206 곳에서 눈으로 찾게 두면 안 쓴다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    첫줄 = page_with_adlog.locator("#adlog-candidates option").first.inner_text()
+    assert "미친양꼬치 잠실점" in 첫줄
+
+
+def test_candidate_shows_how_many_keywords(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    첫줄 = page_with_adlog.locator("#adlog-candidates option").first.inner_text()
+    assert "2" in 첫줄
+
+
+def test_linking_enables_sync(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+
+    # 「등록된 플레이스 N곳」이 이미 #adlog-msg.ok 를 채워 둔 상태라, 그
+    # 셀렉터를 그대로 기다리면 linkAdlog() 의 완료를 기다리지 않고 즉시
+    # 통과한다 — #adlog-sync 가 실제로 풀리는 상태 전이 자체를 기다린다.
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+
+def test_sync_reports_what_it_got(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg.ok >> text=2")
+
+    assert "2" in page_with_adlog.locator("#adlog-msg").inner_text()
+
+
+def test_sync_button_is_locked_while_running(page_with_adlog):
+    """키워드 쉰 개면 한참 돈다. 두 번 누르면 호출이 두 배가 된다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: None)  # 매달아 둔다
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_timeout(150)
+
+    assert page_with_adlog.locator("#adlog-sync").is_disabled()

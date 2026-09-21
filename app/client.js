@@ -78,6 +78,7 @@
     clearDoc();               // 앞 매장 판독이 남으면 안 된다
     clearOpenub();            // 오픈업도 같은 이유로 비운다
     paintLastSnapshot(client);
+    paintAdlogLink(client);
 
     // 지표 칸은 매장마다 새로 입력한다. 앞 매장 값이 남아 있으면
     // saveMetrics() 가 그걸 다음 매장에 그대로 얹는다 — #f-revenue 는
@@ -122,7 +123,7 @@
   // 나뉘면(open()·saveClient() 에 흩어지면) 한쪽만 고치고 잊는 사고가
   // 난다(I-5).
   function lock(disabled) {
-    for (const id of ["metrics", "doc", "openub"]) {
+    for (const id of ["metrics", "doc", "openub", "adlog"]) {
       if (disabled) el(id).setAttribute("disabled", "");
       else el(id).removeAttribute("disabled");
     }
@@ -133,6 +134,12 @@
     el("panel-title").textContent = slug ? "매장 정보" : "새 매장";
     say("client-msg", "");
     say("metrics-msg", "");
+    // 앞 매장에서 띄운 후보가 남은 채 다음 매장이 열리면 남의 플레이스를
+    // 잇게 된다 — 매장을 열 때마다 반드시 다시 감춘다.
+    adlogItems = [];
+    el("adlog-candidates").setAttribute("hidden", "");
+    el("adlog-link").setAttribute("hidden", "");
+    say("adlog-msg", "");
     // 수집은 서버가 저장된 매장을 읽어야 돈다. 신규는 저장 전까지 잠근다.
     lock(!slug);
 
@@ -272,6 +279,134 @@
       // 실패해도 성공 메시지는 그대로 띄운다 — 안 그러면 실제로는 저장된
       // 지표를 상무님이 못 본 걸로 알고 다시 눌러 스냅샷이 중복 쌓인다.
       say("metrics-msg", "지표를 저장했습니다. (최근 수집 표시는 갱신하지 못했습니다.)", true);
+    }
+  }
+
+  /* 애드로그 연결 — 등록된 플레이스를 골라 매장에 잇는다.
+
+     등록(슬롯 소비)은 여기서 안 한다. 슬롯은 멤버십에서 나오고 삭제에
+     월 한도가 있어, 도구가 마음대로 늘리면 되돌리기가 어렵다. 새
+     키워드는 애드로그 화면에서 사람이 넣는다. */
+
+  let adlogItems = [];
+
+  function paintAdlogLink(client) {
+    const 연결 = (client && client.애드로그) || null;
+    if (!연결 || !연결.플레이스ID) {
+      el("adlog-linked").textContent = "연결 안 됨";
+      el("adlog-sync").disabled = true;
+      return;
+    }
+    const n = (연결.키워드 || []).length;
+    el("adlog-linked").textContent =
+      `${연결.플레이스명 || 연결.플레이스ID} · 키워드 ${n}개`;
+    el("adlog-sync").disabled = n === 0;
+  }
+
+  function paintCandidates(이름) {
+    // 플레이스 하나에 키워드가 여럿이다. 매장 단위로 접어 보여준다.
+    const byPlace = new Map();
+    for (const it of adlogItems) {
+      const key = String(it.place_id);
+      if (!byPlace.has(key)) {
+        byPlace.set(key, { place_id: key, place_name: it.place_name, 키워드: [] });
+      }
+      byPlace.get(key).키워드.push({ api_no: it.api_no, keyword: it.keyword });
+    }
+
+    // 이름이 겹치는 후보를 위로. 206 곳을 눈으로 훑게 두면 아무도 안 쓴다.
+    const 점수 = (p) => (이름 && p.place_name && p.place_name.includes(이름) ? 0
+      : 이름 && p.place_name && 이름.includes(p.place_name.split(" ")[0]) ? 1 : 2);
+    const 후보 = [...byPlace.values()].sort(
+      (a, b) => 점수(a) - 점수(b) || a.place_name.localeCompare(b.place_name));
+
+    const box = el("adlog-candidates");
+    box.innerHTML = "";
+    for (const p of 후보) {
+      const option = document.createElement("option");
+      option.value = p.place_id;
+      option.textContent = `${p.place_name} · 키워드 ${p.키워드.length}개`;
+      box.appendChild(option);
+    }
+    box.removeAttribute("hidden");
+    el("adlog-link").removeAttribute("hidden");
+
+    // 플레이스URL 이 이미 있으면 그 자리를 미리 골라 둔다.
+    const url = el("f-place-url").value || "";
+    const 아이디 = (url.match(/(\d{6,})/) || [])[1];
+    if (아이디 && byPlace.has(아이디)) box.value = 아이디;
+    else if (후보.length) box.value = 후보[0].place_id;
+  }
+
+  async function findAdlog() {
+    const button = el("adlog-find");
+    button.disabled = true;
+    say("adlog-msg", "");
+    try {
+      const got = await window.API.adlogPlaces(false);
+      adlogItems = got.items || [];
+      paintCandidates(el("f-name").value.trim());
+      say("adlog-msg", `등록된 플레이스 ${new Set(adlogItems.map((i) => i.place_id)).size}곳`, true);
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function linkAdlog() {
+    if (!editingSlug) return;
+    const 아이디 = el("adlog-candidates").value;
+    const 묶음 = adlogItems.filter((i) => String(i.place_id) === 아이디);
+    if (!묶음.length) return;
+
+    // 잇는 동안 이 칸을 비워 둔다 — 앞선 「등록된 플레이스 N곳」이 남아
+    // 있으면 화면을 기다리는 쪽도, 사람도 이미 끝난 걸로 읽는다.
+    // saveMetrics() 가 같은 이유로 그렇게 돼 있다.
+    say("adlog-msg", "");
+    const button = el("adlog-link");
+    button.disabled = true;
+    try {
+      const client = await window.API.client(editingSlug);
+      const 애드로그 = {
+        플레이스ID: 아이디,
+        플레이스명: 묶음[0].place_name,
+        연결시각: new Date().toISOString().slice(0, 19),
+        키워드: 묶음.map((i) => ({ api_no: i.api_no, keyword: i.keyword })),
+      };
+      // 빈 칸만 채운다 — 손으로 고친 값을 되돌리지 않는다.
+      const 갱신 = { ...client, 애드로그 };
+      if (!(client.플레이스URL || "").trim()) {
+        갱신.플레이스URL = `https://m.place.naver.com/restaurant/${아이디}/home`;
+      }
+      await window.API.saveClient(editingSlug, 갱신);
+
+      el("f-place-url").value = 갱신.플레이스URL || "";
+      paintAdlogLink(갱신);
+      el("adlog-candidates").setAttribute("hidden", "");
+      el("adlog-link").setAttribute("hidden", "");
+      say("adlog-msg", `${묶음[0].place_name} 에 이었습니다.`, true);
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function syncAdlog() {
+    if (!editingSlug) return;
+    const button = el("adlog-sync");
+    button.disabled = true;
+    say("adlog-msg", "");
+    try {
+      const got = await window.API.adlogSync(editingSlug);
+      const 꼬리 = got.경고 ? ` (${got.경고})` : "";
+      say("adlog-msg", `키워드 ${got.갱신}개를 갱신했습니다.${꼬리}`, true);
+      paintLastSnapshot(await window.API.client(editingSlug));
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -526,5 +661,9 @@
       if (files.length) readOpenub(files);
     });
     el("apply-openub").addEventListener("click", applyOpenub);
+
+    el("adlog-find").addEventListener("click", findAdlog);
+    el("adlog-link").addEventListener("click", linkAdlog);
+    el("adlog-sync").addEventListener("click", syncAdlog);
   });
 })();
