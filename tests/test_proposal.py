@@ -826,19 +826,40 @@ def test_customer_page_carries_openub_and_trade_area():
 
 
 def test_search_page_carries_the_idle_numbers():
-    """총키워드·TOP3·TOP10·저장수는 읽어 놓고 안 쓰던 값이다."""
+    """총키워드·TOP3·TOP10·저장수는 읽어 놓고 안 쓰던 값이다.
+
+    스냅샷 모양은 `read_doc._snapshot()` 이 실제로 만드는 그대로다 —
+    여기서 `진단` 에 넣으면 생산 코드가 안 쓰는 자리를 검사하게 된다.
+    실제로 그래서 이 값들이 한 번도 종이에 안 찍혔다.
+    """
     client = {**CLIENT, "스냅샷": [{
         "수집시각": "2026-08-12T08:52:26",
         "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100},
         "순위": [{"키워드": "잠실맛집", "순위": 8}],
-        "진단": {"총키워드": 47, "TOP3": 3, "TOP10": 11},
+        "순위요약": {"총키워드": 47, "TOP3": 3, "TOP10": 11},
     }]}
     수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
-    이름들 = [c["이름"] for c in 수치]
-    assert "추적 키워드" in 이름들
-    assert "TOP 3" in 이름들
-    assert "TOP 10" in 이름들
-    assert "저장수" in 이름들
+    이름별 = {c["이름"]: c["값"] for c in 수치}
+    assert 이름별["추적 키워드"] == "47개"
+    assert 이름별["TOP 3"] == "3개"
+    assert 이름별["TOP 10"] == "11개"
+    assert 이름별["저장수"] == "100개"
+
+
+def test_search_page_reads_the_shape_read_doc_writes():
+    """판독기가 만드는 스냅샷을 그대로 먹여 본다.
+
+    두 모듈이 키 이름을 두 벌로 갖고 있으면 어느 날 조용히 어긋난다.
+    실제로 `순위요약`(쓰는 쪽)과 `진단`(읽는 쪽)이 어긋나 있었다.
+    """
+    from cmo.lib.read_doc import snapshot_from
+
+    reading = {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100,
+               "총키워드": 48, "TOP3": 1, "TOP10": 15,
+               "순위": [{"키워드": "잠실맛집", "순위": 8}]}
+    client = {**CLIENT, "스냅샷": [snapshot_from(reading)]}
+    수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
+    assert {"추적 키워드", "TOP 3", "TOP 10"} <= {c["이름"] for c in 수치}
 
 
 # ── 빠진 진단 장 경고 ─────────────────────────────────────

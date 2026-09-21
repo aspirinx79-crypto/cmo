@@ -273,16 +273,21 @@ def _search(client: dict, metrics: dict) -> dict:
 
     `총키워드`·`TOP3`·`TOP10`·`저장수` 는 판독기가 읽어 놓고 제안서로
     한 번도 안 나가던 값이다. 여기서 쓴다.
+
+    요약 셋은 `순위요약` 에서 읽는다. `진단` 이 아니다 — 판독기가
+    쓰는 자리가 `순위요약` 이고, 한동안 여기서 `진단` 을 읽어 값이
+    통째로 안 건너갔다. 읽는 자리와 쓰는 자리는 한 이름이어야 한다.
     """
     snap = _latest_snapshot(client)
     ranks = snap.get("순위") or []
     진단 = snap.get("진단") or {}
+    요약 = snap.get("순위요약") or {}
     place = snap.get("플레이스") or {}
 
     수치 = []
-    for 이름, 값 in (("추적 키워드", 진단.get("총키워드")),
-                     ("TOP 3", 진단.get("TOP3")),
-                     ("TOP 10", 진단.get("TOP10")),
+    for 이름, 값 in (("추적 키워드", 요약.get("총키워드")),
+                     ("TOP 3", 요약.get("TOP3")),
+                     ("TOP 10", 요약.get("TOP10")),
                      ("방문자 리뷰", metrics.get("방문자리뷰")),
                      ("저장수", place.get("저장수"))):
         if 값 is not None:
