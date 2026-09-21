@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 
 from .collect import require_https
@@ -104,3 +105,106 @@ def metrics_by_date(items: list[dict]) -> dict:
             "월검색수": as_int(row.get("total_month_count")),
         }
     return out
+
+
+def credentials() -> tuple[str, str] | None:
+    """키와 아이디를 환경변수에서 읽는다. 하나라도 없으면 None 이다.
+
+    둘 다 있어야 부를 수 있다 — 애드로그는 `user_id` 를 본문에 요구한다.
+    없다고 수집 전체가 멈추면 안 된다. 순위만 건너뛰고 나머지는 계속한다.
+    """
+    key = (os.environ.get(KEY_ENV) or "").strip()
+    uid = (os.environ.get(USER_ENV) or "").strip()
+    if not key or not uid:
+        print(f"{KEY_ENV}/{USER_ENV} 가 없습니다. 애드로그 조회는 건너뜁니다"
+              " (나머지 수집은 계속합니다).", file=sys.stderr)
+        return None
+    return key, uid
+
+
+_RETRY_DELAYS = (1, 2)  # 재시도 사이 대기(초). 연달아 때리지 않는다.
+
+
+def _is_timeout(exc: Exception) -> bool:
+    """느려서 끊긴 것만 골라낸다. `urlopen` 은 타임아웃을 두 모양으로 낸다.
+
+    응답을 기다리다 끊기면 `TimeoutError` 가 그대로 올라오고, 요청을
+    보내다 끊기면 `URLError` 가 감싸서 올라온다(`reason` 이 그 안에 든다).
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    return isinstance(getattr(exc, "reason", None), TimeoutError)
+
+
+def _call(url: str, key: str, uid: str, body: dict,
+          timeout: int = 20, retries: int = 2) -> dict:
+    """한 번 부르고 JSON 을 돌려준다. `code` 는 여기서 안 본다.
+
+    느려서 끊긴 요청만 다시 부른다. 애드로그는 이따금 한 페이지를
+    20 초 넘게 붙들고, 목록은 스무 번을 이어 부르므로 한 번만 걸려도
+    전체가 무너진다 — 953 건짜리 계정에서 10 페이지가 20.02 초로
+    끊기는 걸 세 번 재현했다.
+
+    `AdlogError` 는 다시 부르지 않는다. 서버가 명확히 거절한 건 다시
+    물어도 같은 답이 온다.
+    """
+    require_https(url)
+    payload = {"user_id": uid, "api_menu": PLACE_MENU, **body}
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"authorization": f"Bearer {key}",
+                 "content-Type": "application/json"},
+    )
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except (TimeoutError, urllib.error.URLError) as exc:
+            if not _is_timeout(exc) or attempt == retries:
+                raise
+            wait = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+            print(f"애드로그 응답이 늦어 다시 부릅니다"
+                  f"({attempt + 1}/{retries}, {wait}초 뒤): {url}",
+                  file=sys.stderr)
+            time.sleep(wait)
+
+
+def _items(data: dict) -> list[dict]:
+    """`code` 를 보고 items 를 꺼낸다. 실패면 사람 말로 멈춘다.
+
+    `2001`(데이터 없음)은 실패가 아니다 — 아직 순위가 안 잡힌 키워드이고,
+    이걸 예외로 만들면 새 키워드 하나 때문에 갱신 전체가 멈춘다.
+    """
+    code = str(data.get("code") or "")
+    if code == NO_DATA:
+        return []
+    if code != OK:
+        raise AdlogError(MESSAGES.get(code, FALLBACK))
+    return data.get("items") or []
+
+
+def keywords(key: str, uid: str, sleep: float = 0.3) -> list[dict]:
+    """등록된 플레이스 키워드를 전부 읽는다. 한 페이지 50 건이다.
+
+    `total_count` 를 채우면 멈춘다. 이 조건이 없으면 마지막 페이지를
+    영원히 다시 부른다 — 하루 한도를 한 번에 태우는 길이다.
+    """
+    out: list[dict] = []
+    page = 1
+    while True:
+        data = _call(LIST, key, uid, {"page": page})
+        items = _items(data)
+        out += items
+        total = int(data.get("total_count") or 0)
+        if not items or len(out) >= total:
+            break
+        page += 1
+        if sleep:
+            time.sleep(sleep)
+    return out
+
+
+def ranks(key: str, uid: str, api_no: int) -> list[dict]:
+    """키워드 하나의 일자별 순위를 읽는다. 없으면 빈 목록이다."""
+    return _items(_call(DETAIL, key, uid, {"api_no": api_no}))
