@@ -756,3 +756,197 @@ def test_proposal_response_is_quiet_when_nothing_is_missing(server,
                     {"slug": "하루인_인계점", "월": "2026-09"})
 
     assert body["경고"] == []
+
+
+# --- 애드로그 ---------------------------------------------------------
+
+ADLOG_KEYWORDS = [
+    {"api_no": 1, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+     "keyword": "잠실새내 맛집", "month_count": 22160, "group_name": "기본"},
+    {"api_no": 2, "place_id": "9999", "place_name": "남의 가게",
+     "keyword": "남의 키워드", "month_count": 100, "group_name": "기본"},
+]
+ADLOG_DETAIL = [
+    {"api_no": 1, "rank_date": "2026-09-19", "rank_num": 26,
+     "visit_review_count": 895, "blog_review_count": 619,
+     "save_count": "8,000+", "place_count": 2520, "total_month_count": 22160},
+]
+LINKED = {"이름": "잠실점", "애드로그": {
+    "플레이스ID": "2069074461",
+    "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"}]}}
+
+
+def _adlog_env(monkeypatch):
+    monkeypatch.setenv("ADLOG_API_KEY", "키값")
+    monkeypatch.setenv("ADLOG_USER_ID", "테스트아이디")
+
+
+def test_adlog_places_lists_registered_keywords(server, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_keywords", lambda key, uid: ADLOG_KEYWORDS)
+
+    status, got = _get(server, "/api/adlog/places")
+
+    assert status == 200
+    assert len(got["items"]) == 2
+    assert got["갱신시각"]
+
+
+def test_adlog_places_uses_the_cache_on_the_second_call(server, monkeypatch):
+    """목록 한 번에 20 회를 부른다. 열 때마다 부르면 한도를 갉는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def counting(key, uid):
+        부른횟수.append(1)
+        return ADLOG_KEYWORDS
+
+    monkeypatch.setattr(srv, "_adlog_keywords", counting)
+
+    _get(server, "/api/adlog/places")
+    _get(server, "/api/adlog/places")
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_places_refresh_skips_the_cache(server, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def counting(key, uid):
+        부른횟수.append(1)
+        return ADLOG_KEYWORDS
+
+    monkeypatch.setattr(srv, "_adlog_keywords", counting)
+
+    _get(server, "/api/adlog/places")
+    _get(server, "/api/adlog/places?refresh=1")
+
+    assert len(부른횟수) == 2
+
+
+def test_adlog_places_without_key_says_what_to_do(server, monkeypatch):
+    monkeypatch.delenv("ADLOG_API_KEY", raising=False)
+    monkeypatch.delenv("ADLOG_USER_ID", raising=False)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _get(server, "/api/adlog/places")
+
+    assert exc.value.code == 400
+    assert "ADLOG_API_KEY" in json.loads(exc.value.read())["오류"]
+
+
+def test_adlog_sync_writes_the_ledger(server, tmp_data, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    원장 = store.ranks_read("잠실점")
+    assert 원장["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26}
+    assert 원장["플레이스ID"] == "2069074461"
+
+
+def test_adlog_sync_appends_one_snapshot(server, tmp_data, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 1
+    assert 스냅샷[0]["순위"] == [{"키워드": "잠실새내 맛집", "순위": 26}]
+    assert 스냅샷[0]["플레이스"]["저장수"] == 8000
+
+
+def test_adlog_sync_twice_keeps_one_ledger_entry(server, tmp_data, monkeypatch):
+    """같은 날 두 번 눌러도 원장은 한 벌이다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    원장 = store.ranks_read("잠실점")
+    assert 원장["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26}
+
+
+def test_adlog_sync_of_an_unlinked_client_says_so(server, tmp_data, monkeypatch):
+    _adlog_env(monkeypatch)
+    Store(tmp_data).client_create({"이름": "농우본"})
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "농우본"})
+
+    assert exc.value.code == 400
+    assert "애드로그" in json.loads(exc.value.read())["오류"]
+
+
+def test_adlog_sync_without_values_adds_no_snapshot(server, tmp_data, monkeypatch):
+    """순위가 안 잡힌 새 키워드만 걸린 매장. 껍데기를 안 쌓는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: [])
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert got["스냅샷"] is None
+    assert store.client_read("잠실점").get("스냅샷") in (None, [])
+
+
+def test_adlog_error_does_not_leak_the_original(server, tmp_data, monkeypatch):
+    """예외 원문에 URL·키가 섞인다. 화면에는 사람 말만 간다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def boom(key, uid, no):
+        raise AdlogError("이 PC 의 IP 를 애드로그에 등록해야 합니다.")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", boom)
+    Store(tmp_data).client_create(LINKED)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert exc.value.code == 502
+    본문 = exc.value.read().decode("utf-8")
+    assert "IP 를 애드로그에 등록" in json.loads(본문)["오류"]
+    assert "키값" not in 본문
+
+
+def test_adlog_sync_of_a_missing_client_returns_404(server, monkeypatch):
+    _adlog_env(monkeypatch)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "없는가게"})
+
+    assert exc.value.code == 404

@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -41,6 +42,24 @@ ESCAPE_HATCH_FAILED = f"플레이스 수집에 실패했습니다. {_ESCAPE}"
 NO_READ_KEY = ("판독에 필요한 키가 없습니다. "
                "ANTHROPIC_API_KEY 를 환경변수에 넣으십시오.")
 
+NO_ADLOG_KEY = ("애드로그 조회에 필요한 값이 없습니다. "
+                "ADLOG_API_KEY 와 ADLOG_USER_ID 를 환경변수에 넣으십시오.")
+NOT_LINKED = ("이 매장은 애드로그에 연결돼 있지 않습니다. "
+              "「애드로그에서 찾기」로 먼저 이으십시오.")
+
+CACHE_HOURS = 24
+
+
+def _fresh(stamp: str | None) -> bool:
+    """캐시가 아직 쓸 만한가. 모양이 깨졌으면 낡은 것으로 본다."""
+    if not stamp:
+        return False
+    try:
+        age = datetime.now() - datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    return age.total_seconds() < CACHE_HOURS * 3600
+
 
 def _read_document(files, api_key, model=None):
     """판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다.
@@ -56,6 +75,18 @@ def _read_captures(files, api_key):
     """오픈업 판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다."""
     from cmo.lib.read_openub import read_captures
     return read_captures(files, api_key)
+
+
+def _adlog_keywords(key, uid):
+    """애드로그 등록 목록 한 겹. 테스트가 여기를 갈아 끼운다."""
+    from cmo.lib.adlog import keywords
+    return keywords(key, uid)
+
+
+def _adlog_ranks(key, uid, api_no):
+    """애드로그 순위 한 겹. 테스트가 여기를 갈아 끼운다."""
+    from cmo.lib.adlog import ranks
+    return ranks(key, uid, api_no)
 
 
 def make_handler(store: Store, app_dir: Path):
@@ -128,6 +159,99 @@ def make_handler(store: Store, app_dir: Path):
                                      body.get("예상매출"))
             store.client_write(slug, append_snapshot(client, snapshot))
             return self._json(snapshot)
+
+        # --- 애드로그 ---
+        def _adlog_places(self, store, refresh: bool):
+            """등록된 플레이스 키워드 목록. 하루는 캐시를 쓴다.
+
+            목록 한 번에 20 회를 부른다. 매장 정보를 열 때마다 부르면
+            그것만으로 하루 한도를 갉는다.
+            """
+            from cmo.lib.adlog import AdlogError, credentials
+
+            cached = store.adlog_cache_read()
+            if not refresh and _fresh(cached.get("갱신시각")):
+                return self._json(cached)
+
+            creds = credentials()
+            if not creds:
+                return self._json({"오류": NO_ADLOG_KEY}, 400)
+            try:
+                items = _adlog_keywords(*creds)
+            except AdlogError as exc:
+                return self._json({"오류": str(exc)}, 502)
+            except Exception as exc:
+                print(f"[애드로그] 목록 조회 실패: {exc!r}", file=sys.stderr)
+                return self._json({"오류": "애드로그 조회에 실패했습니다."}, 502)
+
+            data = {"갱신시각": datetime.now().isoformat(timespec="seconds"),
+                    "items": items}
+            store.adlog_cache_write(data)
+            return self._json(data)
+
+        def _adlog_sync(self, store, body: dict):
+            """연결된 키워드 순위를 받아 원장에 쌓고 스냅샷 한 건을 붙인다.
+
+            키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나
+            때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다.
+            """
+            from cmo.lib.adlog import (AdlogError, credentials, metrics_by_date,
+                                       series)
+            from cmo.lib.collect import (append_snapshot, merge_ranks,
+                                         snapshot_from_ranks)
+
+            slug = body["slug"]                 # 없으면 KeyError → 400
+            client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
+
+            애드로그 = client.get("애드로그") or {}
+            키워드들 = 애드로그.get("키워드") or []
+            if not 애드로그.get("플레이스ID") or not 키워드들:
+                return self._json({"오류": NOT_LINKED}, 400)
+
+            creds = credentials()
+            if not creds:
+                return self._json({"오류": NO_ADLOG_KEY}, 400)
+
+            rows, 실패 = [], None
+            for kw in 키워드들:
+                try:
+                    items = _adlog_ranks(*creds, kw["api_no"])
+                except AdlogError as exc:
+                    실패 = str(exc)
+                    print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
+                          file=sys.stderr)
+                    continue
+                except Exception as exc:
+                    실패 = "애드로그 조회에 실패했습니다."
+                    print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
+                          file=sys.stderr)
+                    continue
+                지표 = metrics_by_date(items)
+                최신 = 지표[max(지표)] if 지표 else {}
+                rows.append({
+                    "키워드": kw["keyword"],
+                    "api_no": kw["api_no"],
+                    "월검색수": 최신.get("월검색수"),
+                    "경쟁업체수": 최신.get("경쟁업체수"),
+                    "순위": series(items),
+                    "매장지표": {d: {k: v for k, v in m.items()
+                                     if k in ("방문자리뷰", "블로그리뷰", "저장수")}
+                                 for d, m in 지표.items()},
+                })
+
+            if not rows and 실패:
+                return self._json({"오류": 실패}, 502)
+
+            원장 = merge_ranks(store.ranks_read(slug),
+                               애드로그["플레이스ID"], rows)
+            store.ranks_write(slug, 원장)
+
+            snapshot = snapshot_from_ranks(원장)
+            if snapshot:
+                store.client_write(slug, append_snapshot(client, snapshot))
+
+            return self._json({"갱신": len(rows), "스냅샷": snapshot,
+                               "경고": 실패})
 
         # --- 자료 판독 ---
         def _read_doc(self, store, body: dict):
@@ -280,6 +404,10 @@ def make_handler(store: Store, app_dir: Path):
                     from cmo.lib.read_doc import api_key_from_env
                     return self._json({"준비됨": bool(api_key_from_env())})
 
+                if path == "/api/adlog/places":
+                    refresh = "refresh=1" in (parsed.query or "")
+                    return self._adlog_places(store, refresh)
+
                 m = CLIENT_RE.match(path)
                 if m:
                     return self._json(store.client_read(m.group(1)))
@@ -348,6 +476,9 @@ def make_handler(store: Store, app_dir: Path):
 
                 if path == "/api/collect":
                     return self._collect(store, body)
+
+                if path == "/api/adlog/sync":
+                    return self._adlog_sync(store, body)
 
                 if path == "/api/read-doc":
                     return self._read_doc(store, body)

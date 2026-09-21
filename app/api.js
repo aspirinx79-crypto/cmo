@@ -45,6 +45,8 @@
     createClient: (data) => post("/api/clients", data),
     saveClient: (slug, data) => post(`/api/clients/${encodeURIComponent(slug)}`, data),
     collect: (body) => post("/api/collect", body),
+    adlogPlaces: (refresh) => get(`/api/adlog/places${refresh ? "?refresh=1" : ""}`),
+    adlogSync: (slug) => post("/api/adlog/sync", { slug }),
     readDocReady: () => get("/api/read-doc/ready"),
     readDoc: (body) => post("/api/read-doc", body),
     applyDoc: (body) => post("/api/read-doc/apply", body),
