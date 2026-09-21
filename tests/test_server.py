@@ -921,6 +921,37 @@ def test_adlog_sync_without_values_adds_no_snapshot(server, tmp_data, monkeypatc
     assert store.client_read("잠실점").get("스냅샷") in (None, [])
 
 
+def test_adlog_sync_keeps_going_when_one_keyword_fails(server, tmp_data,
+                                                         monkeypatch):
+    """열 개 중 하나 때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def 하나만_실패(key, uid, api_no):
+        if api_no == 2:
+            raise AdlogError("조회할 키워드 번호가 없습니다.")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 하나만_실패)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"},
+                   {"api_no": 2, "keyword": "안 잡히는 키워드"}]}})
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    assert got["경고"]
+    원장 = store.ranks_read("잠실점")
+    assert "잠실새내 맛집" in 원장["키워드"]
+    assert "안 잡히는 키워드" not in 원장["키워드"]
+
+
 def test_adlog_error_does_not_leak_the_original(server, tmp_data, monkeypatch):
     """예외 원문에 URL·키가 섞인다. 화면에는 사람 말만 간다."""
     from cmo import server as srv
