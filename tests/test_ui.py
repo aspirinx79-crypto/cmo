@@ -1815,6 +1815,39 @@ def test_edit_keeps_snapshots(page_at, tmp_data, no_network):
     assert saved["업종"] == "고깃집"
 
 
+def test_saving_store_info_keeps_fields_the_form_does_not_own(page_at, tmp_data, no_network):
+    """폼에 없는 칸은 다른 경로가 쓴 자료다 — 스냅샷(수집)·애드로그(연결)·
+    오픈업(판독). 메모 하나 고쳐 저장했다고 애드로그 연결이나 오픈업
+    판독이 조용히 사라지면 안 된다(Task 8 리뷰에서 발견)."""
+    store = Store(tmp_data)
+    slug = store.client_create({
+        "이름": "보존테스트",
+        "메모": "",
+        "애드로그": {"플레이스ID": "1", "플레이스명": "보존테스트",
+                    "연결시각": "2026-09-21T00:00:00",
+                    "키워드": [{"api_no": 1, "keyword": "가"}]},
+        "오픈업": [{"기준월": "2026-06"}],
+    })
+
+    # 이 매장은 UI 가 아니라 Store 로 직접 만들었다 — #client-select 는
+    # 페이지가 처음 뜰 때 한 번 목록을 받아 오므로, 새로고침해야 보인다.
+    page_at.reload()
+    page_at.wait_for_selector(".product-row")
+    page_at.select_option("#client-select", slug)
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("보존테스트")
+
+    page_at.fill("#f-memo", "고친 메모")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    after = store.client_read(slug)
+    assert after["애드로그"]["플레이스ID"] == "1"
+    assert after["오픈업"][0]["기준월"] == "2026-06"
+    assert after["메모"] == "고친 메모"
+
+
 # --- I-1: 패널에 메모 칸 추가 ---
 # 시드 12곳처럼 "미확인" 문구가 메모에 적혀 있고, 지금은 화면에서 고칠 방법이
 # 없다. 등록 때 저장되는지, 편집 때 채워져 열리는지, 고쳐 저장하면 반영되되

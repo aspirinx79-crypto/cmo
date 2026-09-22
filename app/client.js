@@ -210,13 +210,19 @@
 
     try {
       if (editingSlug) {
-        // 스냅샷은 폼에 없다. 읽어서 그대로 얹지 않으면 수집 이력이 날아간다.
-        // 메모는 이제 폼(#f-memo)의 몫이다 — data.메모 를 그대로 쓴다.
-        // before.메모 로 덮으면 방금 고친 메모가 저장 직후 원래대로
-        // 되돌아간다.
+        // 폼에 없는 칸은 다른 경로가 쓴 자료다 — 스냅샷(수집)·오픈업(판독)·
+        // 애드로그(연결). 폼 값만 보내면 서버가 client.json 을 통째로
+        // 덮어써서 그게 조용히 날아간다. 한때 스냅샷만 골라 살렸는데,
+        // 칸이 하나 늘 때마다 여기를 고쳐야 했고 오픈업은 그 사이에
+        // 빠졌다(Task 8 리뷰에서 드러났다).
+        //
+        // before 를 바닥에 깔고 폼 값을 그 위에 편다. formData() 는 폼
+        // 칸을 빈 값까지 전부 돌려주므로 폼 칸은 언제나 폼이 이긴다 —
+        // 사람이 지운 값은 빈 값으로 덮인다. 메모도 폼의 몫이라 이 순서로
+        // 방금 고친 메모가 되돌아가지 않는다.
         const before = await window.API.client(editingSlug);
         await window.API.saveClient(editingSlug, {
-          ...data, slug: editingSlug, 스냅샷: before.스냅샷 || [],
+          ...before, ...data, slug: editingSlug,
         });
       } else {
         const made = await window.API.createClient(data);
