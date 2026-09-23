@@ -288,8 +288,8 @@ def test_ranks_archive_moves_the_old_ledger(tmp_data):
     store.ranks_archive("잠실점", "옛날")
 
     assert store.ranks_read("잠실점") == {}
-    보관 = tmp_data / "clients" / "잠실점" / "ranks-옛날.json"
-    assert 보관.exists()
+    보관 = list((tmp_data / "clients" / "잠실점").glob("ranks-옛날-*.json"))
+    assert len(보관) == 1
 
 
 def test_ranks_archive_of_a_client_without_a_ledger_does_nothing(tmp_data):
@@ -300,6 +300,24 @@ def test_ranks_archive_of_a_client_without_a_ledger_does_nothing(tmp_data):
     store.ranks_archive("잠실점", "옛날")  # 예외 없이 통과해야 한다
 
     assert store.ranks_read("잠실점") == {}
+
+
+def test_ranks_archive_does_not_overwrite_a_previous_archive_of_the_same_place(tmp_data):
+    """A→B→A 로 다시 이으면 플레이스ID 가 겹친다. 옛 보관도 증거라 안 덮는다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+
+    store.ranks_write("잠실점", {"플레이스ID": "A", "키워드": {"가": {}}})
+    store.ranks_archive("잠실점", "A")  # A → B
+
+    store.ranks_write("잠실점", {"플레이스ID": "B", "키워드": {"나": {}}})
+    store.ranks_archive("잠실점", "B")  # B → A (다시)
+
+    store.ranks_write("잠실점", {"플레이스ID": "A", "키워드": {"다": {}}})
+    store.ranks_archive("잠실점", "A")  # A 로 다시 — 옛 A 보관과 이름이 겹친다
+
+    A보관들 = list((tmp_data / "clients" / "잠실점").glob("ranks-A-*.json"))
+    assert len(A보관들) == 2
 
 
 # --- 애드로그 목록 캐시 ----------------------------------------------

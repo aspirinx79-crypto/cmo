@@ -2,6 +2,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -1132,4 +1133,72 @@ def test_relinking_a_client_archives_the_old_ledger(server, tmp_data):
         "플레이스ID": "새것", "키워드": [{"api_no": 2, "keyword": "나"}]}})
 
     assert store.ranks_read("잠실점") == {}
-    assert (tmp_data / "clients" / "잠실점" / "ranks-옛날.json").exists()
+    보관 = list((tmp_data / "clients" / "잠실점").glob("ranks-옛날-*.json"))
+    assert len(보관) == 1
+
+
+def test_adlog_sync_after_a_same_day_capture_keeps_order(server, tmp_data, monkeypatch):
+    """오전에 이미 애드로그로 갱신했고, 낮에 캡처를 넣은 뒤 오후에 다시
+    갱신해도 최신 갱신이 마지막에 와야 한다.
+
+    자리를 바꿔 끼우면(리스트를 거꾸로 훑어 첫 자리를 덮으면) 방금 받은
+    순위가 그사이에 낀 캡처보다 앞자리로 간다. `paintLastSnapshot`·
+    `_latest_snapshot` 은 마지막 스냅샷을 보므로 그러면 옛 캡처가
+    최신으로 읽힌다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    오늘 = datetime.now().strftime("%Y-%m-%d")
+    store = Store(tmp_data)
+    store.client_create({**LINKED, "스냅샷": [
+        {"수집시각": f"{오늘}T09:00:00", "출처": "애드로그",
+         "플레이스": {"방문자리뷰": 1, "블로그리뷰": 1, "저장수": 1},
+         "순위": [{"키워드": "잠실새내 맛집", "순위": 30}]},
+        {"수집시각": f"{오늘}T11:00:00",
+         "플레이스": {"방문자리뷰": 2, "블로그리뷰": 2, "저장수": 2},
+         "순위": [{"키워드": "캡처키워드", "순위": 3}]},
+    ]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 2
+    assert 스냅샷[-1].get("출처") == "애드로그"
+    assert 스냅샷[-1]["순위"][0]["순위"] == 26  # 방금 갱신한 값(ADLOG_DETAIL)
+    assert 스냅샷[0]["순위"][0]["키워드"] == "캡처키워드"
+
+
+def test_adlog_sync_stops_after_a_timeout_but_keeps_what_it_got(server, tmp_data,
+                                                                  monkeypatch):
+    """하나는 성공하고 둘째에서 타임아웃이 나면, 받은 것까지는 저장하고
+    경고를 함께 돌려준다. 세 번째는 부르지 않는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def 하나는_성공_둘째는_타임아웃(key, uid, api_no):
+        부른횟수.append(api_no)
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 하나는_성공_둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"},
+                   {"api_no": 2, "keyword": "나"}, {"api_no": 3, "keyword": "다"}]}})
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    assert got["경고"]
+    assert len(부른횟수) == 2
+    원장 = store.ranks_read("잠실점")
+    assert "잠실새내 맛집" in 원장["키워드"]

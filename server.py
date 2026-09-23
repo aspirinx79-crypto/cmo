@@ -70,24 +70,6 @@ def _fresh(stamp: str | None) -> bool:
     return age.total_seconds() < CACHE_HOURS * 3600
 
 
-def _append_or_replace(client: dict, snapshot: dict) -> dict:
-    """같은 날 애드로그 스냅샷이 이미 있으면 그 자리를 덮는다.
-
-    안 그러면 누를 때마다 한 건씩 는다 — 지금 고치려는 문제가 그대로
-    돌아온다. 캡처로 넣은 스냅샷은 출처가 달라 덮지 않는다.
-    """
-    from cmo.lib.collect import append_snapshot
-
-    오늘 = snapshot["수집시각"][:10]
-    쌓인것 = list(client.get("스냅샷") or [])
-    for i in range(len(쌓인것) - 1, -1, -1):
-        s = 쌓인것[i]
-        if s.get("출처") == "애드로그" and (s.get("수집시각") or "")[:10] == 오늘:
-            쌓인것[i] = snapshot
-            return {**client, "스냅샷": 쌓인것}
-    return append_snapshot(client, snapshot)
-
-
 def _archive_if_relinked(store: Store, slug: str, new_client: dict) -> None:
     """매장을 다시 이으면 옛 원장을 옆으로 치운다.
 
@@ -245,7 +227,8 @@ def make_handler(store: Store, app_dir: Path):
             """
             from cmo.lib.adlog import (AdlogError, credentials, metrics_by_date,
                                        series)
-            from cmo.lib.collect import merge_ranks, snapshot_from_ranks
+            from cmo.lib.collect import (append_or_replace_snapshot, merge_ranks,
+                                         snapshot_from_ranks)
 
             slug = body["slug"]                 # 없으면 KeyError → 400
             client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
@@ -302,7 +285,7 @@ def make_handler(store: Store, app_dir: Path):
 
             snapshot = snapshot_from_ranks(원장, 키워드들)
             if snapshot:
-                store.client_write(slug, _append_or_replace(client, snapshot))
+                store.client_write(slug, append_or_replace_snapshot(client, snapshot))
 
             return self._json({"갱신": len(rows), "스냅샷": snapshot,
                                "경고": 실패})

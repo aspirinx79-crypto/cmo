@@ -116,6 +116,23 @@ def append_snapshot(client: dict, snapshot: dict) -> dict:
     return updated
 
 
+def append_or_replace_snapshot(client: dict, snapshot: dict) -> dict:
+    """오늘 날짜의 애드로그 스냅샷을 전부 걸러내고 새 것을 끝에 붙인다.
+
+    같은 날 두 번 갱신하면 스냅샷이 늘어나던 자리다. **자리를 그대로
+    바꿔 끼우면 안 된다** — 그 사이 캡처가 끼면(오전 애드로그 → 낮
+    캡처 → 오후 갱신) 방금 받은 최신 순위가 캡처보다 앞자리로 밀려
+    `paintLastSnapshot`·`_latest_snapshot` 이 옛 캡처를 최신으로 읽는다.
+    걸러내고 끝에 붙이면 그럴 일이 없다. 캡처 스냅샷은 `출처` 가 없어
+    그대로 남는다.
+    """
+    오늘 = snapshot["수집시각"][:10]
+    남길것 = [s for s in (client.get("스냅샷") or [])
+              if not (s.get("출처") == "애드로그"
+                      and (s.get("수집시각") or "")[:10] == 오늘)]
+    return {**client, "스냅샷": [*남길것, snapshot]}
+
+
 def merge_ranks(ledger: dict, 플레이스ID: str, rows: list[dict]) -> dict:
     """새로 받은 순위를 원장에 얹은 사본을 돌려준다. 원본은 안 건드린다.
 

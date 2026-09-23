@@ -18,6 +18,7 @@ import pytest
 
 from cmo.lib import collect
 from cmo.lib.collect import (
+    append_or_replace_snapshot,
     append_snapshot,
     make_snapshot,
     merge_ranks,
@@ -103,6 +104,66 @@ def test_append_snapshot_does_not_mutate_input():
     client = {"이름": "하루인 인계점", "스냅샷": []}
     append_snapshot(client, make_snapshot({}, [], None))
     assert client["스냅샷"] == []
+
+
+# --- 같은 날 애드로그 스냅샷 바꿔 끼우기 --------------------------------
+
+def test_append_or_replace_appends_when_nothing_matches_today():
+    client = {"스냅샷": [
+        {"수집시각": "2026-09-19T09:00:00", "출처": "애드로그", "순위": []},
+    ]}
+    새것 = {"수집시각": "2026-09-23T12:00:00", "출처": "애드로그", "순위": []}
+    결과 = append_or_replace_snapshot(client, 새것)
+    assert len(결과["스냅샷"]) == 2
+    assert 결과["스냅샷"][-1] == 새것
+
+
+def test_append_or_replace_replaces_the_same_day_adlog_snapshot():
+    client = {"스냅샷": [
+        {"수집시각": "2026-09-23T09:00:00", "출처": "애드로그", "순위": []},
+    ]}
+    새것 = {"수집시각": "2026-09-23T12:00:00", "출처": "애드로그", "순위": []}
+    결과 = append_or_replace_snapshot(client, 새것)
+    assert 결과["스냅샷"] == [새것]
+
+
+def test_append_or_replace_keeps_a_same_day_capture_snapshot():
+    """캡처 스냅샷은 출처가 없어 애드로그와 겹쳐도 지워지지 않는다."""
+    client = {"스냅샷": [
+        {"수집시각": "2026-09-23T09:00:00",
+         "순위": [{"키워드": "캡처키워드"}]},
+    ]}
+    새것 = {"수집시각": "2026-09-23T12:00:00", "출처": "애드로그", "순위": []}
+    결과 = append_or_replace_snapshot(client, 새것)
+    assert len(결과["스냅샷"]) == 2
+    assert 결과["스냅샷"][0]["순위"][0]["키워드"] == "캡처키워드"
+
+
+def test_append_or_replace_puts_the_new_snapshot_last_even_with_a_capture_between():
+    """오전 캡처, 정오 애드로그, 오후 애드로그 갱신 — 최신이 끝에 와야 한다.
+
+    자리를 그대로 바꿔 끼우면(리스트를 거꾸로 훑어 첫 자리를 덮으면)
+    새 스냅샷이 캡처보다 앞에 낀다. 그러면 `paintLastSnapshot` 과
+    `_latest_snapshot` 이 방금 갱신한 순위 대신 옛 캡처를 읽는다.
+    """
+    client = {"스냅샷": [
+        {"수집시각": "2026-09-23T09:00:00", "출처": "애드로그", "순위": []},
+        {"수집시각": "2026-09-23T11:00:00", "순위": []},  # 캡처, 출처 없음
+    ]}
+    새것 = {"수집시각": "2026-09-23T12:00:00", "출처": "애드로그", "순위": []}
+    결과 = append_or_replace_snapshot(client, 새것)
+    assert len(결과["스냅샷"]) == 2
+    assert 결과["스냅샷"][-1] == 새것
+
+
+def test_append_or_replace_does_not_mutate_input():
+    client = {"스냅샷": [
+        {"수집시각": "2026-09-23T09:00:00", "출처": "애드로그", "순위": []},
+    ]}
+    원본 = json.loads(json.dumps(client, ensure_ascii=False))
+    append_or_replace_snapshot(
+        client, {"수집시각": "2026-09-23T12:00:00", "출처": "애드로그", "순위": []})
+    assert client == 원본
 
 
 # --- 순위 원장 --------------------------------------------------------
@@ -331,6 +392,27 @@ def test_snapshot_of_all_empty_fields_is_still_none():
         {"api_no": 9, "keyword": "강남역 맛집"},  # month_count 없음
     ])
     assert snap is None
+
+
+def test_snapshot_diagnosis_dates_span_multiple_linked_keywords():
+    """연결 키워드가 여럿이면 기준일·비교일은 그 중 가장 늦은 날짜다.
+
+    한 키워드만 보고 계산하면, 마지막 체크일이 서로 다른 여러 키워드를
+    연결했을 때 다른 키워드의 최신 날짜가 묻힌다.
+    """
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "잠실새내 맛집", "api_no": 1, "월검색수": 22160,
+         "경쟁업체수": 2520,
+         "순위": {"2026-09-19": 26, "2026-08-20": 30}, "매장지표": {}},
+        {"키워드": "강남역 맛집", "api_no": 9, "월검색수": 92300,
+         "경쟁업체수": 100,
+         "순위": {"2026-09-21": 15, "2026-08-15": 20}, "매장지표": {}},
+    ])
+    연결 = [{"api_no": 1, "keyword": "잠실새내 맛집"},
+            {"api_no": 9, "keyword": "강남역 맛집"}]
+    snap = snapshot_from_ranks(원장, 연결)
+    assert snap["진단"]["기준일"] == "2026-09-21"
+    assert snap["진단"]["비교일"] == "2026-08-20"
 
 
 # --- 누출 차단 --------------------------------------------------------
