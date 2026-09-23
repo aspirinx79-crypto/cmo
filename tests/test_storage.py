@@ -279,6 +279,29 @@ def test_ranks_path_refuses_escaping_slug(tmp_data):
         store.ranks_read("../../etc")
 
 
+def test_ranks_archive_moves_the_old_ledger(tmp_data):
+    """매장을 다시 이으면 옛 원장은 옆에 남긴다. 이미 쌓인 증거다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+    store.ranks_write("잠실점", {"플레이스ID": "옛날", "키워드": {"가": {}}})
+
+    store.ranks_archive("잠실점", "옛날")
+
+    assert store.ranks_read("잠실점") == {}
+    보관 = tmp_data / "clients" / "잠실점" / "ranks-옛날.json"
+    assert 보관.exists()
+
+
+def test_ranks_archive_of_a_client_without_a_ledger_does_nothing(tmp_data):
+    """한 번도 갱신하지 않은 매장을 다시 이어도 원장 파일이 없어 조용히 넘어간다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+
+    store.ranks_archive("잠실점", "옛날")  # 예외 없이 통과해야 한다
+
+    assert store.ranks_read("잠실점") == {}
+
+
 # --- 애드로그 목록 캐시 ----------------------------------------------
 
 def test_adlog_cache_is_empty_before_first_fetch(tmp_data):

@@ -305,6 +305,34 @@ def test_snapshot_without_linked_keywords_falls_back_to_the_ledger():
     assert snapshot_from_ranks(원장)["순위요약"]["총키워드"] == 1
 
 
+def test_snapshot_stacks_when_every_keyword_is_outside_top30_but_has_a_view_count():
+    """신규 매장은 키워드가 대부분 30위 밖이다. 조회수만 있어도 쌓아야
+    「월 92,300번 검색되는 곳에서 아직 안 보입니다」를 만들 수 있다.
+    순위만 보면 신규 매장일수록 기능이 안 먹는다."""
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "강남역 맛집", "api_no": 9, "월검색수": None,
+         "경쟁업체수": None, "순위": {}, "매장지표": {}},
+    ])
+    snap = snapshot_from_ranks(원장, [
+        {"api_no": 9, "keyword": "강남역 맛집", "month_count": 92300},
+    ])
+    assert snap is not None
+    assert snap["순위"][0]["순위권밖"] is True
+    assert snap["순위"][0]["조회수"] == 92300
+
+
+def test_snapshot_of_all_empty_fields_is_still_none():
+    """순위도 조회수도 플레이스도 없으면 신규 키워드라도 쌓지 않는다."""
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "강남역 맛집", "api_no": 9, "월검색수": None,
+         "경쟁업체수": None, "순위": {}, "매장지표": {}},
+    ])
+    snap = snapshot_from_ranks(원장, [
+        {"api_no": 9, "keyword": "강남역 맛집"},  # month_count 없음
+    ])
+    assert snap is None
+
+
 # --- 누출 차단 --------------------------------------------------------
 
 def test_revenue_amount_never_reaches_proposal_payload():

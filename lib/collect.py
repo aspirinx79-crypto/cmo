@@ -238,8 +238,13 @@ def snapshot_from_ranks(ledger: dict, 연결키워드: list[dict] | None = None)
         "저장수": as_int(지표.get("저장수")),
     }
 
+    # 신규 매장은 키워드가 대부분 30위 밖이라 순위만 보면 안 쌓인다.
+    # 조회수(월검색수)는 30위 밖이어도 이미 받아온 값이라, 그거라도
+    # 있으면 쌓는다 — 신규 매장일수록 기능이 안 먹는 걸 막는다.
     잡힌것 = [r["순위"] for r in 순위 if r["순위"] is not None]
-    if not 잡힌것 and not any(v is not None for v in place.values()):
+    조회수있음 = any(r["조회수"] is not None for r in 순위)
+    플레이스있음 = any(v is not None for v in place.values())
+    if not 잡힌것 and not 조회수있음 and not 플레이스있음:
         return None
 
     return {

@@ -8,6 +8,7 @@
 import json
 import re
 import sys
+import time
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -47,6 +48,14 @@ NO_ADLOG_KEY = ("애드로그 조회에 필요한 값이 없습니다. "
 NOT_LINKED = ("이 매장은 애드로그에 연결돼 있지 않습니다. "
               "「애드로그에서 찾기」로 먼저 이으십시오.")
 
+# 애드로그가 "과도한 트래픽 발생 시 사전 안내 없이 차단"을 경고한다.
+# 목록 조회도 같은 간격을 쓴다.
+SYNC_SLEEP = 0.3
+# 이 코드들은 다음 키워드를 불러도 같은 답이 온다. 바로 멈춘다.
+ACCOUNT_CODES = ("애드로그 계정 정보를 확인하십시오.",
+                 "이 PC 의 IP 를 애드로그에 등록해야 합니다.",
+                 "애드로그 서비스 기간이 만료됐습니다.")
+
 CACHE_HOURS = 24
 
 
@@ -59,6 +68,41 @@ def _fresh(stamp: str | None) -> bool:
     except ValueError:
         return False
     return age.total_seconds() < CACHE_HOURS * 3600
+
+
+def _append_or_replace(client: dict, snapshot: dict) -> dict:
+    """같은 날 애드로그 스냅샷이 이미 있으면 그 자리를 덮는다.
+
+    안 그러면 누를 때마다 한 건씩 는다 — 지금 고치려는 문제가 그대로
+    돌아온다. 캡처로 넣은 스냅샷은 출처가 달라 덮지 않는다.
+    """
+    from cmo.lib.collect import append_snapshot
+
+    오늘 = snapshot["수집시각"][:10]
+    쌓인것 = list(client.get("스냅샷") or [])
+    for i in range(len(쌓인것) - 1, -1, -1):
+        s = 쌓인것[i]
+        if s.get("출처") == "애드로그" and (s.get("수집시각") or "")[:10] == 오늘:
+            쌓인것[i] = snapshot
+            return {**client, "스냅샷": 쌓인것}
+    return append_snapshot(client, snapshot)
+
+
+def _archive_if_relinked(store: Store, slug: str, new_client: dict) -> None:
+    """매장을 다시 이으면 옛 원장을 옆으로 치운다.
+
+    플레이스ID 가 바뀌는 유일한 자리는 `POST /api/clients/{slug}` 다 —
+    화면의 `linkAdlog` 가 새 애드로그 블록을 이 경로로 저장한다. 옛
+    원장을 그대로 두면 옛 매장 키워드가 다음 스냅샷에 섞인다.
+    """
+    try:
+        old = store.client_read(slug)
+    except FileNotFoundError:
+        return
+    옛플레이스ID = (old.get("애드로그") or {}).get("플레이스ID")
+    새플레이스ID = (new_client.get("애드로그") or {}).get("플레이스ID")
+    if 옛플레이스ID and 새플레이스ID and 옛플레이스ID != 새플레이스ID:
+        store.ranks_archive(slug, 옛플레이스ID)
 
 
 def _read_document(files, api_key, model=None):
@@ -193,12 +237,15 @@ def make_handler(store: Store, app_dir: Path):
             """연결된 키워드 순위를 받아 원장에 쌓고 스냅샷 한 건을 붙인다.
 
             키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나
-            때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다.
+            때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다. 다만
+            계정 단위 실패와 타임아웃은 다음 키워드를 불러도 나아지지
+            않으므로 그 자리에서 멈춘다(중단 조건은 아래 두 가지).
+
+            같은 날 두 번 누르면 스냅샷은 쌓지 않고 그 자리를 덮는다.
             """
             from cmo.lib.adlog import (AdlogError, credentials, metrics_by_date,
                                        series)
-            from cmo.lib.collect import (append_snapshot, merge_ranks,
-                                         snapshot_from_ranks)
+            from cmo.lib.collect import merge_ranks, snapshot_from_ranks
 
             slug = body["slug"]                 # 없으면 KeyError → 400
             client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
@@ -213,19 +260,26 @@ def make_handler(store: Store, app_dir: Path):
                 return self._json({"오류": NO_ADLOG_KEY}, 400)
 
             rows, 실패 = [], None
-            for kw in 키워드들:
+            for i, kw in enumerate(키워드들):
+                if i:
+                    time.sleep(SYNC_SLEEP)
                 try:
                     items = _adlog_ranks(*creds, kw["api_no"])
                 except AdlogError as exc:
                     실패 = str(exc)
                     print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
                           file=sys.stderr)
+                    # 계정 단위 실패는 나머지를 불러도 같다.
+                    if 실패 in ACCOUNT_CODES:
+                        break
                     continue
                 except Exception as exc:
                     실패 = "애드로그 조회에 실패했습니다."
                     print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
                           file=sys.stderr)
-                    continue
+                    # 느린 날은 키워드마다 느리다. 이 서버는 요청을 하나씩
+                    # 처리해서, 57 개를 다 기다리면 한 시간을 멈춘다.
+                    break
                 지표 = metrics_by_date(items)
                 최신 = 지표[max(지표)] if 지표 else {}
                 rows.append({
@@ -246,9 +300,9 @@ def make_handler(store: Store, app_dir: Path):
                                애드로그["플레이스ID"], rows)
             store.ranks_write(slug, 원장)
 
-            snapshot = snapshot_from_ranks(원장)
+            snapshot = snapshot_from_ranks(원장, 키워드들)
             if snapshot:
-                store.client_write(slug, append_snapshot(client, snapshot))
+                store.client_write(slug, _append_or_replace(client, snapshot))
 
             return self._json({"갱신": len(rows), "스냅샷": snapshot,
                                "경고": 실패})
@@ -497,8 +551,10 @@ def make_handler(store: Store, app_dir: Path):
 
                 m = CLIENT_RE.match(path)
                 if m:
-                    store.client_write(m.group(1), body)
-                    return self._json({"저장": m.group(1)})
+                    slug = m.group(1)
+                    _archive_if_relinked(store, slug, body)
+                    store.client_write(slug, body)
+                    return self._json({"저장": slug})
 
                 m = COPY_RE.match(path)
                 if m:

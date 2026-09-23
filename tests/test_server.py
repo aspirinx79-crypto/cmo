@@ -985,3 +985,151 @@ def test_adlog_sync_of_a_missing_client_returns_404(server, monkeypatch):
         _post(server, "/api/adlog/sync", {"slug": "없는가게"})
 
     assert exc.value.code == 404
+
+
+def test_adlog_sync_twice_in_a_day_keeps_one_snapshot(server, tmp_data, monkeypatch):
+    """인수 기준 3. 원장만이 아니라 스냅샷도 한 건이어야 한다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(store.client_read("잠실점")["스냅샷"]) == 1
+
+
+def test_adlog_sync_does_not_replace_a_capture_snapshot(server, tmp_data, monkeypatch):
+    """캡처로 넣은 스냅샷은 애드로그가 덮지 않는다. 출처가 다르다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create({**LINKED, "스냅샷": [
+        {"수집시각": "2026-09-19T09:00:00",
+         "플레이스": {"방문자리뷰": 1, "블로그리뷰": 1, "저장수": 1},
+         "순위": [{"키워드": "캡처키워드", "순위": 3}]},
+    ]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 2
+    assert 스냅샷[0]["순위"][0]["키워드"] == "캡처키워드"
+
+
+def test_adlog_sync_counts_only_linked_keywords(server, tmp_data, monkeypatch):
+    """원장에 옛 매장 키워드가 남아 있어도 스냅샷에는 연결된 것만 든다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+    store.ranks_write("잠실점", {
+        "플레이스ID": "2069074461",
+        "키워드": {"남의 키워드": {"api_no": 999, "월검색수": 1,
+                                  "순위": {"2026-09-19": 1}}},
+        "매장지표": {}})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    assert [r["키워드"] for r in snap["순위"]] == ["잠실새내 맛집"]
+
+
+def test_adlog_sync_stops_on_an_account_level_error(server, tmp_data, monkeypatch):
+    """4004(IP 미등록)는 다음 키워드를 불러도 같은 답이다. 바로 멈춘다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def ip_막힘(key, uid, api_no):
+        부른횟수.append(api_no)
+        raise AdlogError("이 PC 의 IP 를 애드로그에 등록해야 합니다.")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", ip_막힘)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"},
+                   {"api_no": 3, "keyword": "다"}]}})
+
+    with pytest.raises(urllib.error.HTTPError):
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_sync_stops_after_a_timeout(server, tmp_data, monkeypatch):
+    """애드로그가 느린 날은 키워드마다 느리다. 하나에 63초까지 가는데
+    이 서버는 요청을 하나씩 처리한다 — 57개면 한 시간을 멈춘다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def 느림(key, uid, api_no):
+        부른횟수.append(api_no)
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 느림)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"},
+                   {"api_no": 3, "keyword": "다"}]}})
+
+    with pytest.raises(urllib.error.HTTPError):
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_sync_sleeps_between_keywords(server, tmp_data, monkeypatch):
+    """애드로그가 과도한 트래픽을 사전 안내 없이 차단한다고 경고한다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    잔횟수 = []
+    monkeypatch.setattr(srv.time, "sleep", lambda s: 잔횟수.append(s))
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"}]}})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert 잔횟수, "키워드 사이에 쉬지 않았다"
+
+
+def test_relinking_a_client_archives_the_old_ledger(server, tmp_data):
+    """플레이스ID 가 바뀌면 옛 원장을 옆으로 치운다.
+
+    화면의 「다시 잇기」는 `linkAdlog` 가 `POST /api/clients/{slug}` 로
+    새 애드로그 블록을 보내는 경로를 쓴다 — 그 자리가 옛 원장을
+    보관하는 곳이다.
+    """
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "옛날", "키워드": [{"api_no": 1, "keyword": "가"}]}})
+    store.ranks_write("잠실점", {"플레이스ID": "옛날", "키워드": {"가": {}}})
+
+    _post(server, "/api/clients/잠실점", {"이름": "잠실점", "애드로그": {
+        "플레이스ID": "새것", "키워드": [{"api_no": 2, "keyword": "나"}]}})
+
+    assert store.ranks_read("잠실점") == {}
+    assert (tmp_data / "clients" / "잠실점" / "ranks-옛날.json").exists()

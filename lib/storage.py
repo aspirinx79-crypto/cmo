@@ -126,6 +126,19 @@ class Store:
     def ranks_write(self, slug: str, data: dict) -> None:
         _write(self._ranks_path(slug), data)
 
+    def ranks_archive(self, slug: str, 플레이스ID: str) -> None:
+        """원장을 `ranks-{플레이스ID}.json` 으로 옮긴다. 원장 자리는 빈다.
+
+        매장을 다시 이을 때 부른다. 옛 매장 키워드가 원장에 남으면
+        다음 스냅샷에 섞여 한 제안서에 두 매장 순위가 들어간다.
+        지우지 않는 이유는 그게 이미 쌓인 증거이기 때문이다.
+        """
+        path = self._ranks_path(slug)
+        if not path.exists():
+            return
+        보관 = self._client_dir(slug) / f"ranks-{_validate_segment(플레이스ID, '플레이스ID')}.json"
+        path.rename(보관)
+
     # --- 애드로그 등록 목록 캐시 ---
     #
     # 목록 한 번에 20 회를 부른다. 매장 정보를 열 때마다 부르면 그것만으로
