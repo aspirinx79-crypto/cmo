@@ -873,7 +873,11 @@ def test_adlog_sync_appends_one_snapshot(server, tmp_data, monkeypatch):
 
     스냅샷 = store.client_read("잠실점")["스냅샷"]
     assert len(스냅샷) == 1
-    assert 스냅샷[0]["순위"] == [{"키워드": "잠실새내 맛집", "순위": 26}]
+    줄 = 스냅샷[0]["순위"][0]
+    assert 줄["키워드"] == "잠실새내 맛집"
+    assert 줄["순위"] == 26
+    assert 줄["순위권밖"] is False
+    assert 줄["조회수"] == 22160
     assert 스냅샷[0]["플레이스"]["저장수"] == 8000
 
 
