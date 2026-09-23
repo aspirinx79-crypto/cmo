@@ -206,8 +206,103 @@ def test_snapshot_of_an_empty_ledger_is_none():
 def test_snapshot_keeps_the_shape_the_proposal_reads():
     """제안서가 읽는 네 칸이 그대로 있어야 한다."""
     snap = snapshot_from_ranks(merge_ranks({}, "2069074461", ROWS))
-    assert set(snap) == {"수집시각", "플레이스", "순위", "순위요약", "예상매출"}
+    assert set(snap) == {"수집시각", "플레이스", "순위", "순위요약", "예상매출",
+                          "진단", "출처"}
     assert snap["예상매출"] is None
+
+
+LINKED_KW = [
+    {"api_no": 2978093, "keyword": "잠실새내 맛집", "month_count": 22160},
+    {"api_no": 9, "keyword": "강남역 맛집", "month_count": 92300},
+]
+
+
+def test_snapshot_carries_the_fields_the_proposal_reads():
+    """제안서 순위 줄은 다섯 칸을 읽는다 — 키워드·순위·순위권밖·조회수·비교순위.
+
+    둘만 실으면 기회표(_opportunity)와 처방(_moves)이 통째로 빠진다.
+    실데이터로 방이점 기회표가 8줄에서 0줄이 되는 걸 확인했다.
+    """
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    줄 = snapshot_from_ranks(원장, LINKED_KW)["순위"][0]
+    assert set(줄) == {"키워드", "순위", "순위권밖", "조회수", "비교순위"}
+
+
+def test_snapshot_reads_view_count_from_the_ledger():
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    줄 = snapshot_from_ranks(원장, LINKED_KW)["순위"][0]
+    assert 줄["조회수"] == 22160
+
+
+def test_outside_top30_keyword_still_carries_its_view_count():
+    """30위 밖은 애드로그가 2001 로 답해 순위가 없다. 조회수는 연결 정보에서 온다.
+
+    이게 빠지면 「월 92,300번 검색되는 곳에서 아직 안 보입니다」라는
+    가장 센 문장을 못 만든다.
+    """
+    원장 = merge_ranks({}, "2069074461", [
+        *ROWS,
+        {"키워드": "강남역 맛집", "api_no": 9, "월검색수": None,
+         "경쟁업체수": None, "순위": {}, "매장지표": {}},
+    ])
+    줄별 = {r["키워드"]: r for r in snapshot_from_ranks(원장, LINKED_KW)["순위"]}
+    밖 = 줄별["강남역 맛집"]
+    assert 밖["순위권밖"] is True
+    assert 밖["순위"] is None
+    assert 밖["조회수"] == 92300
+
+
+def test_snapshot_picks_a_comparison_about_thirty_days_back():
+    """비교순위가 없으면 처방 장이 빠진다. 원장에 석 달치가 있으니 거기서 고른다."""
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "잠실새내 맛집", "api_no": 2978093, "월검색수": 22160,
+         "경쟁업체수": 2520,
+         "순위": {"2026-09-19": 26, "2026-08-20": 30, "2026-07-01": 55},
+         "매장지표": {}},
+    ])
+    snap = snapshot_from_ranks(원장, LINKED_KW)
+    assert snap["순위"][0]["비교순위"] == 30
+    assert snap["진단"]["기준일"] == "2026-09-19"
+    assert snap["진단"]["비교일"] == "2026-08-20"
+
+
+def test_snapshot_without_old_dates_has_no_comparison():
+    """한 달이 안 쌓인 매장은 비교를 지어내지 않는다."""
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert snapshot_from_ranks(원장, LINKED_KW)["순위"][0]["비교순위"] is None
+
+
+def test_snapshot_counts_only_linked_keywords():
+    """총키워드는 연결된 수다. 원장에 남은 옛 매장 키워드를 세면 안 된다."""
+    원장 = merge_ranks({}, "2069074461", [
+        *ROWS,
+        {"키워드": "남의 키워드", "api_no": 999, "월검색수": 1,
+         "경쟁업체수": 1, "순위": {"2026-09-19": 1}, "매장지표": {}},
+    ])
+    assert snapshot_from_ranks(원장, LINKED_KW)["순위요약"]["총키워드"] == 2
+    assert all(r["키워드"] != "남의 키워드"
+               for r in snapshot_from_ranks(원장, LINKED_KW)["순위"])
+
+
+def test_snapshot_marks_its_source():
+    """같은 날 두 번 갱신했을 때 바꿔 끼울 자리를 찾는 표다."""
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert snapshot_from_ranks(원장, LINKED_KW)["출처"] == "애드로그"
+
+
+def test_merge_keeps_old_view_count_when_the_new_one_is_none():
+    """2001 로 답한 날 옛 조회수를 None 으로 덮으면 기회표에서 그 줄이 빠진다."""
+    첫번 = merge_ranks({}, "2069074461", ROWS)
+    두번 = merge_ranks(첫번, "2069074461", [
+        {**ROWS[0], "월검색수": None, "경쟁업체수": None, "순위": {}, "매장지표": {}},
+    ])
+    assert 두번["키워드"]["잠실새내 맛집"]["월검색수"] == 22160
+
+
+def test_snapshot_without_linked_keywords_falls_back_to_the_ledger():
+    """연결 정보를 안 주면 옛 동작 그대로 — 원장의 키워드를 전부 본다."""
+    원장 = merge_ranks({}, "2069074461", ROWS)
+    assert snapshot_from_ranks(원장)["순위요약"]["총키워드"] == 1
 
 
 # --- 누출 차단 --------------------------------------------------------

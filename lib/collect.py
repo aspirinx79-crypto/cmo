@@ -135,8 +135,14 @@ def merge_ranks(ledger: dict, 플레이스ID: str, rows: list[dict]) -> dict:
         이름 = row["키워드"]
         칸 = {**키워드.get(이름, {})}
         칸["api_no"] = row.get("api_no")
-        칸["월검색수"] = row.get("월검색수")
-        칸["경쟁업체수"] = row.get("경쟁업체수")
+        # 2001(30위 밖)로 답한 날은 이 둘이 안 온다. None 으로 덮으면
+        # 기회표에서 그 키워드가 빠진다 — 옛 값을 지킨다.
+        if row.get("월검색수") is not None:
+            칸["월검색수"] = row["월검색수"]
+        if row.get("경쟁업체수") is not None:
+            칸["경쟁업체수"] = row["경쟁업체수"]
+        칸.setdefault("월검색수", None)
+        칸.setdefault("경쟁업체수", None)
         칸["순위"] = {**(칸.get("순위") or {}), **(row.get("순위") or {})}
         키워드[이름] = 칸
     out["키워드"] = 키워드
@@ -156,28 +162,74 @@ def _latest(by_date: dict):
     return by_date[max(by_date)]
 
 
-def snapshot_from_ranks(ledger: dict) -> dict | None:
+COMPARE_DAYS = 30
+
+
+def _comparison(순위: dict, 기준일: str) -> tuple:
+    """기준일에서 30 일 전에 가장 가까운 날짜와 그 순위.
+
+    API 가 석 달치를 준다. 처방 장은 비교순위가 있어야 서고, 없으면
+    통째로 빠진다. 30 일을 쓰는 이유는 이 도구가 월 단위로 돌기
+    때문이다 — 지난달 이맘때와 견준다.
+
+    30 일 이전 자료가 없으면 지어내지 않는다. 둘 다 None 이다.
+    """
+    from datetime import date
+
+    기준 = date.fromisoformat(기준일)
+    이전 = [d for d in 순위
+            if d < 기준일 and 순위[d] is not None
+            and (기준 - date.fromisoformat(d)).days >= COMPARE_DAYS]
+    if not 이전:
+        return None, None
+    고른날 = max(이전)
+    return 고른날, 순위[고른날]
+
+
+def snapshot_from_ranks(ledger: dict, 연결키워드: list[dict] | None = None) -> dict | None:
     """원장에서 스냅샷 한 건을 만든다. 값이 없으면 None 이다.
 
-    제안서가 읽는 모양 그대로 만든다(`proposal._metrics`). 새 저장
-    형식을 만들지 않는다 — `read_doc.snapshot_from()` 이 같은 이유로
-    그렇게 돼 있다.
+    제안서가 읽는 모양 그대로 만든다. 순위 줄의 다섯 칸과 `진단` 의
+    기준일·비교일까지 채운다 — 처음에는 키워드·순위 둘만 실었는데,
+    그러면 기회표(`_opportunity`)와 처방(`_moves`)이 통째로 빠진다.
+    방이점 실데이터로 기회표 8 줄이 0 줄이 되는 걸 봤다.
 
-    순위는 **키워드마다 가장 늦은 체크일**을 쓴다. 키워드별로 마지막
-    체크일이 달라서 한 날짜로 자르면 그날 안 돈 키워드가 통째로 빈다.
-
-    저장수는 숫자로 접는다. 원장에는 `"8,000+"` 원문이 남아 있고,
-    여기서 접는 이유는 `proposal._search()` 가 `int(값)` 으로 찍기
-    때문이다 — 문자열이 그대로 가면 제안서 생성이 터진다.
+    `연결키워드` 는 `client.json` 의 애드로그 키워드 목록이다. 이걸
+    주면 그 키워드만 보고, 30 위 밖이라 순위가 없는 키워드의 조회수를
+    여기서 가져온다. 안 주면 원장의 키워드를 전부 본다(옛 동작).
     """
     from .adlog import as_int
 
     키워드 = ledger.get("키워드") or {}
-    순위 = []
-    for 이름, 칸 in 키워드.items():
-        값 = _latest(칸.get("순위") or {})
-        if 값 is not None:
-            순위.append({"키워드": 이름, "순위": 값})
+    if 연결키워드:
+        볼것 = [(kw["keyword"], 키워드.get(kw["keyword"], {}),
+                 kw.get("month_count")) for kw in 연결키워드]
+    else:
+        볼것 = [(이름, 칸, None) for 이름, 칸 in 키워드.items()]
+
+    순위, 기준일들, 비교일들 = [], [], []
+    for 이름, 칸, 목록조회수 in 볼것:
+        일자별 = 칸.get("순위") or {}
+        있는날 = [d for d, v in 일자별.items() if v is not None]
+        최신 = max(있는날) if 있는날 else None
+        값 = 일자별[최신] if 최신 else None
+        비교일, 비교순위 = _comparison(일자별, 최신) if 최신 else (None, None)
+        조회수 = 칸.get("월검색수")
+        if 조회수 is None:
+            조회수 = 목록조회수
+        순위.append({
+            "키워드": 이름,
+            "순위": 값,
+            # 30 위 밖은 애드로그가 2001 로 답해 순위가 아예 안 온다.
+            # 연결돼 있는데 값이 없으면 그건 밖에 있다는 뜻이다.
+            "순위권밖": 값 is None,
+            "조회수": 조회수,
+            "비교순위": 비교순위,
+        })
+        if 최신:
+            기준일들.append(최신)
+        if 비교일:
+            비교일들.append(비교일)
 
     지표 = _latest(ledger.get("매장지표") or {}) or {}
     place = {
@@ -186,16 +238,19 @@ def snapshot_from_ranks(ledger: dict) -> dict | None:
         "저장수": as_int(지표.get("저장수")),
     }
 
-    if not 순위 and not any(v is not None for v in place.values()):
+    잡힌것 = [r["순위"] for r in 순위 if r["순위"] is not None]
+    if not 잡힌것 and not any(v is not None for v in place.values()):
         return None
 
-    순위값 = [r["순위"] for r in 순위]
     return {
         "수집시각": datetime.now().isoformat(timespec="seconds"),
+        "출처": "애드로그",
         "플레이스": place,
         "순위": 순위,
-        "순위요약": {"총키워드": len(키워드),
-                     "TOP3": sum(1 for v in 순위값 if v <= 3),
-                     "TOP10": sum(1 for v in 순위값 if v <= 10)},
+        "순위요약": {"총키워드": len(순위),
+                     "TOP3": sum(1 for v in 잡힌것 if v <= 3),
+                     "TOP10": sum(1 for v in 잡힌것 if v <= 10)},
+        "진단": {"기준일": max(기준일들) if 기준일들 else None,
+                 "비교일": max(비교일들) if 비교일들 else None},
         "예상매출": None,
     }
