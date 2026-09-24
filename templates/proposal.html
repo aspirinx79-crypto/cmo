@@ -101,7 +101,7 @@
     </div>
 
     <div id="d-reviews-wrap">
-      <h3>리뷰 현황</h3>
+      <h3 id="d-reviews-title">리뷰 현황</h3>
       <p id="d-review-counts"></p>
       <ul id="d-review-list"></ul>
     </div>
@@ -271,8 +271,18 @@
         `<span>${esc(r.전)} → ${esc(r.후)}</span></div>`;
       // 날짜를 못 읽은 날 「(null → null)」 이 사장님께 나갔다.
       const 기간 = (R && R.비교일 && R.기준일) ? ` (${R.비교일} → ${R.기준일})` : "";
+      // 이 장은 처방과 리뷰 현황 두 덩이를 담는다. 처방이 없는데 제목이
+      // 그대로면 종이가 「순위 변동과 이번 달 처방」을 약속해 놓고 리뷰만
+      // 보여준다 — 빠진 줄 모르고 나가는 바로 그 모양이다. 리뷰까지
+      // 감추면 값이 있는 것을 숨기게 되므로, 남은 덩이의 이름을 제목으로
+      // 올리고 안쪽 제목은 겹치니 감춘다. 쪽마다 장 제목이 하나는 있어야
+      // 한다(`test_every_page_carries_a_real_section`).
+      //
+      // `proposal.missing_pages` 의 MISSING_MOVES 가 이 줄의 거울이다 —
+      // 「순위 변동과 이번 달 처방」이 종이에 찍히는 조건이 곧 `R` 이다.
       document.getElementById("d-moves-title").textContent =
-        `순위 변동과 이번 달 처방${기간}`;
+        R ? `순위 변동과 이번 달 처방${기간}` : "리뷰 현황";
+      보임("d-reviews-title", Boolean(R));
 
       const 한쪽 = (있나, wrapId, listId, lineId, placeId, rows, line, place, cls, mark) => {
         보임(wrapId, 있나);

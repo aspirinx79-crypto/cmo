@@ -471,11 +471,18 @@ _THIN_SNAP = {
     "진단": {"기준일": "08-13", "비교일": "07-30", "리뷰": {"방문자": [], "블로그": []}},
 }
 
+# 비교순위가 없어 처방은 못 서고 리뷰만 남는 매장. 장 제목이 종이에서
+# 사라지는 자리라, 경고가 그걸 말해야 한다. 이 줄이 없으면 「처방이
+# 빠졌는데 리뷰 덕에 조용한」 경우가 시험에 한 번도 안 걸린다.
+_NO_MOVES_SNAP = {**_RICH_SNAP,
+                  "순위": [{**r, "비교순위": None} for r in _RICH_SNAP["순위"]]}
+
 _CASES = {
     "빈매장": _BARE_CLIENT,
     "애드로그만": dict(_BARE_CLIENT, 스냅샷=[_RICH_SNAP]),
     "오픈업만": dict(_BARE_CLIENT, 오픈업=_OPENUB),
     "조회수없음": dict(_BARE_CLIENT, 스냅샷=[_THIN_SNAP]),
+    "처방없이리뷰만": dict(_BARE_CLIENT, 스냅샷=[_NO_MOVES_SNAP]),
     "다찬매장": dict(_BARE_CLIENT, 스냅샷=[_RICH_SNAP], 오픈업=_OPENUB),
 }
 
@@ -564,6 +571,12 @@ def test_the_issuer_still_appears_somewhere(tmp_path):
 _장제목 = ("이 가게에 오는 손님", "검색에서의 자리", "순위 변동과 이번 달 처방",
            "실행 구성", "저희가 다른 점", "1개월차 실행 일정")
 
+# 처방이 빠진 날에는 「리뷰 현황」이 장 제목 자리로 올라온다
+# (`proposal.html` 의 `d-moves-title` 주석). 평소에는 처방 장 안의 작은
+# 제목이라 `_장제목` 에는 넣지 않는다 — 넣으면 장 사이 틈을 재는 시험이
+# 그 작은 제목을 장 경계로 착각한다.
+_쪽제목 = (*_장제목, "리뷰 현황")
+
 
 @pytest.mark.parametrize("사례", list(_CASES))
 def test_every_page_carries_a_real_section(사례, tmp_path):
@@ -575,7 +588,7 @@ def test_every_page_carries_a_real_section(사례, tmp_path):
     """
     쪽들 = _쪽별글(_CASES[사례], tmp_path, f"{사례}_껍데기.pdf")
     맹탕 = [번호 for 번호, 글 in enumerate(쪽들, start=1)
-            if not any(제목 in 글 for 제목 in _장제목)]
+            if not any(제목 in 글 for 제목 in _쪽제목)]
     assert not 맹탕, (
         f"[{사례}] {맹탕} 쪽에 장이 하나도 없다 (전체 {len(쪽들)}쪽). "
         f"그 쪽 내용: {쪽들[맹탕[0] - 1][:80]!r}")

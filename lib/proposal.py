@@ -68,7 +68,7 @@ def _has_data(snap: dict) -> bool:
     있으니 dict 는 참이고, 그러면 빈 캡처가 자료 있는 스냅샷 행세를
     해서 앞서 읽어 둔 것을 가린다. 칸의 값을 본다.
     """
-    if snap.get("순위"):
+    if _has_rank_value(snap):
         return True
     진단 = snap.get("진단") or {}
     if any(진단.get(키) for 키 in ("기준일", "대표키워드", "히든키워드")):
@@ -108,6 +108,44 @@ def _has_place_value(snap: dict) -> bool:
     return any(v is not None for v in (snap.get("플레이스") or {}).values())
 
 
+# 순위 줄에서 제안서가 실제로 종이에 찍는 칸.
+#
+# 키워드가 종이에 닿는 문은 둘뿐이다 — 기회표는 조회수가 있어야 서고
+# (`_opportunity`), 처방은 비교순위가 있어야 선다(`_moves`). 나머지
+# 세 칸(키워드·순위·순위권밖)은 이 둘이 연 문 안에서만 읽힌다.
+_RANK_VALUE_KEYS = ("조회수", "비교순위")
+
+
+def _has_rank_value(snap: dict) -> bool:
+    """순위 줄에 제안서가 쓸 값이 들어 있나.
+
+    **「순위 줄이 있나」로 고르면 안 된다.** 순위는 칸 하나가 아니라
+    다섯 칸짜리 줄의 묶음이고, 줄이 몇 개 있다는 사실과 그 줄에 찍을
+    값이 들었다는 사실은 다르다. 「지표 저장」은 손으로 친 순위를
+    `{키워드, 순위}` 두 칸으로만 담는데(`collect.make_snapshot`),
+    리스트가 비었나만 보면 이 얇은 줄이 캡처·애드로그의 다섯 칸짜리
+    줄을 이긴다 — 상권순위 하나 넣으려고 누른 저장에 헤드라인·기회표·
+    요약 카드·기준일·처방이 함께 사라졌다.
+
+    `_has_review_value` 가 빈 dict 에서 잡은 것과 같은 착각이다.
+    이번에는 dict 가 아니라 리스트 쪽이다.
+    """
+    return any(row.get(키) is not None
+               for row in (snap.get("순위") or [])
+               for 키 in _RANK_VALUE_KEYS)
+
+
+def _has_summary_value(snap: dict) -> bool:
+    """요약 카드 셋에 숫자가 들어 있나.
+
+    판독기는 요약을 못 읽은 날에도 `{"총키워드": None, "TOP3": None,
+    "TOP10": None}` 를 채운다(`read_doc.snapshot_from`). 키가 셋이라
+    dict 자체는 참이라, 순위를 준 스냅샷에서 함께 읽으면 앞서 읽어 둔
+    카드 셋이 그날 통째로 사라진다.
+    """
+    return any(v is not None for v in (snap.get("순위요약") or {}).values())
+
+
 def _has_review_value(snap: dict) -> bool:
     """리뷰 목록에 실제로 뭔가 들어 있나.
 
@@ -135,8 +173,11 @@ def _metrics(client: dict) -> dict:
         "방문자리뷰": place.get("방문자리뷰"),
         "블로그리뷰": place.get("블로그리뷰"),
         # 여기 순위만 옛 규칙(`_latest_snapshot`)에 남아 있다. 이 칸은
-        # 서식도 서버도 안 읽는다 — 살려 쓰려면 `_snapshot_with` 로
-        # 바꿔야 `_search`·`_diagnosis` 와 같은 스냅샷을 본다.
+        # 서식도 서버도 안 읽는다 — 살려 쓰려면
+        # `_snapshot_with(client, _has_rank_value)` 로 바꿔야
+        # `_search`·`_diagnosis` 와 같은 스냅샷을 본다. 조건 함수까지
+        # 같이 바꿔야 한다. `_snapshot_with` 만 쓰고 조건을
+        # `s.get("순위")` 로 두면 두 칸짜리 손입력 줄이 다시 이긴다.
         "순위": _latest_snapshot(client).get("순위") or [],
         # 오픈업 추정 매출의 절대금액은 싣지 않는다. 상대 표현만 쓴다.
         "상권순위": revenue.get("상권순위"),
@@ -327,13 +368,16 @@ def _search(client: dict, metrics: dict) -> dict:
     순위·순위요약·저장수는 그 값을 가진 마지막 스냅샷에서, 히든키워드는
     히든키워드를 가진 마지막 스냅샷에서 따로 읽는다 — 애드로그에는
     히든키워드가 없어서, 마지막 한 건만 보면 캡처가 넣어 둔 것이 가려진다.
+    요약 카드도 마찬가지다. 판독기가 요약을 못 읽은 날 채워 넣는 빈
+    껍데기를 순위와 함께 읽으면 카드 셋이 그날 통째로 사라진다.
 
-    `기준일` 을 함께 돌려준다. 순위를 준 스냅샷의 기준일이다 — 사장님이
-    「이 순위는 언제 것인가」를 종이에서 알 수 있어야 한다.
+    `기준일` 은 **순위를 준 스냅샷에서만** 읽는다. 다른 스냅샷의 날짜를
+    끌어다 찍으면 묵은 순위가 오늘 잰 것으로 읽힌다 — 값이 빠지는
+    것보다 나쁘다. 없으면 서식이 그 줄을 통째로 감춘다.
     """
-    순위스냅 = _snapshot_with(client, lambda s: s.get("순위"))
+    순위스냅 = _snapshot_with(client, _has_rank_value)
     ranks = 순위스냅.get("순위") or []
-    요약 = 순위스냅.get("순위요약") or {}
+    요약 = _snapshot_with(client, _has_summary_value).get("순위요약") or {}
     히든스냅 = _snapshot_with(client, lambda s: (s.get("진단") or {}).get("히든키워드"))
     place = _snapshot_with(client, _has_place_value).get("플레이스") or {}
 
@@ -363,7 +407,7 @@ def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
     준 캡처 스냅샷의 기준일을 쓰면 날짜가 어긋난다. 리뷰는 리뷰를 가진
     마지막 스냅샷에서 따로 읽는다(애드로그에는 리뷰 목록이 없다).
     """
-    순위스냅 = _snapshot_with(client, lambda s: s.get("순위"))
+    순위스냅 = _snapshot_with(client, _has_rank_value)
     ranks = 순위스냅.get("순위") or []
     시점 = 순위스냅.get("진단") or {}
     리뷰스냅 = _snapshot_with(client, _has_review_value)
@@ -384,10 +428,22 @@ def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
 # 직전에야 알았다.
 #
 # ┌─ 여기는 `templates/proposal.html` 의 거울이다 ────────────────────┐
-# │ 아래 세 조건은 서식이 장을 띄우는 `보임(...)` 세 줄과 글자 그대로 │
-# │ 같은 뜻이어야 한다. 두 벌이라 언젠가 어긋나는데, 어긋나면 서 있는 │
-# │ 장을 빠졌다 하거나(경고가 거짓말) 빠진 장을 조용히 넘긴다(경고가  │
-# │ 무의미). 서식의 노출 조건을 고치면 여기도 같이 고칠 것.           │
+# │ 아래 세 조건은 서식이 그 장의 제목을 띄우는 `보임(...)` 세 줄과   │
+# │ 글자 그대로 같은 뜻이어야 한다. 두 벌이라 언젠가 어긋나는데,      │
+# │ 어긋나면 서 있는 장을 빠졌다 하거나(경고가 거짓말) 빠진 장을      │
+# │ 조용히 넘긴다(경고가 무의미).                                     │
+# │                                                                   │
+# │   MISSING_CUSTOMER ↔ 보임("s-customer", Boolean(U))               │
+# │   MISSING_SEARCH   ↔ 보임("s-search", ...)                        │
+# │   MISSING_MOVES    ↔ `d-moves-title` 이 「순위 변동과 이번 달     │
+# │                       처방」으로 찍히는 조건, 곧 `Boolean(R)`     │
+# │                                                                   │
+# │ 처방만 장 전체(`s-prescription`)가 아니라 제목 줄에 걸린다. 그    │
+# │ 장은 처방과 리뷰 현황 두 덩이를 담는데, 처방이 빠져도 리뷰가 장을 │
+# │ 세워 놓아서 예전에는 처방만 조용히 사라졌다. 리뷰를 같이 감추면   │
+# │ 값이 있는 것을 숨기게 되므로, 서식은 남은 덩이의 이름(「리뷰      │
+# │ 현황」)을 제목으로 올린다.                                        │
+# │ 서식의 노출 조건을 고치면 여기도 같이 고칠 것.                    │
 # │ `test_pdf.py` 가 실제로 PDF 를 찍어서 둘을 대조한다.              │
 # └───────────────────────────────────────────────────────────────────┘
 MISSING_CUSTOMER = ("「이 가게에 오는 손님」장이 빠집니다 — "
@@ -413,7 +469,7 @@ def missing_pages(payload: dict) -> list[str]:
     if not (S.get("헤드라인") or S.get("수치") or S.get("기회표")
             or S.get("히든키워드")):
         빠짐.append(MISSING_SEARCH)
-    if not (D.get("처방") or D.get("리뷰")):
+    if not D.get("처방"):
         빠짐.append(MISSING_MOVES)
     return 빠짐
 

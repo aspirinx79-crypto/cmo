@@ -754,8 +754,10 @@ def test_empty_snapshot_does_not_bury_the_reading():
 def test_latest_of_several_real_snapshots_wins():
     """자료가 여럿이면 그중 가장 늦은 것을 쓴다."""
     from cmo.lib.proposal import _latest_snapshot
-    앞 = {"수집시각": "2026-08-01", "순위": [{"키워드": "가", "순위": 1}]}
-    뒤 = {"수집시각": "2026-08-10", "순위": [{"키워드": "나", "순위": 2}]}
+    앞 = {"수집시각": "2026-08-01",
+          "순위": [{"키워드": "가", "순위": 1, "조회수": 500}]}
+    뒤 = {"수집시각": "2026-08-10",
+          "순위": [{"키워드": "나", "순위": 2, "조회수": 800}]}
     assert _latest_snapshot({"스냅샷": [앞, 뒤]}) is 뒤
 
 
@@ -1015,15 +1017,6 @@ def test_a_half_filled_search_page_is_not_reported_missing():
     assert "검색에서의 자리" not in 경고
 
 
-def test_reviews_alone_keep_the_prescription_page_standing():
-    """처방이 없어도 리뷰 현황이 있으면 그 장은 선다(`proposal.html:227`)."""
-    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
-    for row in snap["순위"]:
-        row["비교순위"] = None            # 처방은 죽이고 리뷰는 살린다
-    경고 = " ".join(_warnings(dict(CLIENT, 스냅샷=[snap])))
-    assert "순위 변동과 이번 달 처방" not in 경고
-
-
 def test_warning_does_not_touch_the_payload():
     """경고는 읽기만 한다. 뽑는 값을 건드리면 안 된다."""
     from cmo.lib.proposal import missing_pages
@@ -1139,3 +1132,101 @@ def test_rank_date_follows_the_snapshot_that_gave_the_ranks():
 
     assert 검색["기준일"] == "2026-09-21"
     assert 검색["히든키워드"], "히든키워드는 캡처에서 살아 있어야 한다"
+
+
+# ── 순위는 「줄이 있나」가 아니라 「값이 있나」로 센다 ──────────────
+#
+# 순위 줄은 칸 하나가 아니라 다섯 칸짜리 줄의 묶음이다. 줄이 몇 개
+# 있다는 사실과 그 줄에 찍을 값이 들었다는 사실은 다르다. 「지표 저장」
+# 은 손으로 친 순위를 `{키워드, 순위}` 두 칸으로만 담는데(`collect.
+# make_snapshot`), 줄이 있나만 보면 이 얇은 줄이 캡처·애드로그의 다섯
+# 칸짜리 줄을 이긴다. 오픈업 상권순위 하나 넣으려고 누른 저장 한 번에
+# 헤드라인·기회표·요약 카드·기준일·처방이 함께 사라졌다.
+
+HAND_TYPED_SNAP = {
+    "수집시각": "2026-08-20T11:00:00",
+    "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+    "순위": [{"키워드": "서초맛집", "순위": 2}],
+    "예상매출": {"상권순위": "상위 40%"},
+}
+
+
+def test_has_rank_value_sees_the_fields_the_proposal_prints():
+    """키워드가 종이에 닿는 문은 둘뿐이다 — 기회표(조회수)와 처방(비교순위)."""
+    from cmo.lib.proposal import _has_rank_value
+    assert _has_rank_value({"순위": [{"키워드": "가", "순위": 2, "조회수": 100}]})
+    assert _has_rank_value({"순위": [{"키워드": "가", "순위": 2, "비교순위": 9}]})
+    assert not _has_rank_value({"순위": [{"키워드": "가", "순위": 2}]})
+    assert not _has_rank_value({"순위": [{"키워드": "가", "순위": 2,
+                                          "순위권밖": False, "조회수": None,
+                                          "비교순위": None}]})
+    assert not _has_rank_value({"순위": []})
+    assert not _has_rank_value({})
+
+
+def test_hand_typed_ranks_are_not_counted_as_data():
+    """두 칸짜리 손입력 줄은 제안서가 읽을 칸이 없다 — 자료로 세면 안 된다."""
+    from cmo.lib.proposal import _has_data
+    assert not _has_data({"순위": [{"키워드": "서초맛집", "순위": 2}]})
+    assert _has_data({"순위": [{"키워드": "서초맛집", "순위": 2, "조회수": 5740}]})
+
+
+def test_a_hand_typed_rank_row_does_not_bury_the_capture():
+    """「지표 저장」 한 번에 검색 장이 비면 안 된다.
+
+    손입력 줄에는 조회수도 비교순위도 없다. 그 줄이 캡처를 이기면
+    사장님 앞에 놓을 근거가 통째로 사라진다.
+    """
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, HAND_TYPED_SNAP])
+    D = build_payload(client, PLAN, PRODUCTS)["진단자료"]
+    검색 = D["검색"]
+
+    assert 검색["헤드라인"] and "서초맛집" in 검색["헤드라인"]
+    assert [r["키워드"] for r in 검색["기회표"]][:2] == ["서초맛집", "방배동맛집"]
+    assert {c["이름"] for c in 검색["수치"]} >= {"추적 키워드", "TOP 3", "TOP 10"}
+    assert 검색["기준일"] == "08-12"
+    assert D["처방"], "처방이 사라졌다"
+
+
+def test_a_hand_typed_save_raises_no_missing_page_warning():
+    """장이 다 서 있으면 경고도 조용해야 한다 — 손님 장만 빈다."""
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, HAND_TYPED_SNAP])
+    붙인것 = " ".join(_warnings(client))
+    assert "검색에서의 자리" not in 붙인것
+    assert "순위 변동과 이번 달 처방" not in 붙인것
+
+
+def test_rank_summary_comes_from_the_snapshot_that_has_it():
+    """요약 카드는 그 숫자를 가진 마지막 스냅샷에서 읽는다.
+
+    판독기는 요약을 못 읽은 날에도 `{"총키워드": None, ...}` 를 채운다.
+    순위를 준 스냅샷에서 함께 읽으면 그날 카드 셋이 통째로 사라진다.
+    """
+    요약없는캡처 = {
+        "수집시각": "2026-08-20T10:00:00",
+        "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+        "순위": [{"키워드": "서초맛집", "순위": 4, "순위권밖": False,
+                  "조회수": 5740, "비교순위": None}],
+        "순위요약": {"총키워드": None, "TOP3": None, "TOP10": None},
+        "진단": {"기준일": "08-19", "비교일": None},
+    }
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, 요약없는캡처])
+    수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
+    assert {c["이름"]: c["값"] for c in 수치}["추적 키워드"] == "51개"
+
+
+def test_a_missing_prescription_warns_even_when_reviews_survive():
+    """리뷰가 살아 있다고 처방이 빠진 걸 넘기면 안 된다.
+
+    서식은 처방이 없으면 장 제목(`d-moves-title`)을 감추고 리뷰 현황만
+    남긴다. 경고는 그 조건과 한 뜻이어야 한다.
+    """
+    from cmo.lib.proposal import missing_pages
+    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
+    for row in snap["순위"]:
+        row["비교순위"] = None            # 처방은 죽이고 리뷰는 살린다
+    payload = build_payload(dict(CLIENT, 스냅샷=[snap]), PLAN, PRODUCTS)
+
+    assert payload["진단자료"]["처방"] is None
+    assert payload["진단자료"]["리뷰"], "리뷰 현황은 그대로 서야 한다"
+    assert "순위 변동과 이번 달 처방" in " ".join(missing_pages(payload))
