@@ -346,8 +346,9 @@
   }
 
   async function findAdlog(refresh) {
-    const button = el("adlog-find");
-    button.disabled = true;
+    // 두 버튼이 같은 목록을 부른다. 한쪽만 잠그면 다른 쪽으로 또 나간다.
+    const buttons = [el("adlog-find"), el("adlog-refresh")];
+    buttons.forEach((b) => { b.disabled = true; });
     say("adlog-msg", "");
     try {
       const got = await window.API.adlogPlaces(Boolean(refresh));
@@ -357,7 +358,7 @@
     } catch (err) {
       say("adlog-msg", err.message);
     } finally {
-      button.disabled = false;
+      buttons.forEach((b) => { b.disabled = false; });
     }
   }
 

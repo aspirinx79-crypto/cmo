@@ -2162,6 +2162,26 @@ def _open_new_store(page, 이름):
     page.wait_for_selector("#client-msg.ok")
 
 
+def test_refresh_locks_both_buttons_while_it_runs(page_with_adlog):
+    """도는 동안 두 버튼 다 잠긴다 — 둘이 같은 목록을 부르기 때문이다.
+
+    한쪽만 잠그면 다른 쪽을 눌러 같은 요청이 또 나간다. 목록 조회는
+    애드로그를 스무 번 부르는 일이라 중복이 그냥 두 배로 비싸다.
+    """
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+
+    # 응답을 붙잡아 둔 채로 잠김 상태를 본다.
+    붙잡은것 = []
+    page_with_adlog.route("**/api/adlog/places*",
+                          lambda route: 붙잡은것.append(route))
+    page_with_adlog.click("#adlog-refresh")
+
+    expect(page_with_adlog.locator("#adlog-refresh")).to_be_disabled()
+    expect(page_with_adlog.locator("#adlog-find")).to_be_disabled()
+
+    page_with_adlog.unroute("**/api/adlog/places*")
+
+
 def test_adlog_box_is_locked_before_saving(page_at):
     """저장 전에는 잠겨 있다 — 자료 넣기 칸과 같은 규칙이다."""
     page_at.click("#new-client")
