@@ -83,15 +83,39 @@ def _latest_snapshot(client: dict) -> dict:
     return 있는것[-1] if 있는것 else {}
 
 
+def _snapshot_with(client: dict, 있나) -> dict:
+    """조건을 만족하는 마지막 스냅샷. 없으면 빈 dict.
+
+    출처가 둘이다 — 애드로그(순위·조회수·리뷰수)와 캡처(히든키워드·
+    리뷰 목록). 애드로그에 없는 칸이 있어서, 마지막 한 건만 보면
+    갱신할 때마다 캡처가 넣어 둔 것이 가려진다. 칸마다 그 값을 가진
+    마지막 스냅샷에서 읽는다.
+
+    저장된 스냅샷은 여전히 한 시점이다. 섞는 건 읽는 쪽이고, 그래서
+    장마다 기준일을 함께 찍는다.
+    """
+    있는것 = [s for s in (client.get("스냅샷") or []) if 있나(s)]
+    return 있는것[-1] if 있는것 else {}
+
+
+def _has_place_value(snap: dict) -> bool:
+    return any(v is not None for v in (snap.get("플레이스") or {}).values())
+
+
 def _metrics(client: dict) -> dict:
-    snap = _latest_snapshot(client)
+    """방문자리뷰·블로그리뷰는 플레이스 값을 가진 마지막 스냅샷에서 읽는다.
+
+    애드로그 스냅샷에 리뷰수가 있으면 그게 최신이다 — 순위와 따로
+    갱신될 수 있어 `_latest_snapshot` 대신 칸별로 고른다.
+    """
+    snap = _snapshot_with(client, _has_place_value)
     place = snap.get("플레이스") or {}
     revenue = snap.get("예상매출") or {}
     return {
         "수집시각": snap.get("수집시각"),
         "방문자리뷰": place.get("방문자리뷰"),
         "블로그리뷰": place.get("블로그리뷰"),
-        "순위": snap.get("순위") or [],
+        "순위": _latest_snapshot(client).get("순위") or [],
         # 오픈업 추정 매출의 절대금액은 싣지 않는다. 상대 표현만 쓴다.
         "상권순위": revenue.get("상권순위"),
     }
@@ -277,12 +301,19 @@ def _search(client: dict, metrics: dict) -> dict:
     요약 셋은 `순위요약` 에서 읽는다. `진단` 이 아니다 — 판독기가
     쓰는 자리가 `순위요약` 이고, 한동안 여기서 `진단` 을 읽어 값이
     통째로 안 건너갔다. 읽는 자리와 쓰는 자리는 한 이름이어야 한다.
+
+    순위·순위요약·저장수는 그 값을 가진 마지막 스냅샷에서, 히든키워드는
+    히든키워드를 가진 마지막 스냅샷에서 따로 읽는다 — 애드로그에는
+    히든키워드가 없어서, 마지막 한 건만 보면 캡처가 넣어 둔 것이 가려진다.
+
+    `기준일` 을 함께 돌려준다. 순위를 준 스냅샷의 기준일이다 — 사장님이
+    「이 순위는 언제 것인가」를 종이에서 알 수 있어야 한다.
     """
-    snap = _latest_snapshot(client)
-    ranks = snap.get("순위") or []
-    진단 = snap.get("진단") or {}
-    요약 = snap.get("순위요약") or {}
-    place = snap.get("플레이스") or {}
+    순위스냅 = _snapshot_with(client, lambda s: s.get("순위"))
+    ranks = 순위스냅.get("순위") or []
+    요약 = 순위스냅.get("순위요약") or {}
+    히든스냅 = _snapshot_with(client, lambda s: (s.get("진단") or {}).get("히든키워드"))
+    place = _snapshot_with(client, _has_place_value).get("플레이스") or {}
 
     수치 = []
     for 이름, 값 in (("추적 키워드", 요약.get("총키워드")),
@@ -298,20 +329,27 @@ def _search(client: dict, metrics: dict) -> dict:
         "헤드라인": _headline(ranks),
         "수치": 수치,
         "기회표": _opportunity(ranks),
-        "히든키워드": _hidden(진단),
+        "히든키워드": _hidden(히든스냅.get("진단") or {}),
+        "기준일": (순위스냅.get("진단") or {}).get("기준일"),
     }
 
 
 def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
-    """진단 세 장. 값이 없는 장은 None 이고 서식이 통째로 감춘다."""
-    snap = _latest_snapshot(client)
-    ranks = snap.get("순위") or []
-    진단 = snap.get("진단") or {}
+    """진단 세 장. 값이 없는 장은 None 이고 서식이 통째로 감춘다.
+
+    처방은 순위를 준 스냅샷의 진단(기준일·비교일)을 쓴다 — 히든키워드를
+    준 캡처 스냅샷의 기준일을 쓰면 날짜가 어긋난다. 리뷰는 리뷰를 가진
+    마지막 스냅샷에서 따로 읽는다(애드로그에는 리뷰 목록이 없다).
+    """
+    순위스냅 = _snapshot_with(client, lambda s: s.get("순위"))
+    ranks = 순위스냅.get("순위") or []
+    시점 = 순위스냅.get("진단") or {}
+    리뷰스냅 = _snapshot_with(client, lambda s: (s.get("진단") or {}).get("리뷰"))
     return {
         "손님": _customer(client),
         "검색": _search(client, metrics),
-        "처방": prescribe(_moves(ranks, 진단), lines),
-        "리뷰": _reviews(진단, metrics),
+        "처방": prescribe(_moves(ranks, 시점), lines),
+        "리뷰": _reviews(리뷰스냅.get("진단") or {}, metrics),
     }
 
 

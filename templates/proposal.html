@@ -113,6 +113,7 @@
   <div class="쪽" id="p-search">
   <section id="s-search" hidden>
     <h2>검색에서의 자리</h2>
+    <p class="fine" id="d-search-asof"></p>
     <div class="headline" id="d-headline"></div>
     <div class="metrics" id="d-numbers"></div>
 
@@ -234,6 +235,12 @@
       const S = D.검색 || {};
       보임("s-search", Boolean(S.헤드라인 || (S.수치 || []).length ||
                                 S.기회표 || S.히든키워드));
+
+      // 순위·히든키워드가 다른 시점에서 올 수 있다. 순위 기준일을 찍어
+      // 사장님이 「이 순위는 언제 것인가」를 종이에서 알 수 있게 한다.
+      const 검색기준일 = document.getElementById("d-search-asof");
+      검색기준일.textContent = S.기준일 ? `순위 기준 ${S.기준일}` : "";
+      검색기준일.hidden = !S.기준일;
 
       document.getElementById("d-headline").textContent = S.헤드라인 || "";
       보임("d-headline", Boolean(S.헤드라인));
