@@ -203,7 +203,7 @@ def _comparison(순위: dict, 기준일: str) -> tuple:
     return 고른날, 순위[고른날]
 
 
-def snapshot_from_ranks(ledger: dict, 연결키워드: list[dict] | None = None) -> dict | None:
+def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) -> dict | None:
     """원장에서 스냅샷 한 건을 만든다. 값이 없으면 None 이다.
 
     제안서가 읽는 모양 그대로 만든다. 순위 줄의 다섯 칸과 `진단` 의
@@ -211,16 +211,24 @@ def snapshot_from_ranks(ledger: dict, 연결키워드: list[dict] | None = None)
     그러면 기회표(`_opportunity`)와 처방(`_moves`)이 통째로 빠진다.
     방이점 실데이터로 기회표 8 줄이 0 줄이 되는 걸 봤다.
 
-    `연결키워드` 는 `client.json` 의 애드로그 키워드 목록이다. 이걸
-    주면 그 키워드만 보고, 30 위 밖이라 순위가 없는 키워드의 조회수를
-    여기서 가져온다. 안 주면 원장의 키워드를 전부 본다(옛 동작).
+    `볼키워드` 는 **이번에 답을 받은** 키워드다(`client.json` 의 애드로그
+    키워드와 같은 모양 — `keyword`·`month_count`). 이걸 주면 그
+    키워드만 보고, 30 위 밖이라 순위가 없는 키워드의 조회수를 여기서
+    가져온다. 안 주면 원장의 키워드를 전부 본다(옛 동작).
+
+    **「연결된 키워드 전부」를 주면 안 된다.** 아래에서 순위가 없는
+    키워드에 `순위권밖` 을 세우는데, 애드로그는 진짜 30 위 밖도 응답
+    없음(2001)으로 답해 원장에 기록을 안 남긴다. 그래서 원장만 봐서는
+    「조회 실패」와 「30 위 밖」이 구분되지 않고, 못 물어본 키워드까지
+    30 위 밖으로 찍힌다 — 사흘 전 2위였던 키워드를 두고 제안서가
+    「아직 안 보입니다」라고 말한 자리다. 거르는 것은 부르는 쪽 몫이다.
     """
     from .adlog import as_int
 
     키워드 = ledger.get("키워드") or {}
-    if 연결키워드:
+    if 볼키워드:
         볼것 = [(kw["keyword"], 키워드.get(kw["keyword"], {}),
-                 kw.get("month_count")) for kw in 연결키워드]
+                 kw.get("month_count")) for kw in 볼키워드]
     else:
         볼것 = [(이름, 칸, None) for 이름, 칸 in 키워드.items()]
 
@@ -238,7 +246,8 @@ def snapshot_from_ranks(ledger: dict, 연결키워드: list[dict] | None = None)
             "키워드": 이름,
             "순위": 값,
             # 30 위 밖은 애드로그가 2001 로 답해 순위가 아예 안 온다.
-            # 연결돼 있는데 값이 없으면 그건 밖에 있다는 뜻이다.
+            # **답을 받았는데** 값이 없으면 그건 밖에 있다는 뜻이다.
+            # 못 물어본 키워드는 여기 오기 전에 걸러져 있어야 한다.
             "순위권밖": 값 is None,
             "조회수": 조회수,
             "비교순위": 비교순위,

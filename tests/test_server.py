@@ -1202,3 +1202,109 @@ def test_adlog_sync_stops_after_a_timeout_but_keeps_what_it_got(server, tmp_data
     assert len(부른횟수) == 2
     원장 = store.ranks_read("잠실점")
     assert "잠실새내 맛집" in 원장["키워드"]
+
+
+# ── 조회 실패와 30위 밖을 가른다 ───────────────────────────────
+#
+# 애드로그는 30위 밖을 `rank_num: 0` 이나 `null` 로 주지 않는다. 응답
+# 자체를 안 준다(`code: 2001`). `_items()` 가 그걸 빈 목록으로 돌려주고
+# `merge_ranks` 는 거기서 아무것도 안 쌓으므로, **원장만 봐서는 「조회
+# 실패」와 「30위 밖」이 구분되지 않는다.** 그래서 서버가 이번에 답을
+# 받은 키워드 목록을 따로 들고 스냅샷에 넘긴다.
+
+_HALF_LINKED = {"이름": "잠실점", "애드로그": {
+    "플레이스ID": "2069074461",
+    "키워드": [{"api_no": 1, "keyword": "잠실양꼬치", "month_count": 3000},
+               {"api_no": 2, "keyword": "잠실새내맛집", "month_count": 22160}]}}
+
+
+def test_a_keyword_that_never_answered_gets_no_row(server, tmp_data, monkeypatch):
+    """못 물어본 키워드를 「순위권밖」으로 세우면 안 된다.
+
+    타임아웃 한 번에 사흘 전 2위였던 키워드가 30위 밖으로 찍힌다.
+    이번 스냅샷에는 그 키워드가 아예 없는 것이 맞다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_타임아웃(key, uid, api_no):
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"]
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    assert [r["키워드"] for r in snap["순위"]] == ["잠실양꼬치"]
+    assert snap["순위요약"]["총키워드"] == 1
+
+
+def test_a_keyword_with_no_data_still_gets_an_outside_row(server, tmp_data,
+                                                          monkeypatch):
+    """30위 밖(2001)은 조회 성공이다. 줄을 만들고 조회수를 함께 싣는다.
+
+    이 줄이 빠지면 「월 22,160번 검색되는 곳에서 아직 안 보입니다」라는
+    가장 센 근거가 사라진다. 실패와 달리 여기서는 답을 받았다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(
+        srv, "_adlog_ranks",
+        lambda key, uid, api_no: [] if api_no == 2 else ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"] is None
+    줄별 = {r["키워드"]: r
+            for r in store.client_read("잠실점")["스냅샷"][-1]["순위"]}
+    밖 = 줄별["잠실새내맛집"]
+    assert 밖["순위권밖"] is True
+    assert 밖["순위"] is None
+    assert 밖["조회수"] == 22160
+
+
+def test_a_half_failed_sync_never_calls_a_ranked_keyword_invisible(
+        server, tmp_data, monkeypatch):
+    """사장님이 가장 먼저 읽는 문장이 타임아웃 한 번에 거짓말하면 안 된다."""
+    from cmo import server as srv
+    from cmo.lib.proposal import build_payload
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_타임아웃(key, uid, api_no):
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create({**_HALF_LINKED, "스냅샷": [{
+        "수집시각": "2026-09-19T10:00:00",
+        "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+        "순위": [{"키워드": "잠실새내맛집", "순위": 2, "순위권밖": False,
+                  "조회수": 22160, "비교순위": 5},
+                 {"키워드": "잠실양꼬치", "순위": 1, "순위권밖": False,
+                  "조회수": 3000, "비교순위": 1}],
+        "순위요약": {"총키워드": 2, "TOP3": 2, "TOP10": 2},
+        "진단": {"기준일": "2026-09-19", "비교일": "2026-08-19"},
+    }]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    검색 = build_payload(store.client_read("잠실점"),
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+    assert "잠실새내맛집" not in (검색["헤드라인"] or "")
+    표 = {r["키워드"]: r["순위표시"] for r in (검색["기회표"] or [])}
+    assert 표.get("잠실새내맛집") != "30위 밖"

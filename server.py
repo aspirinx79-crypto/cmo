@@ -242,7 +242,13 @@ def make_handler(store: Store, app_dir: Path):
             if not creds:
                 return self._json({"오류": NO_ADLOG_KEY}, 400)
 
-            rows, 실패 = [], None
+            # `받은것` 은 이번에 답을 받은 키워드다. 스냅샷은 이 목록만
+            # 놓고 만든다 — 연결된 키워드 전부를 넘기면 못 물어본
+            # 키워드가 「순위권밖」으로 찍힌다. 애드로그는 진짜 30위 밖도
+            # 응답 없음(2001)으로 답해서 원장에 기록을 안 남기므로,
+            # 원장만 봐서는 실패와 30위 밖이 구분되지 않는다.
+            # 2001 은 여기서 `rows` 에 줄이 쌓이므로 받은 것에 든다.
+            rows, 받은것, 실패 = [], [], None
             for i, kw in enumerate(키워드들):
                 if i:
                     time.sleep(SYNC_SLEEP)
@@ -275,6 +281,7 @@ def make_handler(store: Store, app_dir: Path):
                                      if k in ("방문자리뷰", "블로그리뷰", "저장수")}
                                  for d, m in 지표.items()},
                 })
+                받은것.append(kw)
 
             if not rows and 실패:
                 return self._json({"오류": 실패}, 502)
@@ -283,7 +290,7 @@ def make_handler(store: Store, app_dir: Path):
                                애드로그["플레이스ID"], rows)
             store.ranks_write(slug, 원장)
 
-            snapshot = snapshot_from_ranks(원장, 키워드들)
+            snapshot = snapshot_from_ranks(원장, 받은것)
             if snapshot:
                 store.client_write(slug, append_or_replace_snapshot(client, snapshot))
 
