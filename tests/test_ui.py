@@ -2238,3 +2238,80 @@ def test_sync_button_is_locked_while_running(page_with_adlog):
     page_with_adlog.wait_for_timeout(150)
 
     assert page_with_adlog.locator("#adlog-sync").is_disabled()
+
+
+def test_refresh_button_asks_for_a_fresh_list(page_with_adlog):
+    """애드로그에 키워드를 새로 등록하고 돌아와도 캐시 때문에 하루를 기다린다."""
+    요청들 = []
+    page_with_adlog.on("request", lambda r: 요청들.append(r.url)
+                       if "/api/adlog/places" in r.url else None)
+
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.click("#adlog-refresh")
+    page_with_adlog.wait_for_timeout(300)
+
+    assert any("refresh=1" in u for u in 요청들)
+
+
+def test_linking_saves_month_count(page_with_adlog, tmp_data):
+    """month_count 가 빠지면 Task 10 의 조회수 폴백이 빈손이 된다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    saved = json.loads(
+        (tmp_data / "clients" / "미친양꼬치_잠실점" / "client.json")
+        .read_text(encoding="utf-8"))
+    키워드들 = saved["애드로그"]["키워드"]
+    assert {kw["keyword"]: kw["month_count"] for kw in 키워드들} == {
+        "잠실새내 맛집": 22160, "잠실 맛집": 77000,
+    }
+
+
+def test_candidates_survive_a_place_without_a_name(page_with_adlog):
+    """place_name 이 빈 아이템이 섞여도 정렬에서 죽지 않는다 (M-8)."""
+    # 이름 없는 후보가 둘이면 정렬이 그 둘을 반드시 맞비교한다 — 어느
+    # 쪽이 비교식의 왼쪽에 오든 place_name 이 null 이라 던진다.
+    page_with_adlog.route("**/api/adlog/places*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신시각": "2026-09-21T14:00:00", "items": [
+            {"api_no": 8, "place_id": "998", "place_name": None,
+             "keyword": "이름없음1", "month_count": 100},
+            {"api_no": 9, "place_id": "999", "place_name": None,
+             "keyword": "이름없음2", "month_count": 100},
+            *ADLOG_PLACES["items"],
+        ]}, ensure_ascii=False)))
+
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_timeout(300)
+
+    # 죽으면 findAdlog() 의 catch 가 예외 메시지를 여기 그대로 찍는다.
+    assert "Cannot read" not in page_with_adlog.locator("#adlog-msg").inner_text()
+    assert page_with_adlog.locator("#adlog-candidates option").count() == 4
+
+
+def test_linking_keeps_the_url_you_just_typed(page_with_adlog, tmp_data):
+    """서버엔 아직 없어도 폼에 방금 친 URL 은 자동 생성 URL 에 덮이지 않는다 (M-7)."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.fill(
+        "#f-place-url", "https://m.place.naver.com/restaurant/123456/home")
+
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    assert page_with_adlog.locator("#f-place-url").input_value() == \
+        "https://m.place.naver.com/restaurant/123456/home"
+    saved = json.loads(
+        (tmp_data / "clients" / "미친양꼬치_잠실점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["플레이스URL"] == \
+        "https://m.place.naver.com/restaurant/123456/home"

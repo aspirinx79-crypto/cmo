@@ -324,7 +324,8 @@
     const 점수 = (p) => (이름 && p.place_name && p.place_name.includes(이름) ? 0
       : 이름 && p.place_name && 이름.includes(p.place_name.split(" ")[0]) ? 1 : 2);
     const 후보 = [...byPlace.values()].sort(
-      (a, b) => 점수(a) - 점수(b) || a.place_name.localeCompare(b.place_name));
+      (a, b) => 점수(a) - 점수(b) ||
+        (a.place_name || "").localeCompare(b.place_name || ""));
 
     const box = el("adlog-candidates");
     box.innerHTML = "";
@@ -344,12 +345,12 @@
     else if (후보.length) box.value = 후보[0].place_id;
   }
 
-  async function findAdlog() {
+  async function findAdlog(refresh) {
     const button = el("adlog-find");
     button.disabled = true;
     say("adlog-msg", "");
     try {
-      const got = await window.API.adlogPlaces(false);
+      const got = await window.API.adlogPlaces(Boolean(refresh));
       adlogItems = got.items || [];
       paintCandidates(el("f-name").value.trim());
       say("adlog-msg", `등록된 플레이스 ${new Set(adlogItems.map((i) => i.place_id)).size}곳`, true);
@@ -378,12 +379,16 @@
         플레이스ID: 아이디,
         플레이스명: 묶음[0].place_name,
         연결시각: new Date().toISOString().slice(0, 19),
-        키워드: 묶음.map((i) => ({ api_no: i.api_no, keyword: i.keyword })),
+        키워드: 묶음.map((i) => ({ api_no: i.api_no, keyword: i.keyword,
+                                   month_count: i.month_count })),
       };
-      // 빈 칸만 채운다 — 손으로 고친 값을 되돌리지 않는다.
+      // 빈 칸만 채운다 — 손으로 고친 값을 되돌리지 않는다. 폼에 방금
+      // 친 값은 아직 저장 전이라 서버의 client 에는 없다 — 폼도 본다.
       const 갱신 = { ...client, 애드로그 };
       if (!(client.플레이스URL || "").trim()) {
-        갱신.플레이스URL = `https://m.place.naver.com/restaurant/${아이디}/home`;
+        const 폼값 = (el("f-place-url").value || "").trim();
+        갱신.플레이스URL = 폼값 ||
+          `https://m.place.naver.com/restaurant/${아이디}/home`;
       }
       await window.API.saveClient(editingSlug, 갱신);
 
@@ -668,7 +673,8 @@
     });
     el("apply-openub").addEventListener("click", applyOpenub);
 
-    el("adlog-find").addEventListener("click", findAdlog);
+    el("adlog-find").addEventListener("click", () => findAdlog(false));
+    el("adlog-refresh").addEventListener("click", () => findAdlog(true));
     el("adlog-link").addEventListener("click", linkAdlog);
     el("adlog-sync").addEventListener("click", syncAdlog);
   });
