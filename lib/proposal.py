@@ -63,13 +63,19 @@ class ProposalBlocked(Exception):
 def _has_data(snap: dict) -> bool:
     """자료가 든 스냅샷인가.
 
-    셋 중 하나라도 참이면 자료가 있는 것으로 본다.
+    **「진단이 있나」로 보면 안 된다.** 캡처 판독은 아무것도 못 읽은
+    날에도 키를 다 채운 진단을 넣는다(`read_doc.snapshot_from`). 키가
+    있으니 dict 는 참이고, 그러면 빈 캡처가 자료 있는 스냅샷 행세를
+    해서 앞서 읽어 둔 것을 가린다. 칸의 값을 본다.
     """
     if snap.get("순위"):
         return True
-    if snap.get("진단"):
+    진단 = snap.get("진단") or {}
+    if any(진단.get(키) for 키 in ("기준일", "대표키워드", "히든키워드")):
         return True
-    return any(v is not None for v in (snap.get("플레이스") or {}).values())
+    if _has_review_value(snap):
+        return True
+    return _has_place_value(snap)
 
 
 def _latest_snapshot(client: dict) -> dict:

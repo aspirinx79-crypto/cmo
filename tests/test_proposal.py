@@ -767,6 +767,35 @@ def test_all_empty_snapshots_give_nothing():
     assert _latest_snapshot({"스냅샷": []}) == {}
 
 
+def test_an_empty_capture_is_not_counted_as_data():
+    """캡처가 아무것도 못 읽은 날 넣는 껍데기를 자료로 세면 안 된다.
+
+    판독기는 못 읽은 날에도 진단의 키를 다 채운다. 키가 있다고 자료로
+    세면 그 껍데기가 앞서 읽어 둔 스냅샷을 가린다.
+    """
+    from cmo.lib.proposal import _has_data, _latest_snapshot
+    좋은것 = {"수집시각": "2026-09-01",
+              "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170},
+              "순위": [{"키워드": "잠실맛집", "순위": 8}]}
+    빈캡처 = {"수집시각": "2026-09-15",
+              "플레이스": {"방문자리뷰": None, "블로그리뷰": None},
+              "순위": [],
+              "진단": {"기준일": None, "비교일": None, "대표키워드": [],
+                       "히든키워드": [], "리뷰": {"방문자": [], "블로그": []}}}
+    assert not _has_data(빈캡처)
+    assert _latest_snapshot({"스냅샷": [좋은것, 빈캡처]}) is 좋은것
+
+
+def test_a_capture_with_only_a_hidden_keyword_still_counts():
+    """히든키워드 하나만 읽어 온 캡처는 자료다 — 지나치게 엄해지면 안 된다."""
+    from cmo.lib.proposal import _has_data
+    assert _has_data({"진단": {"기준일": None, "히든키워드": ["숨은키워드"],
+                               "리뷰": {"방문자": [], "블로그": []}}})
+    assert _has_data({"진단": {"기준일": "2026-09-01", "히든키워드": []}})
+    assert _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}],
+                                        "블로그": []}}})
+
+
 def test_snapshot_with_picks_the_last_one_that_has_the_field():
     """칸별로 고른다 — 그 값을 가진 마지막 스냅샷이다."""
     from cmo.lib.proposal import _snapshot_with
