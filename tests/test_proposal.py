@@ -767,6 +767,41 @@ def test_all_empty_snapshots_give_nothing():
     assert _latest_snapshot({"스냅샷": []}) == {}
 
 
+def test_snapshot_with_picks_the_last_one_that_has_the_field():
+    """칸별로 고른다 — 그 값을 가진 마지막 스냅샷이다."""
+    from cmo.lib.proposal import _snapshot_with
+    앞 = {"수집시각": "2026-09-01", "순위": [{"키워드": "가", "순위": 1}]}
+    뒤 = {"수집시각": "2026-09-10", "순위": []}
+    client = {"스냅샷": [앞, 뒤]}
+    assert _snapshot_with(client, lambda s: s.get("순위")) is 앞
+    assert _snapshot_with(client, lambda s: s.get("없는칸")) == {}
+    assert _snapshot_with({"스냅샷": []}, lambda s: True) == {}
+
+
+def test_has_place_value_sees_values_not_the_dict():
+    """플레이스 dict 는 있는데 값이 전부 None 인 껍데기를 걸러낸다."""
+    from cmo.lib.proposal import _has_place_value
+    assert _has_place_value({"플레이스": {"방문자리뷰": 10, "블로그리뷰": None}})
+    assert not _has_place_value({"플레이스": {"방문자리뷰": None, "블로그리뷰": None}})
+    assert not _has_place_value({"플레이스": {}})
+    assert not _has_place_value({})
+
+
+def test_has_review_value_sees_the_lists_not_the_dict():
+    """캡처가 리뷰를 못 찾은 날 채워 넣는 빈 껍데기를 걸러낸다.
+
+    `read_doc.snapshot_from` 이 `{"방문자": [], "블로그": []}` 를 늘
+    채우므로, dict 가 참이라는 것만 보면 빈 캡처가 앞선 리뷰를 가린다.
+    """
+    from cmo.lib.proposal import _has_review_value
+    있음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}], "블로그": []}}}
+    빈것 = {"진단": {"리뷰": {"방문자": [], "블로그": []}}}
+    assert _has_review_value(있음)
+    assert not _has_review_value(빈것)
+    assert not _has_review_value({"진단": {}})
+    assert not _has_review_value({})
+
+
 # ── 상권 한 줄 ────────────────────────────────────────────
 
 def test_weekday_heavy_is_called_a_weekday_trade_area():
@@ -1021,3 +1056,57 @@ def test_search_page_carries_the_rank_date():
         "진단": {"기준일": "2026-09-21", "비교일": None},
     }]}
     assert build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["기준일"] == "2026-09-21"
+
+
+def test_an_empty_second_capture_does_not_erase_the_first_reviews():
+    """캡처가 그날 리뷰를 못 찾아도 앞서 읽어 둔 리뷰가 살아 있어야 한다.
+
+    판독기는 리뷰를 못 찾은 날에도 `{"방문자": [], "블로그": []}` 를
+    채워 넣는다. 그 껍데기를 「리뷰가 있는 스냅샷」으로 세면 사장님께
+    보여 줄 리뷰가 캡처 한 번에 사라진다.
+    """
+    캡처1 = {
+        "수집시각": "2026-09-01T10:00:00",
+        "플레이스": {"방문자리뷰": 100, "블로그리뷰": 20},
+        "순위": [{"키워드": "가", "순위": 5, "조회수": 1000}],
+        "진단": {"기준일": "2026-09-01", "비교일": "2026-08-01",
+                 "히든키워드": ["숨은"],
+                 "리뷰": {"방문자": [{"제목": "맛있어요", "조회수": 500}],
+                          "블로그": []}},
+    }
+    캡처2 = {**캡처1,
+             "수집시각": "2026-09-15T10:00:00",
+             "진단": {**캡처1["진단"], "기준일": "2026-09-15",
+                      "리뷰": {"방문자": [], "블로그": []}}}
+    client = {**CLIENT, "스냅샷": [캡처1, 캡처2]}
+
+    많이읽힌 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["리뷰"]["많이읽힌"]
+    assert [r["제목"] for r in 많이읽힌] == ["맛있어요"]
+
+
+def test_rank_date_follows_the_snapshot_that_gave_the_ranks():
+    """순위와 히든키워드가 다른 시점에서 와도 기준일은 순위 쪽이다.
+
+    애드로그에는 히든키워드가 없다. 캡처 쪽 기준일을 찍으면 사장님이
+    보는 날짜와 종이의 순위가 어긋난다.
+    """
+    캡처 = {
+        "수집시각": "2026-09-10T10:00:00",
+        "플레이스": {"방문자리뷰": 100, "블로그리뷰": 20},
+        "진단": {"기준일": "2026-09-10", "비교일": "2026-08-10",
+                 "히든키워드": ["숨은키워드"]},
+    }
+    애드로그 = {
+        "수집시각": "2026-09-21T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25},
+        "순위": [{"키워드": "가", "순위": 3, "순위권밖": False,
+                  "조회수": 100, "비교순위": None}],
+        "순위요약": {"총키워드": 1, "TOP3": 1, "TOP10": 1},
+        "진단": {"기준일": "2026-09-21", "비교일": "2026-08-22"},
+    }
+    검색 = build_payload({**CLIENT, "스냅샷": [캡처, 애드로그]},
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+
+    assert 검색["기준일"] == "2026-09-21"
+    assert 검색["히든키워드"], "히든키워드는 캡처에서 살아 있어야 한다"

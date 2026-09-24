@@ -102,6 +102,19 @@ def _has_place_value(snap: dict) -> bool:
     return any(v is not None for v in (snap.get("플레이스") or {}).values())
 
 
+def _has_review_value(snap: dict) -> bool:
+    """리뷰 목록에 실제로 뭔가 들어 있나.
+
+    **「리뷰 칸이 있나」로 고르면 안 된다.** 캡처 판독은 그날 리뷰를 못
+    찾아도 `{"방문자": [], "블로그": []}` 를 채워 넣는다
+    (`read_doc.snapshot_from`). 키가 둘이라 dict 자체는 참이고, 그러면
+    빈 캡처가 앞선 캡처의 리뷰를 가린다 — 이 태스크가 막으려던 바로
+    그 사고가 캡처 두 번으로 재발한다.
+    """
+    리뷰 = (snap.get("진단") or {}).get("리뷰") or {}
+    return any(리뷰.get(키) for 키 in ("방문자", "블로그"))
+
+
 def _metrics(client: dict) -> dict:
     """방문자리뷰·블로그리뷰는 플레이스 값을 가진 마지막 스냅샷에서 읽는다.
 
@@ -115,6 +128,9 @@ def _metrics(client: dict) -> dict:
         "수집시각": snap.get("수집시각"),
         "방문자리뷰": place.get("방문자리뷰"),
         "블로그리뷰": place.get("블로그리뷰"),
+        # 여기 순위만 옛 규칙(`_latest_snapshot`)에 남아 있다. 이 칸은
+        # 서식도 서버도 안 읽는다 — 살려 쓰려면 `_snapshot_with` 로
+        # 바꿔야 `_search`·`_diagnosis` 와 같은 스냅샷을 본다.
         "순위": _latest_snapshot(client).get("순위") or [],
         # 오픈업 추정 매출의 절대금액은 싣지 않는다. 상대 표현만 쓴다.
         "상권순위": revenue.get("상권순위"),
@@ -344,7 +360,7 @@ def _diagnosis(client: dict, metrics: dict, lines: list[dict]) -> dict:
     순위스냅 = _snapshot_with(client, lambda s: s.get("순위"))
     ranks = 순위스냅.get("순위") or []
     시점 = 순위스냅.get("진단") or {}
-    리뷰스냅 = _snapshot_with(client, lambda s: (s.get("진단") or {}).get("리뷰"))
+    리뷰스냅 = _snapshot_with(client, _has_review_value)
     return {
         "손님": _customer(client),
         "검색": _search(client, metrics),
