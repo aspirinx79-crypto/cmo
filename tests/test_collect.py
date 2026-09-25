@@ -435,11 +435,11 @@ def test_snapshot_of_all_empty_fields_is_still_none():
 
 
 def test_snapshot_diagnosis_dates_span_multiple_linked_keywords():
-    """연결 키워드가 여럿이면 기준일은 그 날짜들의 범위다.
+    """연결 키워드가 여럿이면 기준일·비교일은 그 중 가장 늦은 날짜다.
 
     한 키워드만 보고 계산하면, 마지막 체크일이 서로 다른 여러 키워드를
-    연결했을 때 다른 키워드의 최신 날짜가 묻힌다. 그렇다고 가장 늦은 날
-    하나만 찍으면 앞선 날에 잰 순위가 그날 잰 것으로 읽힌다.
+    연결했을 때 다른 키워드의 최신 날짜가 묻힌다. 「언제부터 언제까지
+    잰 것인가」는 `기준일범위` 가 따로 들고 있다.
     """
     원장 = merge_ranks({}, "2069074461", [
         {"키워드": "잠실새내 맛집", "api_no": 1, "월검색수": 22160,
@@ -452,16 +452,21 @@ def test_snapshot_diagnosis_dates_span_multiple_linked_keywords():
     연결 = [{"api_no": 1, "keyword": "잠실새내 맛집"},
             {"api_no": 9, "keyword": "강남역 맛집"}]
     snap = snapshot_from_ranks(원장, 연결)
-    assert snap["진단"]["기준일"] == "2026-09-19~2026-09-21"
+    assert snap["진단"]["기준일"] == "2026-09-21"
+    assert snap["진단"]["기준일범위"] == "2026-09-19~2026-09-21"
     assert snap["진단"]["비교일"] == "2026-08-20"
 
 
-def test_diagnosis_asof_is_a_range_when_the_days_differ():
-    """가장 늦은 날 하나를 장 전체에 찍으면 묵은 순위가 오늘 것으로 읽힌다.
+def test_diagnosis_carries_a_span_next_to_the_single_date():
+    """가장 늦은 날 하나만 찍으면 묵은 순위가 오늘 것으로 읽힌다.
 
     A 를 9/1 에, B 를 9/23 에 마지막으로 쟀는데 종이에 「순위 기준
-    2026-09-23」이 찍히면 A 의 11위도 그날 잰 것이 된다. 범위로 내면
-    상무님이 「일부는 3 주 전 것」임을 알고 말할 수 있다.
+    2026-09-23」이 찍히면 A 의 11위도 그날 잰 것이 된다. 범위를 함께
+    실어 검색 장이 그걸 찍는다.
+
+    **범위가 `기준일` 을 대신하면 안 된다.** 처방 장 제목이
+    `비교일 → 기준일` 이라, 거기 범위가 들어가면 「8월 20일에서
+    9월 1일~9월 23일로」가 된다. 계산용과 표시용을 나눠 둔다.
     """
     원장 = merge_ranks({}, "2069074461", [
         {"키워드": "잠실새내 맛집", "api_no": 1, "월검색수": 22160,
@@ -472,12 +477,13 @@ def test_diagnosis_asof_is_a_range_when_the_days_differ():
     연결 = [{"api_no": 1, "keyword": "잠실새내 맛집"},
             {"api_no": 9, "keyword": "강남역 맛집"}]
 
-    assert snapshot_from_ranks(원장, 연결)["진단"]["기준일"] == \
-        "2026-09-01~2026-09-23"
+    진단 = snapshot_from_ranks(원장, 연결)["진단"]
+    assert 진단["기준일"] == "2026-09-23"
+    assert 진단["기준일범위"] == "2026-09-01~2026-09-23"
 
 
-def test_diagnosis_asof_stays_one_date_when_every_keyword_agrees():
-    """같은 날 잰 것들이면 범위로 늘리지 않는다. 읽는 사람만 번거롭다."""
+def test_diagnosis_has_no_span_when_every_keyword_agrees():
+    """같은 날 잰 것들이면 범위를 안 만든다. 읽는 사람만 번거롭다."""
     원장 = merge_ranks({}, "2069074461", [
         {"키워드": "잠실새내 맛집", "api_no": 1, "월검색수": 22160,
          "경쟁업체수": 2520, "순위": {"2026-09-23": 11}, "매장지표": {}},
@@ -487,7 +493,9 @@ def test_diagnosis_asof_stays_one_date_when_every_keyword_agrees():
     연결 = [{"api_no": 1, "keyword": "잠실새내 맛집"},
             {"api_no": 9, "keyword": "강남역 맛집"}]
 
-    assert snapshot_from_ranks(원장, 연결)["진단"]["기준일"] == "2026-09-23"
+    진단 = snapshot_from_ranks(원장, 연결)["진단"]
+    assert 진단["기준일"] == "2026-09-23"
+    assert 진단["기준일범위"] is None
 
 
 def test_a_keyword_that_fell_out_today_is_not_shown_at_its_old_rank():

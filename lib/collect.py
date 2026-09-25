@@ -219,11 +219,15 @@ def _asof(날짜들: list[str]) -> str | None:
     묵은 순위가 오늘 잰 것으로 읽힌다 — 기준일을 찍기로 한 목적이
     이 경우에만 거꾸로 돈다. `2026-09-01~2026-09-23` 이면 상무님이
     「일부는 3 주 전 것」임을 알고 말할 수 있다.
+
+    **이건 보여 주는 값이다.** `기준일` 과 따로 두는 이유는 처방 장
+    제목이 `비교일 → 기준일` 로 찍히기 때문이다 — 거기에 범위가 들어가면
+    「8월 20일에서 9월 1일~9월 23일로」가 되어 말이 안 된다.
     """
     if not 날짜들:
         return None
     이른, 늦은 = min(날짜들), max(날짜들)
-    return 늦은 if 이른 == 늦은 else f"{이른}~{늦은}"
+    return None if 이른 == 늦은 else f"{이른}~{늦은}"
 
 
 def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) -> dict | None:
@@ -307,7 +311,8 @@ def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) ->
         "순위요약": {"총키워드": len(순위),
                      "TOP3": sum(1 for v in 잡힌것 if v <= 3),
                      "TOP10": sum(1 for v in 잡힌것 if v <= 10)},
-        "진단": {"기준일": _asof(기준일들),
+        "진단": {"기준일": max(기준일들) if 기준일들 else None,
+                 "기준일범위": _asof(기준일들),
                  "비교일": max(비교일들) if 비교일들 else None},
         "예상매출": None,
     }
