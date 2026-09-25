@@ -412,8 +412,17 @@
     say("adlog-msg", "");
     try {
       const got = await window.API.adlogSync(editingSlug);
+      // 못 받은 키워드는 이번 제안서에서 통째로 빠진다. 받은 개수만
+      // 말하면 쉰 개 중 셋만 받은 날과 셋을 다 받은 날이 똑같아 보인다.
+      const 요청 = got.요청 ?? got.갱신;
+      const 못받음 = Math.max(0, 요청 - got.갱신);
+      const 머리 = 못받음
+        ? `키워드 ${요청}개 중 ${got.갱신}개를 갱신했습니다.`
+        : `키워드 ${got.갱신}개를 갱신했습니다.`;
       const 꼬리 = got.경고 ? ` (${got.경고})` : "";
-      say("adlog-msg", `키워드 ${got.갱신}개를 갱신했습니다.${꼬리}`, true);
+      const 빠짐 = 못받음
+        ? ` 못 받은 ${못받음}개는 이번 제안서에서 빠집니다.` : "";
+      say("adlog-msg", `${머리}${꼬리}${빠짐}`, !못받음);
       paintLastSnapshot(await window.API.client(editingSlug));
     } catch (err) {
       say("adlog-msg", err.message);

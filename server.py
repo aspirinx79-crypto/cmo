@@ -294,8 +294,11 @@ def make_handler(store: Store, app_dir: Path):
             if snapshot:
                 store.client_write(slug, append_or_replace_snapshot(client, snapshot))
 
-            return self._json({"갱신": len(rows), "스냅샷": snapshot,
-                               "경고": 실패})
+            # `요청` 이 있어야 화면이 「둘 중 하나만 받았다」를 말할 수
+            # 있다. 못 받은 키워드는 `받은것` 에서 빠져 이번 스냅샷에
+            # 줄이 안 서고, 그대로 이번 제안서에서 사라진다.
+            return self._json({"갱신": len(rows), "요청": len(키워드들),
+                               "스냅샷": snapshot, "경고": 실패})
 
         # --- 자료 판독 ---
         def _read_doc(self, store, body: dict):

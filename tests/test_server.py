@@ -957,6 +957,53 @@ def test_adlog_sync_keeps_going_when_one_keyword_fails(server, tmp_data,
     assert "안 잡히는 키워드" not in 원장["키워드"]
 
 
+def test_adlog_sync_says_how_many_it_was_asked_for(server, tmp_data,
+                                                    monkeypatch):
+    """절반 성공한 갱신은 못 받은 키워드가 이번 제안서에서 통째로 빠진다.
+
+    화면이 그 말을 하려면 몇 개 중 몇 개를 받았는지 서버가 알려줘야
+    한다. 지금은 받은 개수만 가서, 쉰 개 중 셋만 받은 것과 셋을 다
+    받은 것이 화면에서 같아 보인다.
+    """
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_실패(key, uid, api_no):
+        if api_no == 2:
+            raise AdlogError("조회할 키워드 번호가 없습니다.")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_실패)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["요청"] == 2
+    assert got["갱신"] == 1
+
+
+def test_adlog_sync_asked_matches_got_when_nothing_failed(server, tmp_data,
+                                                           monkeypatch):
+    """다 받은 날은 두 수가 같다 — 화면이 「몇 개 중」을 안 붙이는 근거다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["요청"] == got["갱신"] == 1
+
+
 def test_adlog_error_does_not_leak_the_original(server, tmp_data, monkeypatch):
     """예외 원문에 URL·키가 섞인다. 화면에는 사람 말만 간다."""
     from cmo import server as srv

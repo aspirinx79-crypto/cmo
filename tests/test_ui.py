@@ -2244,6 +2244,60 @@ def test_sync_reports_what_it_got(page_with_adlog):
     assert "2" in page_with_adlog.locator("#adlog-msg").inner_text()
 
 
+def test_sync_says_which_keywords_will_be_missing(page_with_adlog):
+    """절반 성공한 갱신이 제안서를 조용히 줄이면 안 된다.
+
+    못 받은 키워드는 이번 종이에서 통째로 빠지는데, 지금은 화면도
+    `missing_pages` 도 그 말을 안 한다. 쉰 개 중 셋만 받은 종이가
+    그대로 미팅에 나간다.
+    """
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 1, "요청": 2, "스냅샷": None,
+                         "경고": "애드로그 조회에 실패했습니다."},
+                        ensure_ascii=False)))
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg >> text=빠집니다")
+
+    문구 = page_with_adlog.locator("#adlog-msg").inner_text()
+    assert "2개 중 1개" in 문구
+    assert "애드로그 조회에 실패했습니다" in 문구
+    assert "1개는 이번 제안서에서 빠집니다" in 문구
+    assert "ok" not in (page_with_adlog.locator("#adlog-msg")
+                        .get_attribute("class") or "")
+
+
+def test_sync_that_got_everything_does_not_talk_about_missing_ones(
+        page_with_adlog):
+    """다 받은 날 「몇 개 중」을 붙이면 경고가 값싸진다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 2, "요청": 2, "스냅샷": None, "경고": None},
+                        ensure_ascii=False)))
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg.ok")
+
+    문구 = page_with_adlog.locator("#adlog-msg").inner_text()
+    assert "키워드 2개를 갱신했습니다." in 문구
+    assert "빠집니다" not in 문구
+
+
 def test_sync_button_is_locked_while_running(page_with_adlog):
     """키워드 쉰 개면 한참 돈다. 두 번 누르면 호출이 두 배가 된다."""
     _open_new_store(page_with_adlog, "미친양꼬치 잠실점")

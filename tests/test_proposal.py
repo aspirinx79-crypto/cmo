@@ -794,8 +794,13 @@ def test_a_capture_with_only_a_hidden_keyword_still_counts():
     assert _has_data({"진단": {"기준일": None, "히든키워드": ["숨은키워드"],
                                "리뷰": {"방문자": [], "블로그": []}}})
     assert _has_data({"진단": {"기준일": "2026-09-01", "히든키워드": []}})
-    assert _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}],
+    # 리뷰 축은 「조회수 있는 방문자 줄」이 있어야 자료다. 제목만 남은
+    # 줄은 제안서가 한 글자도 안 찍으므로(`_reviews`) 자료로 안 센다.
+    assert _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요",
+                                                    "조회수": 500}],
                                         "블로그": []}}})
+    assert not _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}],
+                                            "블로그": []}}})
 
 
 def test_snapshot_with_picks_the_last_one_that_has_the_field():
@@ -818,16 +823,29 @@ def test_has_place_value_sees_values_not_the_dict():
     assert not _has_place_value({})
 
 
-def test_has_review_value_sees_the_lists_not_the_dict():
-    """캡처가 리뷰를 못 찾은 날 채워 넣는 빈 껍데기를 걸러낸다.
+def test_has_review_value_sees_the_rows_the_proposal_prints():
+    """리뷰에서 제안서가 종이에 찍는 것은 조회수 있는 방문자 줄뿐이다.
 
-    `read_doc.snapshot_from` 이 `{"방문자": [], "블로그": []}` 를 늘
-    채우므로, dict 가 참이라는 것만 보면 빈 캡처가 앞선 리뷰를 가린다.
+    캡처가 리뷰를 못 찾은 날 채워 넣는 빈 껍데기(`read_doc.snapshot_from`
+    이 `{"방문자": [], "블로그": []}` 를 늘 채운다)도, 줄은 남았지만 찍을
+    값이 없는 줄도 걸러낸다. `_review_rows` 는 **제목만 있으면** 줄을
+    남기는데(`read_doc`), `_reviews` 는 **조회수 있는 방문자 줄만** 쓴다.
+    블로그 줄은 한 글자도 안 나간다.
     """
     from cmo.lib.proposal import _has_review_value
-    있음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}], "블로그": []}}}
+    있음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요", "조회수": 500}],
+                              "블로그": []}}}
+    조회수없음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요", "조회수": None}],
+                                    "블로그": []}}}
+    제목만 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}], "블로그": []}}}
+    블로그만 = {"진단": {"리뷰": {"방문자": [],
+                                  "블로그": [{"제목": "방배동 소고기 맛집",
+                                              "작성일": "2026-05-26"}]}}}
     빈것 = {"진단": {"리뷰": {"방문자": [], "블로그": []}}}
     assert _has_review_value(있음)
+    assert not _has_review_value(조회수없음)
+    assert not _has_review_value(제목만)
+    assert not _has_review_value(블로그만)
     assert not _has_review_value(빈것)
     assert not _has_review_value({"진단": {}})
     assert not _has_review_value({})
@@ -1396,3 +1414,82 @@ def test_a_snapshot_with_only_the_market_rank_counts_as_data():
     from cmo.lib.proposal import _has_data
     assert _has_data({"예상매출": {"상권순위": "상위 40%"}})
     assert not _has_data({"예상매출": {"월매출": 42000000, "상권순위": ""}})
+
+
+# ── 리뷰도 「줄이 있나」가 아니라 「값이 있나」로 센다 ──────────────
+#
+# 판정 함수 넷 중 이것만 리스트가 비었나만 봤다. `_review_rows` 는 제목만
+# 있으면 줄을 남기고(`read_doc`), `_reviews` 는 조회수 있는 방문자 줄만
+# 쓴다. 그래서 조회수를 못 읽은 한 줄짜리 캡처나 블로그만 읽힌 캡처가
+# 앞선 캡처의 「많이 읽힌 리뷰」를 지웠다. 이 저장소가 다섯 번 밟은 함정의
+# 마지막 자리다.
+
+리뷰있는캡처 = {
+    "수집시각": "2026-08-13T09:00:00",
+    "플레이스": {"방문자리뷰": 775, "블로그리뷰": 1415, "저장수": 100},
+    "순위": [], "예상매출": None,
+    "진단": {"기준일": "08-12", "비교일": None,
+             "리뷰": {"방문자": [{"제목": "아이들이 한우 먹고싶다고", "조회수": 1479,
+                                  "작성일": "2026-07-16"}],
+                      "블로그": []}},
+}
+
+
+def _많이읽힌(스냅샷들):
+    payload = build_payload(dict(CLIENT, 스냅샷=스냅샷들), PLAN, PRODUCTS)
+    return [r["제목"] for r in payload["진단자료"]["리뷰"]["많이읽힌"]]
+
+
+def test_a_capture_that_lost_the_view_counts_keeps_the_earlier_reviews():
+    """조회수를 못 읽은 리뷰 한 줄짜리 캡처가 앞선 리뷰를 지우면 안 된다."""
+    조회수없는캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": 1500, "저장수": 110},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [{"제목": "조회수를 못 읽은 리뷰",
+                                      "조회수": None, "작성일": "2026-08-20"}],
+                          "블로그": []}},
+    }
+    assert _많이읽힌([리뷰있는캡처, 조회수없는캡처]) == ["아이들이 한우 먹고싶다고"]
+
+
+def test_a_blog_only_capture_keeps_the_earlier_reviews():
+    """블로그 줄만 읽힌 캡처도 같다 — 블로그는 종이에 한 글자도 안 나간다."""
+    블로그만읽힌캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": 1500, "저장수": 110},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [],
+                          "블로그": [{"제목": "방배동 소고기 맛집 추천",
+                                      "작성일": "2026-05-26"}]}},
+    }
+    assert _많이읽힌([리뷰있는캡처, 블로그만읽힌캡처]) == ["아이들이 한우 먹고싶다고"]
+
+
+def test_a_thin_capture_does_not_silently_empty_the_review_page():
+    """얇은 캡처 한 번에 리뷰 장이 통째로 사라지면서 경고도 안 뜨는 일이 없어야 한다.
+
+    최종 리뷰 I-1(플레이스를 덩이로 고른다)과 겹쳤을 때의 모양이다.
+    저장수만 읽힌 캡처가 리뷰 건수를 지우고, 조회수 없는 리뷰 줄이 목록을
+    지우면 `_reviews` 가 `None` 을 낸다. 그런데 경고는 처방만 보므로
+    (`MISSING_MOVES`) 조용하다 — 빠진 줄 모르고 나가는 바로 그 모양이다.
+    """
+    from cmo.lib.proposal import missing_pages
+    얇은캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": 8100},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [{"제목": "조회수를 못 읽은 리뷰",
+                                      "조회수": None}], "블로그": []}},
+    }
+    payload = build_payload(dict(CLIENT, 스냅샷=[리뷰있는캡처, 얇은캡처]),
+                            PLAN, PRODUCTS)
+    리뷰 = payload["진단자료"]["리뷰"]
+
+    assert 리뷰, "리뷰 장이 통째로 사라졌다 — 경고도 안 뜨는 자리다"
+    assert 리뷰["방문자수"] == 775
+    assert [r["제목"] for r in 리뷰["많이읽힌"]] == ["아이들이 한우 먹고싶다고"]
+    assert "리뷰" not in " ".join(missing_pages(payload))
