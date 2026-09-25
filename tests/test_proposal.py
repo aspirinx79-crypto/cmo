@@ -1196,11 +1196,19 @@ def test_a_hand_typed_save_raises_no_missing_page_warning():
     assert "순위 변동과 이번 달 처방" not in 붙인것
 
 
-def test_rank_summary_comes_from_the_snapshot_that_has_it():
-    """요약 카드는 그 숫자를 가진 마지막 스냅샷에서 읽는다.
+# ── 요약 카드는 순위를 준 그 스냅샷에서 온다 ────────────────────
+#
+# 총키워드·TOP3·TOP10 은 기회표와 같은 판독에서 나온 숫자다. 따로 고르면
+# 「총 키워드 48개」라고 적힌 카드 밑에 기회표가 두어 줄만 있는 종이가
+# 나간다 — 숫자 둘이 서로 다른 시점을 말한다. 종이에 찍히는 날짜
+# (`기준일`)도 순위 쪽 것 하나뿐이라, 카드만 다른 날에서 오면 그 카드가
+# 남의 날짜를 달고 나간다.
 
-    판독기는 요약을 못 읽은 날에도 `{"총키워드": None, ...}` 를 채운다.
-    순위를 준 스냅샷에서 함께 읽으면 그날 카드 셋이 통째로 사라진다.
+def test_rank_summary_comes_from_the_snapshot_that_gave_the_ranks():
+    """순위는 있는데 요약이 없는 스냅샷이 뽑히면 카드가 사라진다 — 그게 맞다.
+
+    그 시점에 요약이 없었다는 게 사실이다. 없는 걸 남의 시점에서
+    빌려 오지 않는다.
     """
     요약없는캡처 = {
         "수집시각": "2026-08-20T10:00:00",
@@ -1211,8 +1219,61 @@ def test_rank_summary_comes_from_the_snapshot_that_has_it():
         "진단": {"기준일": "08-19", "비교일": None},
     }
     client = dict(CLIENT, 스냅샷=[RICH_SNAP, 요약없는캡처])
-    수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
-    assert {c["이름"]: c["값"] for c in 수치}["추적 키워드"] == "51개"
+    검색 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름들 = {c["이름"] for c in 검색["수치"]}
+
+    assert "추적 키워드" not in 이름들, "08-13 요약이 08-19 순위 위에 올라왔다"
+    assert 이름들.isdisjoint({"TOP 3", "TOP 10"})
+    assert [r["키워드"] for r in 검색["기회표"]] == ["서초맛집"]
+    assert 검색["기준일"] == "08-19"
+
+
+def test_a_summary_only_capture_does_not_outlive_the_ranks():
+    """순위를 한 줄도 못 읽고 요약만 읽힌 캡처가 카드를 갈아치우면 안 된다.
+
+    판독은 플레이스명이나 방문자리뷰만 읽혀도 통과하므로(`read_doc.
+    parse_reading`) 이런 캡처가 실제로 저장된다. 리더가 말한
+    「총 키워드 48개인데 기회표가 두어 줄인 종이」가 이 입력이다.
+    """
+    요약만읽힌캡처 = {
+        "수집시각": "2026-08-24T10:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": None, "저장수": None},
+        "순위": [],
+        "순위요약": {"총키워드": 48, "TOP3": 9, "TOP10": 20},
+        "진단": {"기준일": None, "비교일": None},
+    }
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, 요약만읽힌캡처])
+    검색 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름별 = {c["이름"]: c["값"] for c in 검색["수치"]}
+
+    assert 이름별["추적 키워드"] == "51개", "기회표와 다른 날의 카드가 찍혔다"
+    assert 이름별["TOP 3"] == "6개"
+    assert 이름별["TOP 10"] == "11개"
+    assert len(검색["기회표"]) == 4
+    assert 검색["기준일"] == "08-12"
+
+
+def test_the_summary_stands_when_no_snapshot_has_usable_ranks():
+    """순위를 준 스냅샷이 아예 없으면 요약은 그걸 가진 스냅샷에서 읽는다.
+
+    기회표도 헤드라인도 안 서고 기준일도 안 찍히는 매장이다. 어긋날
+    상대가 없는데 카드까지 지우면 읽어 둔 값을 버리는 것이다.
+    """
+    요약과줄만 = {
+        "수집시각": "2026-08-24T10:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": None, "저장수": None},
+        "순위": [{"키워드": "서초맛집", "순위": 4, "순위권밖": False,
+                  "조회수": None, "비교순위": None}],
+        "순위요약": {"총키워드": 48, "TOP3": 9, "TOP10": 20},
+        "진단": {"기준일": "08-23", "비교일": None},
+    }
+    검색 = build_payload(dict(CLIENT, 스냅샷=[요약과줄만]),
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름별 = {c["이름"]: c["값"] for c in 검색["수치"]}
+
+    assert 이름별["추적 키워드"] == "48개", "읽어 둔 요약 카드가 사라졌다"
+    assert 검색["기회표"] is None
+    assert 검색["기준일"] is None
 
 
 def test_a_missing_prescription_warns_even_when_reviews_survive():

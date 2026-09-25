@@ -164,9 +164,18 @@ def merge_ranks(ledger: dict, 플레이스ID: str, rows: list[dict]) -> dict:
         키워드[이름] = 칸
     out["키워드"] = 키워드
 
-    지표 = {**(ledger.get("매장지표") or {})}
+    # 날짜 단위로 통째 바꾸면 안 된다. 같은 날 뒤에 오는 키워드의 dict 가
+    # 앞의 것을 덮어서, 리뷰수가 빠진 응답이 하나 끼면 그날 매장지표
+    # 전체가 `None` 이 된다. 위 `월검색수`·`경쟁업체수` 와 같은 규칙으로
+    # 칸마다 병합한다 — `None` 으로는 안 덮는다.
+    지표 = {날짜: {**칸} for 날짜, 칸 in (ledger.get("매장지표") or {}).items()}
     for row in rows:
-        지표.update(row.get("매장지표") or {})
+        for 날짜, 새칸 in (row.get("매장지표") or {}).items():
+            칸 = 지표.setdefault(날짜, {})
+            for 이름, 값 in (새칸 or {}).items():
+                if 값 is not None:
+                    칸[이름] = 값
+                칸.setdefault(이름, None)
     out["매장지표"] = 지표
 
     return out
