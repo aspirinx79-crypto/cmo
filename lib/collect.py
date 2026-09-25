@@ -212,6 +212,20 @@ def _comparison(순위: dict, 기준일: str) -> tuple:
     return 고른날, 순위[고른날]
 
 
+def _asof(날짜들: list[str]) -> str | None:
+    """장 전체에 찍을 순위 기준일. 날짜가 여럿이면 범위로 낸다.
+
+    가장 늦은 날 하나만 찍으면 키워드마다 마지막 측정일이 다를 때 3 주
+    묵은 순위가 오늘 잰 것으로 읽힌다 — 기준일을 찍기로 한 목적이
+    이 경우에만 거꾸로 돈다. `2026-09-01~2026-09-23` 이면 상무님이
+    「일부는 3 주 전 것」임을 알고 말할 수 있다.
+    """
+    if not 날짜들:
+        return None
+    이른, 늦은 = min(날짜들), max(날짜들)
+    return 늦은 if 이른 == 늦은 else f"{이른}~{늦은}"
+
+
 def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) -> dict | None:
     """원장에서 스냅샷 한 건을 만든다. 값이 없으면 None 이다.
 
@@ -293,7 +307,7 @@ def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) ->
         "순위요약": {"총키워드": len(순위),
                      "TOP3": sum(1 for v in 잡힌것 if v <= 3),
                      "TOP10": sum(1 for v in 잡힌것 if v <= 10)},
-        "진단": {"기준일": max(기준일들) if 기준일들 else None,
+        "진단": {"기준일": _asof(기준일들),
                  "비교일": max(비교일들) if 비교일들 else None},
         "예상매출": None,
     }
