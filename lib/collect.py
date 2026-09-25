@@ -235,8 +235,11 @@ def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) ->
     순위, 기준일들, 비교일들 = [], [], []
     for 이름, 칸, 목록조회수 in 볼것:
         일자별 = 칸.get("순위") or {}
-        있는날 = [d for d, v in 일자별.items() if v is not None]
-        최신 = max(있는날) if 있는날 else None
+        # **순위가 `None` 인 날을 걸러내고 고르면 안 된다.** 걸러내면 오늘
+        # 밀려난 키워드가 며칠 전 순위로 실린다 — 9/24 에 30위 밖으로
+        # 떨어진 키워드가 9/24 자 종이에 「3위」로 찍히고 TOP 3 에도 센다.
+        # `series()` 가 순위 `None` 인 날을 일부러 남겨 두는 이유가 이것이다.
+        최신 = max(일자별) if 일자별 else None
         값 = 일자별[최신] if 최신 else None
         비교일, 비교순위 = _comparison(일자별, 최신) if 최신 else (None, None)
         조회수 = 칸.get("월검색수")

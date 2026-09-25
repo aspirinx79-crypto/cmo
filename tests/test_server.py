@@ -1274,6 +1274,41 @@ def test_a_keyword_with_no_data_still_gets_an_outside_row(server, tmp_data,
     assert 밖["조회수"] == 22160
 
 
+def test_a_keyword_that_answered_with_no_rank_today_is_outside(
+        server, tmp_data, monkeypatch):
+    """애드로그가 오늘 `rank_num: null` 로 답하면 30위 밖이다.
+
+    이건 조회 실패가 아니다 — 물어봤고 답도 받았다. 며칠 전 순위를 오늘
+    것으로 실으면 9/24 자 종이에 「3위」가 찍히고 TOP 3 에도 센다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: [
+        {"api_no": 1, "rank_date": "2026-09-20", "rank_num": 3,
+         "visit_review_count": 895, "blog_review_count": 619,
+         "save_count": "8,000+", "place_count": 2520,
+         "total_month_count": 22160},
+        {"api_no": 1, "rank_date": "2026-09-24", "rank_num": None,
+         "visit_review_count": 900, "blog_review_count": 620,
+         "save_count": "8,100+", "place_count": 2520,
+         "total_month_count": 22160},
+    ])
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"] is None
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    줄 = snap["순위"][0]
+    assert 줄["순위"] is None
+    assert 줄["순위권밖"] is True
+    assert snap["순위요약"]["TOP3"] == 0
+    assert snap["진단"]["기준일"] == "2026-09-24"
+
+
 def test_a_half_failed_sync_never_calls_a_ranked_keyword_invisible(
         server, tmp_data, monkeypatch):
     """사장님이 가장 먼저 읽는 문장이 타임아웃 한 번에 거짓말하면 안 된다."""
