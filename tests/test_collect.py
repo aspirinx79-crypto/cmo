@@ -415,6 +415,45 @@ def test_snapshot_diagnosis_dates_span_multiple_linked_keywords():
     assert snap["진단"]["비교일"] == "2026-08-20"
 
 
+def test_a_keyword_that_fell_out_today_is_not_shown_at_its_old_rank():
+    """오늘 답이 왔는데 순위가 없으면 30위 밖이다. 며칠 전 순위를 오늘 것으로 싣지 않는다.
+
+    `series()` 가 순위 `None` 인 날을 일부러 남겨 두는 이유가 이것이다.
+    9/24 에 밀려난 키워드를 9/24 자 종이에 「3위」로 찍으면, 사장님께
+    하는 그 말이 사실이 아니다. TOP 3 에도 한 개로 센다.
+    """
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "잠실새내 맛집", "api_no": 2978093, "월검색수": 22160,
+         "경쟁업체수": 2520,
+         "순위": {"2026-09-20": 3, "2026-09-24": None}, "매장지표": {}},
+    ])
+    snap = snapshot_from_ranks(원장, LINKED_KW[:1])
+
+    줄 = snap["순위"][0]
+    assert 줄["순위"] is None
+    assert 줄["순위권밖"] is True
+    assert snap["순위요약"]["TOP3"] == 0
+    assert snap["진단"]["기준일"] == "2026-09-24"
+
+
+def test_a_keyword_that_fell_out_today_compares_from_today():
+    """한 달 전 5위에서 오늘 밀려났다 — 처방 장의 「내림」이 그 이야기다.
+
+    비교 대상은 순위가 남은 마지막 날이 아니라 **답을 받은 마지막 날**에서
+    30 일을 거슬러 센다. 앞의 날로 세면 비교가 그만큼씩 밀린다.
+    """
+    원장 = merge_ranks({}, "2069074461", [
+        {"키워드": "잠실새내 맛집", "api_no": 2978093, "월검색수": 22160,
+         "경쟁업체수": 2520,
+         "순위": {"2026-08-25": 5, "2026-09-20": 3, "2026-09-24": None},
+         "매장지표": {}},
+    ])
+    snap = snapshot_from_ranks(원장, LINKED_KW[:1])
+
+    assert snap["순위"][0]["비교순위"] == 5
+    assert snap["진단"]["비교일"] == "2026-08-25"
+
+
 # --- 누출 차단 --------------------------------------------------------
 
 def test_revenue_amount_never_reaches_proposal_payload():

@@ -75,6 +75,8 @@ def _has_data(snap: dict) -> bool:
         return True
     if _has_review_value(snap):
         return True
+    if _has_revenue_value(snap):
+        return True
     return _has_place_value(snap)
 
 
@@ -174,15 +176,37 @@ def _has_review_value(snap: dict) -> bool:
     return any(리뷰.get(키) for 키 in ("방문자", "블로그"))
 
 
+def _has_revenue_value(snap: dict) -> bool:
+    """예상매출에서 제안서가 읽는 칸에 값이 들어 있나.
+
+    **예상매출 dict 가 있나로 보면 안 된다.** 「지표 저장」은 상권순위
+    칸을 비운 채 월매출만 넣어도 `{"월매출": …, "상권순위": "", "출처":
+    "오픈업", "입력방식": "수동"}` 을 남긴다(`app/client.js`). 네 칸 중
+    셋이 차 있으니 dict 도 참이고 `is not None` 도 참이라, 그 저장이
+    앞서 넣어 둔 상권순위를 가린다.
+
+    읽는 칸은 상권순위 하나다 — 월매출 절대금액은 제안서로 안 나가고
+    (`_metrics`), 출처·입력방식은 내부 기록이다. 빈 글자는 「칸을 비웠다」
+    는 뜻이라 값으로 안 센다.
+    """
+    return bool((snap.get("예상매출") or {}).get("상권순위"))
+
+
 def _metrics(client: dict) -> dict:
     """방문자리뷰·블로그리뷰는 **칸마다** 그 값을 가진 마지막 스냅샷에서 읽는다.
 
     애드로그 스냅샷에 리뷰수가 있으면 그게 최신이다 — 순위와 따로
     갱신될 수 있어 `_latest_snapshot` 대신 칸별로 고른다. 세 칸을 한
     덩이로 고르면 한 칸만 읽힌 판독이 나머지 둘을 지운다(`_place_value`).
+
+    상권순위도 따로 읽는다. **플레이스 칸에 얹어 고르면 안 된다** —
+    사용법이 `플레이스 직접 긁기` 를 꺼 두라고 권하므로(기본값도 꺼짐)
+    상권순위만 든 스냅샷이 정상 경로인데, 그 스냅샷은 플레이스 세 칸이
+    전부 `None` 이라 `_has_place_value` 로는 한 번도 안 뽑혔다. 넣은
+    값이 제안서에 아예 안 갔다.
     """
     snap = _snapshot_with(client, _has_place_value)
-    revenue = snap.get("예상매출") or {}
+    revenue = _snapshot_with(client, _has_revenue_value).get("예상매출") or {}
     return {
         # 이 시각은 플레이스 칸을 마지막으로 읽은 때다. 세 칸을 칸별로
         # 고르므로 그중 어떤 값은 더 앞선 판독에서 올 수 있다. 종이에는

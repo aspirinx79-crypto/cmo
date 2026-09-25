@@ -1269,3 +1269,69 @@ def test_a_reading_without_the_save_count_keeps_the_earlier_one():
     수치 = {c["이름"]: c["값"] for c in payload["진단자료"]["검색"]["수치"]}
     assert 수치["방문자 리뷰"] == "910건"
     assert 수치["저장수"] == "8,000개", "저장수가 사라졌다"
+
+
+# ── 상권순위도 칸별로 읽는다 ────────────────────────────────────
+#
+# 사용법은 `플레이스 직접 긁기` 를 꺼 두라고 권하고 기본값도 꺼져 있다.
+# 그래서 오픈업 상권순위만 넣는 저장이 **정상 경로**인데, 상권순위를
+# 플레이스 값으로 골라서 그 스냅샷이 한 번도 안 뽑혔다 — 넣은 값이
+# 제안서에 아예 안 갔다. I-1 과 같은 뿌리다.
+
+상권순위만 = {"수집시각": "2026-09-22T11:00:00",
+              "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+              "순위": [],
+              "예상매출": {"월매출": None, "상권순위": "상위 40%",
+                           "출처": "오픈업", "입력방식": "수동"}}
+
+
+def test_the_market_rank_is_read_from_the_snapshot_that_has_it():
+    """예상매출만 든 스냅샷에서도 상권순위가 제안서로 가야 한다."""
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만]), PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_a_later_capture_does_not_erase_the_market_rank():
+    """캡처가 뒤에 와도 앞서 넣은 상권순위는 살아 있어야 한다.
+
+    캡처 스냅샷에는 예상매출이 없다(`read_doc.snapshot_from`).
+    """
+    캡처 = {"수집시각": "2026-09-23T09:00:00",
+            "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+            "순위": [], "예상매출": None}
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만, 캡처]), PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_an_empty_market_rank_box_does_not_bury_the_earlier_one():
+    """월매출만 넣은 저장은 `{"상권순위": ""}` 를 남긴다(`app/client.js`).
+
+    빈 글자를 값으로 세면 그 저장이 앞서 넣어 둔 상권순위를 가린다.
+    다섯 번 밟은 함정이 예상매출 쪽에서 되풀이되는 자리다.
+    """
+    월매출만 = {"수집시각": "2026-09-23T11:00:00",
+                "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+                "순위": [],
+                "예상매출": {"월매출": 42000000, "상권순위": "",
+                             "출처": "오픈업", "입력방식": "수동"}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만, 월매출만]),
+                            PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_has_revenue_value_sees_the_box_the_proposal_prints():
+    """제안서가 예상매출에서 읽는 칸은 상권순위 하나다 — 월매출은 안 나간다."""
+    from cmo.lib.proposal import _has_revenue_value
+    assert _has_revenue_value({"예상매출": {"상권순위": "상위 40%"}})
+    assert not _has_revenue_value({"예상매출": {"월매출": 42000000,
+                                                "상권순위": ""}})
+    assert not _has_revenue_value({"예상매출": {"상권순위": None}})
+    assert not _has_revenue_value({"예상매출": None})
+    assert not _has_revenue_value({})
+
+
+def test_a_snapshot_with_only_the_market_rank_counts_as_data():
+    """상권순위 한 칸만 든 스냅샷도 자료다 — 제안서가 읽는 칸이다."""
+    from cmo.lib.proposal import _has_data
+    assert _has_data({"예상매출": {"상권순위": "상위 40%"}})
+    assert not _has_data({"예상매출": {"월매출": 42000000, "상권순위": ""}})
