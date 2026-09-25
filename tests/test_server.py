@@ -1,4 +1,6 @@
+import inspect
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -1390,3 +1392,126 @@ def test_a_half_failed_sync_never_calls_a_ranked_keyword_invisible(
     assert "잠실새내맛집" not in (검색["헤드라인"] or "")
     표 = {r["키워드"]: r["순위표시"] for r in (검색["기회표"] or [])}
     assert 표.get("잠실새내맛집") != "30위 밖"
+
+
+# ── .env 로더 ─────────────────────────────────────────────────
+#
+# `.env.example` 이 "옆에 .env 를 만들어 넣으라" 고 시키는데 그 파일을
+# 읽는 코드가 없었다. 여는 법은 `run_cmo.bat` 더블클릭 하나뿐이라 셸이
+# 없고, 그래서 넣었다고 믿는 사람에게 「환경변수에 넣으십시오」가 떴다.
+
+
+@pytest.fixture
+def 빈환경(monkeypatch):
+    """`os.environ` 을 사본으로 갈아 끼우고 애드로그 키를 비운다.
+
+    로더가 넣은 값이 다른 시험으로 새지 않고, 개발자 PC 의 실제
+    환경변수가 결과를 가리지도 않는다.
+    """
+    사본 = {k: v for k, v in os.environ.items()
+            if k not in ("ADLOG_API_KEY", "ADLOG_USER_ID")}
+    monkeypatch.setattr(os, "environ", 사본)
+    return 사본
+
+
+def _env_file(tmp_path, 내용: str) -> Path:
+    path = tmp_path / ".env"
+    path.write_text(내용, encoding="utf-8")
+    return path
+
+
+def test_load_env_fills_a_missing_value(tmp_path, 빈환경):
+    from cmo import server as srv
+
+    srv.load_env(_env_file(tmp_path, "ADLOG_API_KEY=키값\nADLOG_USER_ID=아이디\n"))
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def test_load_env_does_not_overwrite_what_is_already_set(tmp_path, 빈환경):
+    """`setx`·CI·`monkeypatch` 가 계속 이겨야 한다.
+
+    이걸 어기면 스위트가 여럿 깨진다 — 키를 지우고 400 을 보는 시험들이
+    파일에서 되살아난 값을 집는다.
+    """
+    빈환경["ADLOG_API_KEY"] = "이미있는값"
+
+    srv_load(tmp_path, "ADLOG_API_KEY=파일값\nADLOG_USER_ID=아이디\n")
+
+    assert os.environ["ADLOG_API_KEY"] == "이미있는값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def srv_load(tmp_path, 내용: str) -> None:
+    from cmo import server as srv
+
+    srv.load_env(_env_file(tmp_path, 내용))
+
+
+def test_load_env_strips_a_bom_and_crlf_and_quotes(tmp_path, 빈환경):
+    """메모장으로 저장하면 BOM 이 붙어 이름이 `\ufeffADLOG_API_KEY` 가 된다.
+
+    그러면 "넣었는데 안 된다" 가 그대로 재발한다. 줄 끝 `\r` 과 값을
+    감싼 따옴표도 같이 벗긴다.
+    """
+    from cmo import server as srv
+
+    path = tmp_path / ".env"
+    path.write_bytes('\ufeffADLOG_API_KEY="키값"\r\nADLOG_USER_ID=\'아이디\'\r\n'
+                     .encode("utf-8"))
+
+    srv.load_env(path)
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def test_load_env_skips_comments_and_lines_without_an_equals(tmp_path, 빈환경):
+    srv_load(tmp_path, "\n# 애드로그 OpenAPI 키\n이건줄만있다\nADLOG_API_KEY=키값\n")
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert "이건줄만있다" not in os.environ
+
+
+def test_load_env_without_a_file_is_quiet(tmp_path, 빈환경):
+    """없는 게 정상인 설치도 있다. 셸이나 `setx` 로 넣은 PC 가 그렇다."""
+    from cmo import server as srv
+
+    srv.load_env(tmp_path / ".env")          # 만들지 않는다
+
+    assert "ADLOG_API_KEY" not in os.environ
+
+
+def test_the_env_file_sits_next_to_the_code_not_the_cwd():
+    """`run_cmo.bat` 이 `cd ..` 로 들어온다. cwd 를 보면 못 찾는다."""
+    from cmo import server as srv
+
+    assert srv.ENV_FILE == srv.CMO / ".env"
+
+
+def test_env_is_read_only_when_the_server_starts():
+    """import 시점에 읽으면 시험이 개발자 PC 의 실제 키를 집는다."""
+    from cmo import server as srv
+
+    줄들 = inspect.getsource(srv).splitlines()
+    assert not [줄 for 줄 in 줄들 if 줄.startswith("load_env(")]
+    assert "load_env(" in inspect.getsource(srv.main)
+
+
+def test_main_reads_the_env_file_before_serving(tmp_path, monkeypatch, 빈환경):
+    """`.bat` 더블클릭이 유일한 여는 법이라 여기서 읽지 않으면 아무도 안 읽는다."""
+    from cmo import server as srv
+
+    monkeypatch.setattr(
+        srv, "ENV_FILE", _env_file(tmp_path, "ADLOG_API_KEY=파일값\n"))
+
+    class 바로멈추는서버:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(srv, "serve", lambda *a, **k: 바로멈추는서버())
+    monkeypatch.setattr(srv.webbrowser, "open", lambda url: None)
+
+    assert srv.main() == 0
+    assert os.environ["ADLOG_API_KEY"] == "파일값"

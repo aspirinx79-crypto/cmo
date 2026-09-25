@@ -6,6 +6,7 @@
 한 건 돈다. 나머지 화면은 인터넷이 끊긴 자리에서도 전부 돌아간다.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -19,6 +20,8 @@ from cmo.lib.pricing import summarize
 from cmo.lib.storage import ClientExists, PlanExists, Store
 
 CMO = Path(__file__).resolve().parent
+# `run_cmo.bat` 이 `cd ..` 로 들어오므로 cwd 가 아니라 코드 옆이다.
+ENV_FILE = CMO / ".env"
 
 CLIENT_RE = re.compile(r"^/api/clients/([^/]+)$")
 PLANS_RE = re.compile(r"^/api/clients/([^/]+)/plans$")
@@ -580,7 +583,47 @@ def serve(port: int, store: Store, app_dir: Path) -> HTTPServer:
     return HTTPServer(("127.0.0.1", port), make_handler(store, app_dir))
 
 
+def load_env(path: Path) -> None:
+    """`.env` 를 환경에 싣는다. **`main()` 에서만 부른다.**
+
+    `.env.example` 이 "옆에 .env 를 만들어 넣으라" 고 시키는데 그걸 읽는
+    코드가 없었다. 여는 법은 `run_cmo.bat` 더블클릭 하나뿐이라 셸이
+    없고, 그래서 키를 넣었다고 믿는 사람에게 「환경변수에 넣으십시오」가
+    떴다.
+
+    import 시점에 부르면 시험이 개발자 PC 의 실제 키를 집는다.
+
+    이미 있는 환경변수는 덮지 않는다 — `setx`·CI·시험의 monkeypatch 가
+    계속 이겨야 한다. 파일이 없으면 조용히 넘어간다(셸이나 `setx` 로
+    넣은 PC 가 그렇다).
+
+    메모장으로 저장하면 파일 앞에 보이지 않는 글자(BOM)가 붙는다. 그게
+    남으면 첫 줄 이름이 `ADLOG_API_KEY` 가 아니게 돼서 "넣었는데 안
+    된다" 가 그대로 재발한다.
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    except UnicodeDecodeError:
+        print(f"{path.name} 을 UTF-8 로 읽지 못했습니다. 건너뜁니다.",
+              file=sys.stderr)
+        return
+
+    for 줄 in text.splitlines():
+        줄 = 줄.strip()
+        if not 줄 or 줄.startswith("#") or "=" not in 줄:
+            continue
+        이름, _, 값 = 줄.partition("=")
+        이름, 값 = 이름.strip(), 값.strip()
+        if len(값) >= 2 and 값[0] == 값[-1] and 값[0] in "\"'":
+            값 = 값[1:-1]
+        if 이름 and 이름 not in os.environ:
+            os.environ[이름] = 값
+
+
 def main() -> int:
+    load_env(ENV_FILE)
     store = Store(CMO / "data")
     httpd = serve(8765, store, CMO / "app")
     url = "http://127.0.0.1:8765/"
