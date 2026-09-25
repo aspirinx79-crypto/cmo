@@ -108,6 +108,21 @@ def _has_place_value(snap: dict) -> bool:
     return any(v is not None for v in (snap.get("플레이스") or {}).values())
 
 
+def _place_value(client: dict, 칸: str):
+    """플레이스 한 칸을, 그 칸에 값이 든 마지막 스냅샷에서 읽는다.
+
+    **세 칸을 한 덩이로 고르면 안 된다.** 캡처 판독은 플레이스명만
+    읽혀도 통과한다(`read_doc.parse_reading`). 그래서 저장수 한 칸만
+    읽힌 판독이 실제로 만들어지는데, `_has_place_value` 로 한 번에
+    고르면 그 판독이 앞선 판독의 방문자리뷰·블로그리뷰를 가린다.
+    서식은 빈 자리를 `0` 으로 찍어서 종이에 「방문자 리뷰 0건」이
+    나간다 — 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고 말한다.
+    """
+    snap = _snapshot_with(
+        client, lambda s: (s.get("플레이스") or {}).get(칸) is not None)
+    return (snap.get("플레이스") or {}).get(칸)
+
+
 # 순위 줄에서 제안서가 실제로 종이에 찍는 칸.
 #
 # 키워드가 종이에 닿는 문은 둘뿐이다 — 기회표는 조회수가 있어야 서고
@@ -160,18 +175,21 @@ def _has_review_value(snap: dict) -> bool:
 
 
 def _metrics(client: dict) -> dict:
-    """방문자리뷰·블로그리뷰는 플레이스 값을 가진 마지막 스냅샷에서 읽는다.
+    """방문자리뷰·블로그리뷰는 **칸마다** 그 값을 가진 마지막 스냅샷에서 읽는다.
 
     애드로그 스냅샷에 리뷰수가 있으면 그게 최신이다 — 순위와 따로
-    갱신될 수 있어 `_latest_snapshot` 대신 칸별로 고른다.
+    갱신될 수 있어 `_latest_snapshot` 대신 칸별로 고른다. 세 칸을 한
+    덩이로 고르면 한 칸만 읽힌 판독이 나머지 둘을 지운다(`_place_value`).
     """
     snap = _snapshot_with(client, _has_place_value)
-    place = snap.get("플레이스") or {}
     revenue = snap.get("예상매출") or {}
     return {
+        # 이 시각은 플레이스 칸을 마지막으로 읽은 때다. 세 칸을 칸별로
+        # 고르므로 그중 어떤 값은 더 앞선 판독에서 올 수 있다. 종이에는
+        # 안 나간다 — 장마다 찍는 날짜는 `_search` 의 기준일이다.
         "수집시각": snap.get("수집시각"),
-        "방문자리뷰": place.get("방문자리뷰"),
-        "블로그리뷰": place.get("블로그리뷰"),
+        "방문자리뷰": _place_value(client, "방문자리뷰"),
+        "블로그리뷰": _place_value(client, "블로그리뷰"),
         # 여기 순위만 옛 규칙(`_latest_snapshot`)에 남아 있다. 이 칸은
         # 서식도 서버도 안 읽는다 — 살려 쓰려면
         # `_snapshot_with(client, _has_rank_value)` 로 바꿔야
@@ -379,14 +397,13 @@ def _search(client: dict, metrics: dict) -> dict:
     ranks = 순위스냅.get("순위") or []
     요약 = _snapshot_with(client, _has_summary_value).get("순위요약") or {}
     히든스냅 = _snapshot_with(client, lambda s: (s.get("진단") or {}).get("히든키워드"))
-    place = _snapshot_with(client, _has_place_value).get("플레이스") or {}
 
     수치 = []
     for 이름, 값 in (("추적 키워드", 요약.get("총키워드")),
                      ("TOP 3", 요약.get("TOP3")),
                      ("TOP 10", 요약.get("TOP10")),
                      ("방문자 리뷰", metrics.get("방문자리뷰")),
-                     ("저장수", place.get("저장수"))):
+                     ("저장수", _place_value(client, "저장수"))):
         if 값 is not None:
             수치.append({"이름": 이름, "값": f"{int(값):,}개"
                          if 이름 != "방문자 리뷰" else f"{int(값):,}건"})

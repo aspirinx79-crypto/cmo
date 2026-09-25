@@ -1230,3 +1230,42 @@ def test_a_missing_prescription_warns_even_when_reviews_survive():
     assert payload["진단자료"]["처방"] is None
     assert payload["진단자료"]["리뷰"], "리뷰 현황은 그대로 서야 한다"
     assert "순위 변동과 이번 달 처방" in " ".join(missing_pages(payload))
+
+
+# ── 플레이스 세 칸을 한 덩이로 고르지 않는다 ────────────────────
+#
+# 캡처 판독은 플레이스명만 읽히면 통과한다(`read_doc.parse_reading`).
+# 그래서 저장수 한 칸만 읽힌 판독이 실제로 만들어지는데, 세 칸을 한 덩이로
+# 고르면 그 판독이 앞선 판독의 방문자리뷰·블로그리뷰를 지운다. 서식은 그
+# 자리를 `0` 으로 찍는다 — 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고 말한다.
+
+두터운판독 = {"수집시각": "2026-09-20T09:00:00",
+              "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000}}
+
+
+def test_place_fields_are_read_one_box_at_a_time():
+    """저장수만 읽힌 판독이 앞선 판독의 리뷰수 둘을 가리면 안 된다."""
+    저장수만 = {"수집시각": "2026-09-22T09:00:00",
+                "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": 8100}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[두터운판독, 저장수만]),
+                            PLAN, PRODUCTS)
+
+    assert payload["지표"]["방문자리뷰"] == 895
+    assert payload["지표"]["블로그리뷰"] == 619
+    수치 = {c["이름"]: c["값"] for c in payload["진단자료"]["검색"]["수치"]}
+    assert 수치["방문자 리뷰"] == "895건"
+    assert 수치["저장수"] == "8,100개", "저장수는 새 판독 것이어야 한다"
+    assert payload["진단자료"]["리뷰"]["방문자수"] == 895
+    assert payload["진단자료"]["리뷰"]["블로그수"] == 619
+
+
+def test_a_reading_without_the_save_count_keeps_the_earlier_one():
+    """반대 방향도 같다 — 리뷰수만 읽힌 판독이 앞선 저장수를 지우면 안 된다."""
+    리뷰수만 = {"수집시각": "2026-09-22T09:00:00",
+                "플레이스": {"방문자리뷰": 910, "블로그리뷰": 630, "저장수": None}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[두터운판독, 리뷰수만]),
+                            PLAN, PRODUCTS)
+
+    수치 = {c["이름"]: c["값"] for c in payload["진단자료"]["검색"]["수치"]}
+    assert 수치["방문자 리뷰"] == "910건"
+    assert 수치["저장수"] == "8,000개", "저장수가 사라졌다"

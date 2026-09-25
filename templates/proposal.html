@@ -304,9 +304,17 @@
 
       보임("d-reviews-wrap", Boolean(D.리뷰));
       if (D.리뷰) {
-        document.getElementById("d-review-counts").textContent =
-          `방문자 리뷰 ${Number(D.리뷰.방문자수 || 0).toLocaleString()}건 · ` +
-          `블로그 리뷰 ${Number(D.리뷰.블로그수 || 0).toLocaleString()}건`;
+        // `|| 0` 으로 채우면 안 된다. 판독이 리뷰 건수를 못 읽은 날에도
+        // 리뷰 목록은 읽히므로 이 줄이 서는데, 그때 종이에 「방문자 리뷰
+        // 0건」이 찍혔다 — 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고
+        // 말하는 것이다. 진짜 0 건은 0 으로 찍는다. 둘을 가른다.
+        const 건수 = [["방문자 리뷰", D.리뷰.방문자수],
+                      ["블로그 리뷰", D.리뷰.블로그수]]
+          .filter(([, n]) => n !== null && n !== undefined)
+          .map(([이름, n]) => `${이름} ${Number(n).toLocaleString()}건`);
+        const 건수줄 = document.getElementById("d-review-counts");
+        건수줄.textContent = 건수.join(" · ");
+        건수줄.hidden = !건수.length;
         document.getElementById("d-review-list").innerHTML =
           D.리뷰.많이읽힌.map((r) =>
             `<li>${esc(r.제목)} — ${Number(r.조회수).toLocaleString()}회 읽힘</li>`
