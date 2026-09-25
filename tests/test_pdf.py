@@ -3,6 +3,8 @@
 언젠가 서식을 고치다 실수로 실비를 노출시키는 날이 온다.
 사람 주의력이 아니라 이 테스트가 잡아야 한다.
 """
+import copy
+
 import fitz
 import pytest
 
@@ -315,6 +317,28 @@ def test_headline_is_printed(rich_pdf_text):
 def test_rank_moves_are_printed(rich_pdf_text):
     assert "07-29" in rich_pdf_text and "08-12" in rich_pdf_text
     assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
+
+
+def test_the_span_prints_on_the_search_page_only(tmp_path):
+    """측정일이 갈린 날, 범위는 검색 장에만 찍힌다.
+
+    처방 제목은 `비교일 → 기준일` 이라 그 자리에 범위가 들어가면
+    「2026-08-20 → 2026-09-01~2026-09-23」이 된다. 사장님이 읽는
+    종이다. 값 쪽은 `test_proposal` 이 잠그고, 여기서는 종이에 실제로
+    찍히는 두 줄을 본다.
+
+    날짜가 하나뿐인 경우는 `test_rank_moves_are_printed` 가 본다 —
+    `RICH_CLIENT_PDF` 에는 `기준일범위` 가 아예 없다.
+    """
+    client = copy.deepcopy(RICH_CLIENT_PDF)
+    client["스냅샷"][0]["진단"].update({
+        "기준일": "2026-09-23", "기준일범위": "2026-09-01~2026-09-23",
+        "비교일": "2026-08-20"})
+
+    글 = "\n".join(_쪽별글(client, tmp_path, "기준일범위.pdf"))
+
+    assert "순위 기준 2026-09-01~2026-09-23" in 글
+    assert "순위 변동과 이번 달 처방 (2026-08-20 → 2026-09-23)" in 글
 
 
 def test_hidden_and_reviews_are_printed(rich_pdf_text):
