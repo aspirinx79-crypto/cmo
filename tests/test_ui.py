@@ -1411,6 +1411,9 @@ def test_the_dead_market_rank_field_is_gone(page_at, no_network):
     스냅샷에 그 칸이 들어 있다.
     """
     _register(page_at)
+    # 옆 칸이 있는지 먼저 본다 — 화면이 아예 안 뜬 경우에도 count() 는
+    # 0 이라, 그것만 보면 「칸이 없다」와 「화면이 없다」를 못 가른다.
+    assert page_at.locator("#f-revenue").count() == 1, "지표 칸이 안 떴다"
     assert page_at.locator("#f-market-rank").count() == 0
 
 
