@@ -420,8 +420,16 @@ def test_internal_marks_never_reach_the_pdf(rich_pdf_text):
 
 
 def test_plain_client_pdf_has_no_diagnosis_section(pdf_text):
-    """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다."""
-    assert "미노출" not in pdf_text["text"]
+    """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다.
+
+    라벨은 `OUTSIDE_LABEL` 에서 가져온다. 글자를 박아 두면 라벨이 바뀌는
+    날 이 단언이 아무것도 안 막으면서 초록으로 남는다 — 이번 라운드가
+    「30위 밖」을 「미노출」로 바꿀 때 실제로 그 모양의 죽은 단언을
+    `test_server.py` 에서 하나 찾았다.
+    """
+    from cmo.lib.proposal import OUTSIDE_LABEL
+
+    assert OUTSIDE_LABEL not in pdf_text["text"]
     assert "아직 안 보입니다" not in pdf_text["text"]
     assert "키워드 기회표" not in pdf_text["text"]
 
