@@ -335,7 +335,7 @@ def test_snapshot_reads_view_count_from_the_ledger():
     assert 줄["조회수"] == 22160
 
 
-def test_outside_top30_keyword_still_carries_its_view_count():
+def test_a_keyword_with_no_rank_yet_still_carries_its_view_count():
     """한 번도 안 잡힌 키워드는 애드로그가 2001 로 답해 순위가 없다. 조회수는 연결 정보에서 온다.
 
     이게 빠지면 「월 92,300번 검색되는 곳에서 아직 안 보입니다」라는
@@ -406,7 +406,7 @@ def test_snapshot_without_linked_keywords_falls_back_to_the_ledger():
     assert snapshot_from_ranks(원장)["순위요약"]["총키워드"] == 1
 
 
-def test_snapshot_stacks_when_every_keyword_is_outside_top30_but_has_a_view_count():
+def test_snapshot_stacks_when_no_keyword_has_a_rank_yet_but_has_a_view_count():
     """신규 매장은 키워드가 대부분 안 잡힌다. 조회수만 있어도 쌓아야
     「월 92,300번 검색되는 곳에서 아직 안 보입니다」를 만들 수 있다.
     순위만 보면 신규 매장일수록 기능이 안 먹는다."""
