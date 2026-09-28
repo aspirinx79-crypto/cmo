@@ -319,7 +319,7 @@ def test_rank_moves_are_printed(rich_pdf_text):
     assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
 
 
-def test_the_down_block_order_on_paper_follows_one_weight(tmp_path):
+def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
     """▼ 목록이 종이에서 서는 순서를 본다. payload 시험은 이걸 못 본다.
 
     `lib/proposal.py` 와 `templates/proposal.html` 은 거울 두 벌이라,
@@ -328,8 +328,8 @@ def test_the_down_block_order_on_paper_follows_one_weight(tmp_path):
     한 번 쓴 줄을 다시 정렬하는 서식 한 줄이면 끊긴다. 사장님이 ▼ 맨
     위에서 읽는 줄이 이번 달 가장 센 말이다.
 
-    무게는 미노출이면 잃은 자리, 하락이면 낙폭이다. 여기서는 잃은 자리
-    50 · 낙폭 48 · 잃은 자리 26 이라 하락 한 줄이 미노출 둘 사이에 선다.
+    미노출 둘이 잃은 자리가 좋았던 것부터 서고 하락이 그 뒤다. 두 무리를
+    한 무게로 재면 이 세 줄의 차례가 통째로 바뀐다(`_moves` 의 맞바꿈 문단).
     값은 방이점 2026-08-18 캡처 실물이고, 30 을 넘는 순위가 종이에 값으로
     찍히는지도 여기서 본다 — 98 위는 98 위로 나간다.
     """
@@ -347,7 +347,7 @@ def test_the_down_block_order_on_paper_follows_one_weight(tmp_path):
 
     assert "잠실역근처맛집\n50위 → 98위" in 글, "98위가 종이에 값으로 안 찍혔다"
     자리 = [글.index(kw) for kw in
-            ("잠실역맛집", "잠실역근처맛집", "방이먹자골목맛집")]
+            ("방이먹자골목맛집", "잠실역맛집", "잠실역근처맛집")]
     assert 자리 == sorted(자리), f"▼ 차례가 종이에서 뒤집혔다: {자리}"
 
 
