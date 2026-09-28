@@ -319,6 +319,31 @@ def test_rank_moves_are_printed(rich_pdf_text):
     assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
 
 
+def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
+    """▼ 목록이 종이에서 서는 순서를 본다. payload 시험은 이걸 못 본다.
+
+    `_moves` 가 낸 차례가 서식을 지나 종이까지 그대로 오는지는 값만
+    봐서는 모른다. 한 번 쓴 줄을 다시 정렬하는 서식 한 줄이면 끊긴다.
+    사장님이 ▼ 맨 위에서 읽는 줄이 이번 달 가장 센 말이다.
+    """
+    client = copy.deepcopy(RICH_CLIENT_PDF)
+    client["스냅샷"][0]["순위"] = [
+        {"키워드": "삼위였다", "순위": None, "순위권밖": True,
+         "조회수": 5740, "비교순위": 3},
+        {"키워드": "이백삼십사위였다", "순위": None, "순위권밖": True,
+         "조회수": 4900, "비교순위": 234},
+        {"키워드": "구백위로떨어졌다", "순위": 900, "순위권밖": False,
+         "조회수": 50, "비교순위": 30},
+    ]
+
+    글 = "\n".join(_쪽별글(client, tmp_path, "낙폭차례.pdf"))
+
+    assert "구백위로떨어졌다\n30위 → 900위" in 글, "900위가 종이에 값으로 안 찍혔다"
+    자리 = [글.index(kw) for kw in
+            ("삼위였다", "이백삼십사위였다", "구백위로떨어졌다")]
+    assert 자리 == sorted(자리), f"▼ 차례가 종이에서 뒤집혔다: {자리}"
+
+
 def test_the_span_prints_on_the_search_page_only(tmp_path):
     """측정일이 갈린 날, 범위는 검색 장에만 찍힌다.
 

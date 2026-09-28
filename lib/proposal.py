@@ -357,20 +357,40 @@ def _headline(ranks: list[dict]) -> str | None:
 
 
 def _moves(ranks: list[dict], 진단: dict) -> dict | None:
-    """비교순위가 있는 줄만. 오른 것과 내린 것을 가른다."""
+    """비교순위가 있는 줄만. 오른 것과 내린 것을 가른다.
+
+    **순위 없는 줄을 숫자로 치면 안 된다.** 한동안 999 위로 쳐서 낙폭을
+    쟀다. 애드로그가 30 에서 자른다고 믿었을 때는 999 가 실제 순위와 안
+    겹쳤지만, 실제로는 234 위도 값으로 오고 위쪽 끝이 없다. 999 위였다가
+    안 잡힌 줄은 낙폭이 0 이라 어느 쪽에도 안 들어 종이에서 통째로
+    사라졌고, 그보다 뒤였던 줄은 낙폭이 음수라 ▲ 오름으로 찍혔다.
+    순위를 잃은 줄이 오를 수는 없다.
+
+    그래서 두 무리로 갈라 따로 정렬한다. 순위가 있는 줄은 낙폭 크기로,
+    미노출로 빠진 줄은 **비교순위가 좋았던 것부터** — 「3위였는데 이제
+    안 보입니다」가 「234위였는데 안 보입니다」보다 센 말이다. ▼ 목록은
+    미노출 무리를 앞에 세운다. 순위를 잃은 게 순위가 내려간 것보다
+    무겁다.
+
+    가르는 조건은 `_rank_label` 과 같은 것이어야 한다 — 종이에 「미노출」로
+    찍히는 줄이 미노출 무리에 들어야 정렬 기준과 찍히는 말이 안 어긋난다.
+    """
     쓸것 = [r for r in ranks
             if r.get("비교순위") is not None
             and (r.get("순위") is not None or r.get("순위권밖"))]
     if not 쓸것:
         return None
 
-    def 지금(r):
-        return 999 if r.get("순위권밖") else r["순위"]
+    # 위 걸러내기 덕에 `순위있음` 쪽은 `순위` 가 반드시 숫자다. 미노출
+    # 쪽은 `순위` 를 숫자로 읽지 않는다 — 읽을 숫자가 애초에 없다.
+    미노출 = [r for r in 쓸것 if r.get("순위권밖")]
+    순위있음 = [r for r in 쓸것 if not r.get("순위권밖")]
 
-    오름 = sorted((r for r in 쓸것 if 지금(r) < r["비교순위"]),
-                  key=lambda r: r["비교순위"] - 지금(r), reverse=True)
-    내림 = sorted((r for r in 쓸것 if 지금(r) > r["비교순위"]),
-                  key=lambda r: 지금(r) - r["비교순위"], reverse=True)
+    오름 = sorted((r for r in 순위있음 if r["순위"] < r["비교순위"]),
+                  key=lambda r: r["비교순위"] - r["순위"], reverse=True)
+    떨어짐 = sorted((r for r in 순위있음 if r["순위"] > r["비교순위"]),
+                    key=lambda r: r["순위"] - r["비교순위"], reverse=True)
+    내림 = sorted(미노출, key=lambda r: r["비교순위"]) + 떨어짐
     if not 오름 and not 내림:
         return None
 
