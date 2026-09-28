@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,7 @@ from cmo.lib import proposal
 from cmo.lib.proposal import (
     FORBIDDEN_KEYS,
     INTERNAL_STEP_WORDS,
+    OUTSIDE_LABEL,
     ProposalBlocked,
     build_payload,
 )
@@ -737,6 +739,19 @@ def test_a_lost_keyword_is_never_scored_as_the_999th_place():
     변화 = _처방([_잃음("딱999", 999), _잃음("천위", 1000)])
     assert 변화["오름"] == []
     assert [r["키워드"] for r in 변화["내림"]] == ["딱999", "천위"]
+
+
+def test_the_manual_never_names_a_rank_the_tool_does_not_measure():
+    """사용법이 라벨과 어긋나면 그 어긋남이 그대로 종이로 간다.
+
+    「30위 밖」은 코드 주석에서 시작해 라벨로, 라벨에서 문서로 번졌다.
+    애드로그가 30 에서 자른다는 말은 사실이 아니었고, 그 사이 사장님이
+    읽는 종이에 없는 숫자가 찍혔다. 문서와 라벨을 한 자리에 묶어 둔다.
+    """
+    사용법 = (Path(__file__).resolve().parent.parent / "사용법.md")
+    글 = 사용법.read_text(encoding="utf-8")
+    assert "30위 밖" not in 글
+    assert OUTSIDE_LABEL in 글
 
 
 def test_hidden_keywords_carry_a_count():
