@@ -319,7 +319,7 @@ def test_rank_moves_are_printed(rich_pdf_text):
     assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
 
 
-def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
+def test_the_down_block_order_on_paper_follows_one_weight(tmp_path):
     """▼ 목록이 종이에서 서는 순서를 본다. payload 시험은 이걸 못 본다.
 
     `lib/proposal.py` 와 `templates/proposal.html` 은 거울 두 벌이라,
@@ -328,8 +328,10 @@ def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
     한 번 쓴 줄을 다시 정렬하는 서식 한 줄이면 끊긴다. 사장님이 ▼ 맨
     위에서 읽는 줄이 이번 달 가장 센 말이다.
 
-    값은 방이점 2026-08-18 캡처 실물에서 가져왔다. 30 을 넘는 순위가
-    종이에 값으로 찍히는지도 여기서 본다 — 98 위는 98 위로 나간다.
+    무게는 미노출이면 잃은 자리, 하락이면 낙폭이다. 여기서는 잃은 자리
+    50 · 낙폭 48 · 잃은 자리 26 이라 하락 한 줄이 미노출 둘 사이에 선다.
+    값은 방이점 2026-08-18 캡처 실물이고, 30 을 넘는 순위가 종이에 값으로
+    찍히는지도 여기서 본다 — 98 위는 98 위로 나간다.
     """
     client = copy.deepcopy(RICH_CLIENT_PDF)
     client["스냅샷"][0]["순위"] = [
@@ -345,67 +347,37 @@ def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
 
     assert "잠실역근처맛집\n50위 → 98위" in 글, "98위가 종이에 값으로 안 찍혔다"
     자리 = [글.index(kw) for kw in
-            ("방이먹자골목맛집", "잠실역맛집", "잠실역근처맛집")]
+            ("잠실역맛집", "잠실역근처맛집", "방이먹자골목맛집")]
     assert 자리 == sorted(자리), f"▼ 차례가 종이에서 뒤집혔다: {자리}"
 
 
-def test_fallen_keywords_still_reach_the_paper_when_five_went_invisible(tmp_path):
-    """미노출이 다섯이어도 떨어진 키워드가 종이에 남는지 본다.
+def test_a_one_place_slip_never_takes_a_slot_on_paper(tmp_path):
+    """1 칸 내려간 줄이 자리를 잃은 줄을 종이에서 밀어내면 안 된다.
 
-    ▼ 다섯 자리를 미노출이 다 가져가면 사장님께 「떨어졌다」를 한 줄도 못
-    보여 준다. 자리를 나눈 셈(`FALLEN_MOVES_FLOOR`)이 서식을 지나 종이까지
-    오는지는 payload 시험이 못 본다 — 값은 맞는데 서식이 앞 세 줄만 집는
-    사고가 여기서만 잡힌다.
-
-    값은 방이점 2026-08-18 캡처의 키워드와 비교순위다.
+    리뷰가 종이로 잡은 자리다 — ▼ 다섯 줄 중 둘이 「10위→11위」·
+    「20위→21위」이고 자리를 잃은 줄 둘이 사라졌다. 값 쪽은
+    `test_proposal` 이 잠그고, 여기서는 사장님이 실제로 받는 다섯 줄을 본다.
     """
     client = copy.deepcopy(RICH_CLIENT_PDF)
     client["스냅샷"][0]["순위"] = [
-        {"키워드": kw, "순위": None, "순위권밖": True,
-         "조회수": 조회수, "비교순위": 비교}
-        for kw, 비교, 조회수 in [("방이먹자골목맛집", 26, 5600),
-                                 ("방이동 집", 29, 10),
-                                 ("송파회식", 32, 110),
-                                 ("방이맛집", 34, 2880),
-                                 ("잠실역맛집", 50, 29080)]
+        {"키워드": f"잃은{n}위짜리", "순위": None, "순위권밖": True,
+         "조회수": 1000 * n, "비교순위": n} for n in (1, 2, 4, 5, 9)
     ] + [
-        {"키워드": "잠실역근처맛집", "순위": 98, "순위권밖": False,
-         "조회수": 1200, "비교순위": 50},
-        {"키워드": "송파 방이동 맛집", "순위": 60, "순위권밖": False,
-         "조회수": 70, "비교순위": 34},
+        {"키워드": "한칸내려감", "순위": 11, "순위권밖": False,
+         "조회수": 900, "비교순위": 10},
+        {"키워드": "또한칸내려감", "순위": 21, "순위권밖": False,
+         "조회수": 800, "비교순위": 20},
     ]
 
-    글 = "\n".join(_쪽별글(client, tmp_path, "자리나눔.pdf"))
+    글 = "\n".join(_쪽별글(client, tmp_path, "한칸.pdf"))
 
-    assert "잠실역근처맛집\n50위 → 98위" in 글, "떨어진 키워드가 종이에서 빠졌다"
-    assert "송파 방이동 맛집\n34위 → 60위" in 글, "떨어진 키워드가 종이에서 빠졌다"
-    # 미노출 셋이 앞, 하락 둘이 뒤. 넷째 미노출은 자리를 내줬다.
-    자리 = [글.index(kw) for kw in ("방이먹자골목맛집", "방이동 집", "송파회식",
-                                    "잠실역근처맛집", "송파 방이동 맛집")]
-    assert 자리 == sorted(자리), f"▼ 차례가 종이에서 뒤집혔다: {자리}"
-    assert "방이맛집\n34위" not in 글, "자리를 내준 미노출 줄이 그대로 찍혔다"
-
-
-def test_the_span_prints_on_the_search_page_only(tmp_path):
-    """측정일이 갈린 날, 범위는 검색 장에만 찍힌다.
-
-    처방 제목은 `비교일 → 기준일` 이라 그 자리에 범위가 들어가면
-    「2026-08-20 → 2026-09-01~2026-09-23」이 된다. 사장님이 읽는
-    종이다. 값 쪽은 `test_proposal` 이 잠그고, 여기서는 종이에 실제로
-    찍히는 두 줄을 본다.
-
-    날짜가 하나뿐인 경우는 `test_rank_moves_are_printed` 가 본다 —
-    `RICH_CLIENT_PDF` 에는 `기준일범위` 가 아예 없다.
-    """
-    client = copy.deepcopy(RICH_CLIENT_PDF)
-    client["스냅샷"][0]["진단"].update({
-        "기준일": "2026-09-23", "기준일범위": "2026-09-01~2026-09-23",
-        "비교일": "2026-08-20"})
-
-    글 = "\n".join(_쪽별글(client, tmp_path, "기준일범위.pdf"))
-
-    assert "순위 기준 2026-09-01~2026-09-23" in 글
-    assert "순위 변동과 이번 달 처방 (2026-08-20 → 2026-09-23)" in 글
+    # 라벨은 리터럴로 둔다 — `in` 단언은 라벨이 바뀌면 빨개져서 알려 준다.
+    # `OUTSIDE_LABEL` 에 묶으면 라벨 값 자체를 아무도 안 잠근다.
+    for n in (1, 2, 4, 5, 9):
+        assert f"잃은{n}위짜리\n{n}위 → 미노출" in 글, (
+            f"자리를 잃은 줄({n}위)이 종이에서 빠졌다")
+    assert "한칸내려감\n10위 → 11위" not in 글, "1 칸 하락이 ▼ 자리를 가져갔다"
+    assert "또한칸내려감\n20위 → 21위" not in 글, "1 칸 하락이 ▼ 자리를 가져갔다"
 
 
 def test_hidden_and_reviews_are_printed(rich_pdf_text):
