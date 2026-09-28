@@ -656,8 +656,20 @@ def test_opportunity_table_is_sorted_by_search_volume():
     표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["기회표"]
     assert [r["키워드"] for r in 표][:2] == ["서초맛집", "방배동맛집"]
     assert 표[0]["조회수"] == 5740
-    assert 표[0]["순위표시"] == "30위 밖"
+    assert 표[0]["순위표시"] == "미노출"
     assert 표[1]["순위표시"] == "77위"
+
+
+def test_an_unfound_keyword_is_not_labelled_with_a_rank_it_never_had():
+    """「30위 밖」은 없는 숫자를 지어낸 말이었다.
+
+    애드로그는 30 에서 자르지 않는다 — 234 위도 234 로 온다(실측).
+    이 라벨이 서는 조건은 「순위 줄이 없다」, 곧 애드로그가 이 키워드에서
+    우리 매장을 못 찾았다는 뜻이다. 몇 위인지는 아무도 모른다.
+    """
+    표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["기회표"]
+    assert 표[0]["순위표시"] == "미노출"
+    assert "30" not in 표[0]["순위표시"]
 
 
 def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
@@ -671,11 +683,10 @@ def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
 def test_rank_moves_are_split_into_up_and_down():
     변화 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["처방"]
     assert 변화["기준일"] == "08-12" and 변화["비교일"] == "07-29"
-    # 서초맛집은 81위에서 순위권 밖으로 밀렸다 — 그것도 내림이다.
-    # 낙폭이 큰 순서로 선다.
+    # 서초맛집은 81위였는데 이제 안 잡힌다 — 그것도 내림이다.
     assert [r["키워드"] for r in 변화["내림"]] == ["서초맛집", "방배동맛집"]
     assert 변화["내림"][0]["전"] == "81위"
-    assert 변화["내림"][0]["후"] == "30위 밖"
+    assert 변화["내림"][0]["후"] == "미노출"
     assert [r["키워드"] for r in 변화["오름"]] == ["방배동 회식"]
 
 

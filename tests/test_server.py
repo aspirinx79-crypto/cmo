@@ -1253,13 +1253,14 @@ def test_adlog_sync_stops_after_a_timeout_but_keeps_what_it_got(server, tmp_data
     assert "잠실새내 맛집" in 원장["키워드"]
 
 
-# ── 조회 실패와 30위 밖을 가른다 ───────────────────────────────
+# ── 조회 실패와 안 잡힘을 가른다 ───────────────────────────────
 #
-# 애드로그는 30위 밖을 `rank_num: 0` 이나 `null` 로 주지 않는다. 응답
-# 자체를 안 준다(`code: 2001`). `_items()` 가 그걸 빈 목록으로 돌려주고
-# `merge_ranks` 는 거기서 아무것도 안 쌓으므로, **원장만 봐서는 「조회
-# 실패」와 「30위 밖」이 구분되지 않는다.** 그래서 서버가 이번에 답을
-# 받은 키워드 목록을 따로 들고 스냅샷에 넘긴다.
+# 애드로그는 안 잡힌 날을 `rank_num: 0` 이나 `null` 로 주지 않는다. 그
+# 날짜 줄을 아예 안 준다(한 번도 잡힌 적 없는 키워드는 응답 자체가
+# `code: 2001`). `_items()` 가 그걸 빈 목록으로 돌려주고 `merge_ranks` 는
+# 거기서 아무것도 안 쌓으므로, **원장만 봐서는 「조회 실패」와 「안
+# 잡혔다」가 구분되지 않는다.** 그래서 서버가 이번에 답을 받은 키워드
+# 목록을 따로 들고 스냅샷에 넘긴다.
 
 _HALF_LINKED = {"이름": "잠실점", "애드로그": {
     "플레이스ID": "2069074461",
@@ -1270,7 +1271,7 @@ _HALF_LINKED = {"이름": "잠실점", "애드로그": {
 def test_a_keyword_that_never_answered_gets_no_row(server, tmp_data, monkeypatch):
     """못 물어본 키워드를 「순위권밖」으로 세우면 안 된다.
 
-    타임아웃 한 번에 사흘 전 2위였던 키워드가 30위 밖으로 찍힌다.
+    타임아웃 한 번에 사흘 전 2위였던 키워드가 미노출로 찍힌다.
     이번 스냅샷에는 그 키워드가 아예 없는 것이 맞다.
     """
     from cmo import server as srv
@@ -1297,7 +1298,7 @@ def test_a_keyword_that_never_answered_gets_no_row(server, tmp_data, monkeypatch
 
 def test_a_keyword_with_no_data_still_gets_an_outside_row(server, tmp_data,
                                                           monkeypatch):
-    """30위 밖(2001)은 조회 성공이다. 줄을 만들고 조회수를 함께 싣는다.
+    """이력 없음(2001)도 조회 성공이다. 줄을 만들고 조회수를 함께 싣는다.
 
     이 줄이 빠지면 「월 22,160번 검색되는 곳에서 아직 안 보입니다」라는
     가장 센 근거가 사라진다. 실패와 달리 여기서는 답을 받았다.
@@ -1325,7 +1326,7 @@ def test_a_keyword_with_no_data_still_gets_an_outside_row(server, tmp_data,
 
 def test_a_keyword_that_answered_with_no_rank_today_is_outside(
         server, tmp_data, monkeypatch):
-    """애드로그가 오늘 `rank_num: null` 로 답하면 30위 밖이다.
+    """애드로그가 오늘 `rank_num: null` 로 답하면 안 잡힌 것이다.
 
     이건 조회 실패가 아니다 — 물어봤고 답도 받았다. 며칠 전 순위를 오늘
     것으로 실으면 9/24 자 종이에 「3위」가 찍히고 TOP 3 에도 센다.
@@ -1390,8 +1391,12 @@ def test_a_half_failed_sync_never_calls_a_ranked_keyword_invisible(
     검색 = build_payload(store.client_read("잠실점"),
                          PLAN, PRODUCTS)["진단자료"]["검색"]
     assert "잠실새내맛집" not in (검색["헤드라인"] or "")
+    # 라벨 글자를 여기 박으면 안 된다. `OUTSIDE_LABEL` 이 바뀐 날 이
+    # 단언은 아무것도 안 막으면서 조용히 통과한다.
+    from cmo.lib.proposal import OUTSIDE_LABEL
+
     표 = {r["키워드"]: r["순위표시"] for r in (검색["기회표"] or [])}
-    assert 표.get("잠실새내맛집") != "30위 밖"
+    assert 표.get("잠실새내맛집") != OUTSIDE_LABEL
 
 
 # ── .env 로더 ─────────────────────────────────────────────────

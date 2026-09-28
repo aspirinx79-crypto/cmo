@@ -336,7 +336,7 @@ def test_snapshot_reads_view_count_from_the_ledger():
 
 
 def test_outside_top30_keyword_still_carries_its_view_count():
-    """30위 밖은 애드로그가 2001 로 답해 순위가 없다. 조회수는 연결 정보에서 온다.
+    """한 번도 안 잡힌 키워드는 애드로그가 2001 로 답해 순위가 없다. 조회수는 연결 정보에서 온다.
 
     이게 빠지면 「월 92,300번 검색되는 곳에서 아직 안 보입니다」라는
     가장 센 문장을 못 만든다.
@@ -407,7 +407,7 @@ def test_snapshot_without_linked_keywords_falls_back_to_the_ledger():
 
 
 def test_snapshot_stacks_when_every_keyword_is_outside_top30_but_has_a_view_count():
-    """신규 매장은 키워드가 대부분 30위 밖이다. 조회수만 있어도 쌓아야
+    """신규 매장은 키워드가 대부분 안 잡힌다. 조회수만 있어도 쌓아야
     「월 92,300번 검색되는 곳에서 아직 안 보입니다」를 만들 수 있다.
     순위만 보면 신규 매장일수록 기능이 안 먹는다."""
     원장 = merge_ranks({}, "2069074461", [
@@ -499,7 +499,7 @@ def test_diagnosis_has_no_span_when_every_keyword_agrees():
 
 
 def test_a_keyword_that_fell_out_today_is_not_shown_at_its_old_rank():
-    """오늘 답이 왔는데 순위가 없으면 30위 밖이다. 며칠 전 순위를 오늘 것으로 싣지 않는다.
+    """오늘 답이 왔는데 순위가 없으면 안 잡힌 것이다. 며칠 전 순위를 오늘 것으로 싣지 않는다.
 
     `series()` 가 순위 `None` 인 날을 일부러 남겨 두는 이유가 이것이다.
     9/24 에 밀려난 키워드를 9/24 자 종이에 「3위」로 찍으면, 사장님께

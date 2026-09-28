@@ -307,7 +307,7 @@ def rich_pdf_text(tmp_path_factory):
 def test_opportunity_table_is_printed(rich_pdf_text):
     assert "서초맛집" in rich_pdf_text
     assert "5,740" in rich_pdf_text
-    assert "30위 밖" in rich_pdf_text
+    assert "미노출" in rich_pdf_text
 
 
 def test_headline_is_printed(rich_pdf_text):
@@ -354,7 +354,7 @@ def test_internal_marks_never_reach_the_pdf(rich_pdf_text):
 
 def test_plain_client_pdf_has_no_diagnosis_section(pdf_text):
     """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다."""
-    assert "30위 밖" not in pdf_text["text"]
+    assert "미노출" not in pdf_text["text"]
     assert "아직 안 보입니다" not in pdf_text["text"]
     assert "키워드 기회표" not in pdf_text["text"]
 
