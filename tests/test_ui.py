@@ -1277,12 +1277,10 @@ def test_metrics_fields_reset_between_clients(page_at, no_network):
     page_at.click("#save-client")
     page_at.wait_for_selector("#metrics:not([disabled])")
     page_at.fill("#f-revenue", "42000000")
-    page_at.fill("#f-market-rank", "상위 40%")
     page_at.click("#panel-close")
 
     page_at.click("#new-client")
     assert page_at.locator("#f-revenue").input_value() == ""
-    assert page_at.locator("#f-market-rank").input_value() == ""
 
 
 def test_registering_new_client_clears_board(page_at, no_network):
@@ -1401,12 +1399,27 @@ def test_rank_rows_follow_keywords(page_at):
     assert page_at.locator("#rank-rows .rank-row").count() == 1
 
 
+def test_the_dead_market_rank_field_is_gone(page_at, no_network):
+    """상권순위 칸에 넣은 값은 제안서에 한 자도 안 나갔다.
+
+    서식이 손님·검색·처방 세 장으로 바뀌며(2026-08-15) 그 카드가 사라졌고
+    `templates/proposal.html` 에 `지표` 를 읽는 줄이 하나도 없다. 저장소
+    자료에 채워진 값도 없다 — 빈 글자만 둘. 사장님 앞에서 채워 봐야
+    아무 데도 안 닿는 칸을 화면에 두지 않는다.
+
+    읽는 쪽(`proposal._has_revenue_value`·`_metrics`)은 그대로 둔다. 옛
+    스냅샷에 그 칸이 들어 있다.
+    """
+    _register(page_at)
+    assert page_at.locator("#f-market-rank").count() == 0
+
+
 def test_manual_metrics_save_without_place(page_at, tmp_data, no_network):
     """체크를 끄면 플레이스 없이 손으로 넣은 값만 저장된다."""
     _register(page_at)
     page_at.uncheck("#f-fetch-place")
     page_at.fill("#rank-rows .rank-input", "17")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
 
@@ -1415,7 +1428,7 @@ def test_manual_metrics_save_without_place(page_at, tmp_data, no_network):
         .read_text(encoding="utf-8"))
     snapshot = saved["스냅샷"][0]
     assert snapshot["순위"] == [{"키워드": "인계동 삼겹살", "순위": 17}]
-    assert snapshot["예상매출"]["상권순위"] == "상위 40%"
+    assert snapshot["예상매출"]["월매출"] == 42000000
 
 
 def test_place_failure_shows_message_and_screen_survives(page_at, no_network):
@@ -1505,7 +1518,7 @@ def test_empty_rank_is_not_saved(page_at, tmp_data, no_network):
     """안 넣은 순위를 0위로 저장하면 제안서가 거짓말을 한다."""
     _register(page_at)
     page_at.uncheck("#f-fetch-place")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
 
@@ -1878,7 +1891,7 @@ def test_memo_prefills_on_edit_and_survives_resave_with_snapshot_intact(page_at,
     # 누르면 도구가 설계대로 탈출구 안내를 띄우고 저장하지 않는다 —
     # 여기서 필요한 건 스냅샷 한 건이므로 체크를 끄고 손입력만 저장한다.
     page_at.uncheck("#f-fetch-place")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
     page_at.click("#panel-close")

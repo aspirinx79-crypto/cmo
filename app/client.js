@@ -84,7 +84,6 @@
     // saveMetrics() 가 그걸 다음 매장에 그대로 얹는다 — #f-revenue 는
     // .manual-cost 라 가리기가 켜져 있으면 안 보이는 채로 남의 매장에
     // 저장된다.
-    el("f-market-rank").value = "";
     el("f-revenue").value = "";
     el("f-keyword").value = "";
     // 평소엔 애드로그 PDF 로 받는다. 플레이스 직접 긁기는 그게 안 될 때만
@@ -250,11 +249,12 @@
       }))
       .filter((r) => r.순위 !== null);
 
-    const 상권순위 = text("f-market-rank");
+    // 상권순위 칸은 지웠다 — 넣은 값이 제안서에 한 자도 안 나갔다.
+    // 옛 스냅샷에는 그 칸이 남아 있고 `proposal` 이 아직 읽는다.
     const 월매출 = num("f-revenue");
-    const revenue = (상권순위 || 월매출 !== null)
-      ? { 월매출, 상권순위, 출처: "오픈업", 입력방식: "수동" }
-      : null;
+    const revenue = 월매출 === null
+      ? null
+      : { 월매출, 출처: "오픈업", 입력방식: "수동" };
 
     // 저장 중에는 이 칸을 비워 둔다. 화면을 기다리는 쪽이 .ok 와 :not(.ok)
     // 로 이 칸의 모든 상태를 나눠 갖고 있어서, 중간 문구를 넣으면 어느
