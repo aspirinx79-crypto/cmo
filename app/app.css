@@ -225,6 +225,11 @@ body.hide-internal label:has(> .manual-cost) {
 #metrics legend { font-size: 12px; color: var(--muted); }
 .rank-row { grid-template-columns: 1fr 80px; }
 
+#adlog { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
+#adlog[disabled] { opacity: .5; }
+#adlog legend { font-size: 12px; color: var(--muted); }
+#adlog-candidates { width: 100%; margin: 6px 0; }
+
 #doc { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; }
 #doc[disabled] { opacity: .5; }
 #doc legend { font-size: 12px; color: var(--muted); }
@@ -250,6 +255,6 @@ body.hide-internal label:has(> .manual-cost) {
   padding: 9px 14px; border-radius: var(--pill); cursor: pointer;
   background: var(--accent); color: #fff; border: 1px solid var(--accent); font-weight: 700;
 }
-#client-msg, #metrics-msg { margin: 0; font-size: 13px; color: var(--danger); min-height: 1em; }
-#client-msg.ok, #metrics-msg.ok { color: var(--muted); }
+#client-msg, #metrics-msg, #adlog-msg { margin: 0; font-size: 13px; color: var(--danger); min-height: 1em; }
+#client-msg.ok, #metrics-msg.ok, #adlog-msg.ok { color: var(--muted); }
 #last-snapshot { margin: 0; font-size: 12px; color: var(--muted); }

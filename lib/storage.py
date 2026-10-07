@@ -6,6 +6,7 @@
 import json
 import os
 import re
+from datetime import datetime
 import threading
 from pathlib import Path
 
@@ -115,6 +116,61 @@ class Store:
             raise ClientExists(f"같은 이름의 매장이 이미 있습니다: {data.get('이름')}")
         _write(path, {**data, "slug": slug})
         return slug
+
+    # --- 순위 원장 ---
+    #
+    # 스냅샷과 따로 두는 이유. 애드로그는 한 번에 석 달치 일자별 순위를
+    # 준다. 그걸 스냅샷 한 건에 접으면 날짜가 뭉개지고, 날짜마다 스냅샷을
+    # 쌓으면 같은 자료가 수십 건으로 불어난다. 원장은 날짜가 키라서
+    # 몇 번을 갱신해도 한 벌이다.
+    def _ranks_path(self, slug: str) -> Path:
+        return self._client_dir(slug) / "ranks.json"
+
+    def ranks_read(self, slug: str) -> dict:
+        path = self._ranks_path(slug)
+        return _read(path) if path.exists() else {}
+
+    def ranks_write(self, slug: str, data: dict) -> None:
+        _write(self._ranks_path(slug), data)
+
+    def ranks_archive(self, slug: str, 플레이스ID: str) -> None:
+        """원장을 `ranks-{플레이스ID}-{시각}.json` 으로 옮긴다. 원장 자리는 빈다.
+
+        매장을 다시 이을 때 부른다. 옛 매장 키워드가 원장에 남으면
+        다음 스냅샷에 섞여 한 제안서에 두 매장 순위가 들어간다.
+        지우지 않는 이유는 그게 이미 쌓인 증거이기 때문이다.
+
+        파일명에 시각을 붙인다. A→B→A 처럼 같은 플레이스ID 로 다시
+        이으면 `ranks-{id}.json` 하나로는 옛 보관을 또 덮어쓴다 — 그것도
+        쌓인 증거라 지우면 안 된다. 그래도 같은 순간에 두 번 불리면
+        시각까지 겹칠 수 있어, 그런 경우엔 번호를 붙여 비켜 간다.
+        """
+        path = self._ranks_path(slug)
+        if not path.exists():
+            return
+        플레이스ID = _validate_segment(플레이스ID, '플레이스ID')
+        바탕 = f"ranks-{플레이스ID}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        보관 = self._client_dir(slug) / f"{바탕}.json"
+        n = 1
+        while 보관.exists():
+            보관 = self._client_dir(slug) / f"{바탕}-{n}.json"
+            n += 1
+        path.rename(보관)
+
+    # --- 애드로그 등록 목록 캐시 ---
+    #
+    # 목록 한 번에 20 회를 부른다. 매장 정보를 열 때마다 부르면 그것만으로
+    # 하루 한도를 갉는다. 고객사 자료가 아니라 언제든 지워도 되는
+    # 물건이라 `clients/` 밖에 둔다. `.gitignore` 가 `data/_cache/` 를 뺀다.
+    def _adlog_cache_path(self) -> Path:
+        return self.data / "_cache" / "adlog_places.json"
+
+    def adlog_cache_read(self) -> dict:
+        path = self._adlog_cache_path()
+        return _read(path) if path.exists() else {}
+
+    def adlog_cache_write(self, data: dict) -> None:
+        _write(self._adlog_cache_path(), data)
 
     # --- 월 기획안 ---
     def _plan_path(self, slug: str, month: str) -> Path:

@@ -92,6 +92,17 @@
         <button id="save-client" type="submit">저장</button>
       </form>
 
+      <fieldset id="adlog" disabled>
+        <legend>애드로그 연결</legend>
+        <p id="adlog-linked">연결 안 됨</p>
+        <button id="adlog-find" type="button">애드로그에서 찾기</button>
+        <button id="adlog-refresh" type="button">목록 새로고침</button>
+        <select id="adlog-candidates" hidden size="8"></select>
+        <button id="adlog-link" type="button" hidden>이 매장으로 잇기</button>
+        <p id="adlog-msg"></p>
+        <button id="adlog-sync" type="button" disabled>순위 갱신</button>
+      </fieldset>
+
       <fieldset id="doc" disabled>
         <legend>자료 넣기</legend>
         <label>애드로그 화면 (여러 장)
@@ -120,7 +131,6 @@
           플레이스 직접 긁기 (15초쯤 걸립니다 — 애드로그가 안 될 때만)
         </label>
         <div id="rank-rows"></div>
-        <label>상권순위 <input id="f-market-rank" placeholder="상위 40%"></label>
         <label>월매출 <input id="f-revenue" type="number" class="manual-cost"></label>
         <p id="metrics-msg"></p>
         <button id="save-metrics" type="button">지표 저장</button>

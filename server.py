@@ -11,7 +11,9 @@ import json
 import os
 import re
 import sys
+import time
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -20,6 +22,8 @@ from cmo.lib.pricing import summarize
 from cmo.lib.storage import ClientExists, PlanExists, Store
 
 CMO = Path(__file__).resolve().parent
+# `run_cmo.bat` 이 `cd ..` 로 들어오므로 cwd 가 아니라 코드 옆이다.
+ENV_FILE = CMO / ".env"
 
 CLIENT_RE = re.compile(r"^/api/clients/([^/]+)$")
 PLANS_RE = re.compile(r"^/api/clients/([^/]+)/plans$")
@@ -44,6 +48,49 @@ ESCAPE_HATCH_FAILED = f"플레이스 수집에 실패했습니다. {_ESCAPE}"
 NO_READ_KEY = ("판독에 필요한 키가 없습니다. "
                "ANTHROPIC_API_KEY 를 환경변수에 넣으십시오.")
 
+NO_ADLOG_KEY = ("애드로그 조회에 필요한 값이 없습니다. "
+                "ADLOG_API_KEY 와 ADLOG_USER_ID 를 환경변수에 넣으십시오.")
+NOT_LINKED = ("이 매장은 애드로그에 연결돼 있지 않습니다. "
+              "「애드로그에서 찾기」로 먼저 이으십시오.")
+
+# 애드로그가 "과도한 트래픽 발생 시 사전 안내 없이 차단"을 경고한다.
+# 목록 조회도 같은 간격을 쓴다.
+SYNC_SLEEP = 0.3
+# 이 코드들은 다음 키워드를 불러도 같은 답이 온다. 바로 멈춘다.
+ACCOUNT_CODES = ("애드로그 계정 정보를 확인하십시오.",
+                 "이 PC 의 IP 를 애드로그에 등록해야 합니다.",
+                 "애드로그 서비스 기간이 만료됐습니다.")
+
+CACHE_HOURS = 24
+
+
+def _fresh(stamp: str | None) -> bool:
+    """캐시가 아직 쓸 만한가. 모양이 깨졌으면 낡은 것으로 본다."""
+    if not stamp:
+        return False
+    try:
+        age = datetime.now() - datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    return age.total_seconds() < CACHE_HOURS * 3600
+
+
+def _archive_if_relinked(store: Store, slug: str, new_client: dict) -> None:
+    """매장을 다시 이으면 옛 원장을 옆으로 치운다.
+
+    플레이스ID 가 바뀌는 유일한 자리는 `POST /api/clients/{slug}` 다 —
+    화면의 `linkAdlog` 가 새 애드로그 블록을 이 경로로 저장한다. 옛
+    원장을 그대로 두면 옛 매장 키워드가 다음 스냅샷에 섞인다.
+    """
+    try:
+        old = store.client_read(slug)
+    except FileNotFoundError:
+        return
+    옛플레이스ID = (old.get("애드로그") or {}).get("플레이스ID")
+    새플레이스ID = (new_client.get("애드로그") or {}).get("플레이스ID")
+    if 옛플레이스ID and 새플레이스ID and 옛플레이스ID != 새플레이스ID:
+        store.ranks_archive(slug, 옛플레이스ID)
+
 
 def _read_document(files, api_key, model=None):
     """판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다.
@@ -59,6 +106,18 @@ def _read_captures(files, api_key):
     """오픈업 판독 함수 한 겹. 테스트가 여기를 통째로 갈아 끼운다."""
     from cmo.lib.read_openub import read_captures
     return read_captures(files, api_key)
+
+
+def _adlog_keywords(key, uid):
+    """애드로그 등록 목록 한 겹. 테스트가 여기를 갈아 끼운다."""
+    from cmo.lib.adlog import keywords
+    return keywords(key, uid)
+
+
+def _adlog_ranks(key, uid, api_no):
+    """애드로그 순위 한 겹. 테스트가 여기를 갈아 끼운다."""
+    from cmo.lib.adlog import ranks
+    return ranks(key, uid, api_no)
 
 
 def make_handler(store: Store, app_dir: Path, password: str | None = None):
@@ -159,6 +218,120 @@ def make_handler(store: Store, app_dir: Path, password: str | None = None):
                                      body.get("예상매출"))
             store.client_write(slug, append_snapshot(client, snapshot))
             return self._json(snapshot)
+
+        # --- 애드로그 ---
+        def _adlog_places(self, store, refresh: bool):
+            """등록된 플레이스 키워드 목록. 하루는 캐시를 쓴다.
+
+            목록 한 번에 20 회를 부른다. 매장 정보를 열 때마다 부르면
+            그것만으로 하루 한도를 갉는다.
+            """
+            from cmo.lib.adlog import AdlogError, credentials
+
+            cached = store.adlog_cache_read()
+            if not refresh and _fresh(cached.get("갱신시각")):
+                return self._json(cached)
+
+            creds = credentials()
+            if not creds:
+                return self._json({"오류": NO_ADLOG_KEY}, 400)
+            try:
+                items = _adlog_keywords(*creds)
+            except AdlogError as exc:
+                return self._json({"오류": str(exc)}, 502)
+            except Exception as exc:
+                print(f"[애드로그] 목록 조회 실패: {exc!r}", file=sys.stderr)
+                return self._json({"오류": "애드로그 조회에 실패했습니다."}, 502)
+
+            data = {"갱신시각": datetime.now().isoformat(timespec="seconds"),
+                    "items": items}
+            store.adlog_cache_write(data)
+            return self._json(data)
+
+        def _adlog_sync(self, store, body: dict):
+            """연결된 키워드 순위를 받아 원장에 쌓고 스냅샷 한 건을 붙인다.
+
+            키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나
+            때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다. 다만
+            계정 단위 실패와 타임아웃은 다음 키워드를 불러도 나아지지
+            않으므로 그 자리에서 멈춘다(중단 조건은 아래 두 가지).
+
+            같은 날 두 번 누르면 스냅샷은 쌓지 않고 그 자리를 덮는다.
+            """
+            from cmo.lib.adlog import (AdlogError, credentials, metrics_by_date,
+                                       series)
+            from cmo.lib.collect import (append_or_replace_snapshot, merge_ranks,
+                                         snapshot_from_ranks)
+
+            slug = body["slug"]                 # 없으면 KeyError → 400
+            client = store.client_read(slug)    # 없으면 FileNotFoundError → 404
+
+            애드로그 = client.get("애드로그") or {}
+            키워드들 = 애드로그.get("키워드") or []
+            if not 애드로그.get("플레이스ID") or not 키워드들:
+                return self._json({"오류": NOT_LINKED}, 400)
+
+            creds = credentials()
+            if not creds:
+                return self._json({"오류": NO_ADLOG_KEY}, 400)
+
+            # `받은것` 은 이번에 답을 받은 키워드다. 스냅샷은 이 목록만
+            # 놓고 만든다 — 연결된 키워드 전부를 넘기면 못 물어본
+            # 키워드가 「순위권밖」으로 찍힌다. 순위가 안 잡힌 날은 애드로그가
+            # 그 날짜 줄을 아예 안 줘서 원장에 기록이 안 남으므로, 원장만
+            # 봐서는 실패와 「아직 안 잡혔다」가 구분되지 않는다.
+            # 2001 은 여기서 `rows` 에 줄이 쌓이므로 받은 것에 든다.
+            rows, 받은것, 실패 = [], [], None
+            for i, kw in enumerate(키워드들):
+                if i:
+                    time.sleep(SYNC_SLEEP)
+                try:
+                    items = _adlog_ranks(*creds, kw["api_no"])
+                except AdlogError as exc:
+                    실패 = str(exc)
+                    print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
+                          file=sys.stderr)
+                    # 계정 단위 실패는 나머지를 불러도 같다.
+                    if 실패 in ACCOUNT_CODES:
+                        break
+                    continue
+                except Exception as exc:
+                    실패 = "애드로그 조회에 실패했습니다."
+                    print(f"[애드로그] {kw.get('keyword')!r} 조회 실패: {exc!r}",
+                          file=sys.stderr)
+                    # 느린 날은 키워드마다 느리다. 이 서버는 요청을 하나씩
+                    # 처리해서, 57 개를 다 기다리면 한 시간을 멈춘다.
+                    break
+                지표 = metrics_by_date(items)
+                최신 = 지표[max(지표)] if 지표 else {}
+                rows.append({
+                    "키워드": kw["keyword"],
+                    "api_no": kw["api_no"],
+                    "월검색수": 최신.get("월검색수"),
+                    "경쟁업체수": 최신.get("경쟁업체수"),
+                    "순위": series(items),
+                    "매장지표": {d: {k: v for k, v in m.items()
+                                     if k in ("방문자리뷰", "블로그리뷰", "저장수")}
+                                 for d, m in 지표.items()},
+                })
+                받은것.append(kw)
+
+            if not rows and 실패:
+                return self._json({"오류": 실패}, 502)
+
+            원장 = merge_ranks(store.ranks_read(slug),
+                               애드로그["플레이스ID"], rows)
+            store.ranks_write(slug, 원장)
+
+            snapshot = snapshot_from_ranks(원장, 받은것)
+            if snapshot:
+                store.client_write(slug, append_or_replace_snapshot(client, snapshot))
+
+            # `요청` 이 있어야 화면이 「둘 중 하나만 받았다」를 말할 수
+            # 있다. 못 받은 키워드는 `받은것` 에서 빠져 이번 스냅샷에
+            # 줄이 안 서고, 그대로 이번 제안서에서 사라진다.
+            return self._json({"갱신": len(rows), "요청": len(키워드들),
+                               "스냅샷": snapshot, "경고": 실패})
 
         # --- 자료 판독 ---
         def _read_doc(self, store, body: dict):
@@ -313,6 +486,10 @@ def make_handler(store: Store, app_dir: Path, password: str | None = None):
                     from cmo.lib.read_doc import api_key_from_env
                     return self._json({"준비됨": bool(api_key_from_env())})
 
+                if path == "/api/adlog/places":
+                    refresh = "refresh=1" in (parsed.query or "")
+                    return self._adlog_places(store, refresh)
+
                 m = CLIENT_RE.match(path)
                 if m:
                     return self._json(store.client_read(m.group(1)))
@@ -384,6 +561,9 @@ def make_handler(store: Store, app_dir: Path, password: str | None = None):
                 if path == "/api/collect":
                     return self._collect(store, body)
 
+                if path == "/api/adlog/sync":
+                    return self._adlog_sync(store, body)
+
                 if path == "/api/read-doc":
                     return self._read_doc(store, body)
 
@@ -401,8 +581,10 @@ def make_handler(store: Store, app_dir: Path, password: str | None = None):
 
                 m = CLIENT_RE.match(path)
                 if m:
-                    store.client_write(m.group(1), body)
-                    return self._json({"저장": m.group(1)})
+                    slug = m.group(1)
+                    _archive_if_relinked(store, slug, body)
+                    store.client_write(slug, body)
+                    return self._json({"저장": slug})
 
                 m = COPY_RE.match(path)
                 if m:
@@ -442,7 +624,47 @@ def serve(port: int, store: Store, app_dir: Path,
     return httpd
 
 
+def load_env(path: Path) -> None:
+    """`.env` 를 환경에 싣는다. **`main()` 에서만 부른다.**
+
+    `.env.example` 이 "옆에 .env 를 만들어 넣으라" 고 시키는데 그걸 읽는
+    코드가 없었다. 여는 법은 `run_cmo.bat` 더블클릭 하나뿐이라 셸이
+    없고, 그래서 키를 넣었다고 믿는 사람에게 「환경변수에 넣으십시오」가
+    떴다.
+
+    import 시점에 부르면 시험이 개발자 PC 의 실제 키를 집는다.
+
+    이미 있는 환경변수는 덮지 않는다 — `setx`·CI·시험의 monkeypatch 가
+    계속 이겨야 한다. 파일이 없으면 조용히 넘어간다(셸이나 `setx` 로
+    넣은 PC 가 그렇다).
+
+    메모장으로 저장하면 파일 앞에 보이지 않는 글자(BOM)가 붙는다. 그게
+    남으면 첫 줄 이름이 `ADLOG_API_KEY` 가 아니게 돼서 "넣었는데 안
+    된다" 가 그대로 재발한다.
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    except UnicodeDecodeError:
+        print(f"{path.name} 을 UTF-8 로 읽지 못했습니다. 건너뜁니다.",
+              file=sys.stderr)
+        return
+
+    for 줄 in text.splitlines():
+        줄 = 줄.strip()
+        if not 줄 or 줄.startswith("#") or "=" not in 줄:
+            continue
+        이름, _, 값 = 줄.partition("=")
+        이름, 값 = 이름.strip(), 값.strip()
+        if len(값) >= 2 and 값[0] == 값[-1] and 값[0] in "\"'":
+            값 = 값[1:-1]
+        if 이름 and 이름 not in os.environ:
+            os.environ[이름] = 값
+
+
 def main() -> int:
+    load_env(ENV_FILE)
     store = Store(CMO / "data")
     password = os.environ.get("CMO_PASSWORD") or None
     httpd = serve(8765, store, CMO / "app", password)

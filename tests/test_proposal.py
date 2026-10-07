@@ -1,5 +1,6 @@
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,8 @@ from cmo.lib import proposal
 from cmo.lib.proposal import (
     FORBIDDEN_KEYS,
     INTERNAL_STEP_WORDS,
+    OUTSIDE_LABEL,
+    TOP_MOVES,
     ProposalBlocked,
     build_payload,
 )
@@ -656,8 +659,20 @@ def test_opportunity_table_is_sorted_by_search_volume():
     표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["기회표"]
     assert [r["키워드"] for r in 표][:2] == ["서초맛집", "방배동맛집"]
     assert 표[0]["조회수"] == 5740
-    assert 표[0]["순위표시"] == "30위 밖"
+    assert 표[0]["순위표시"] == "미노출"
     assert 표[1]["순위표시"] == "77위"
+
+
+def test_an_unfound_keyword_is_not_labelled_with_a_rank_it_never_had():
+    """「30위 밖」은 없는 숫자를 지어낸 말이었다.
+
+    애드로그는 30 에서 자르지 않는다 — 234 위도 234 로 온다(실측).
+    이 라벨이 서는 조건은 「순위 줄이 없다」, 곧 애드로그가 이 키워드에서
+    우리 매장을 못 찾았다는 뜻이다. 몇 위인지는 아무도 모른다.
+    """
+    표 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["검색"]["기회표"]
+    assert 표[0]["순위표시"] == "미노출"
+    assert "30" not in 표[0]["순위표시"]
 
 
 def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
@@ -671,12 +686,167 @@ def test_headline_pairs_the_biggest_miss_with_the_smallest_win():
 def test_rank_moves_are_split_into_up_and_down():
     변화 = build_payload(RICH_CLIENT, PLAN, PRODUCTS)["진단자료"]["처방"]
     assert 변화["기준일"] == "08-12" and 변화["비교일"] == "07-29"
-    # 서초맛집은 81위에서 순위권 밖으로 밀렸다 — 그것도 내림이다.
-    # 낙폭이 큰 순서로 선다.
+    # 서초맛집은 81위였는데 이제 안 잡힌다 — 그것도 내림이다.
     assert [r["키워드"] for r in 변화["내림"]] == ["서초맛집", "방배동맛집"]
     assert 변화["내림"][0]["전"] == "81위"
-    assert 변화["내림"][0]["후"] == "30위 밖"
+    assert 변화["내림"][0]["후"] == "미노출"
     assert [r["키워드"] for r in 변화["오름"]] == ["방배동 회식"]
+
+
+# ── 처방: 미노출 무리가 앞, 잃은 자리가 좋았던 것부터 ───────────
+#
+# 이 자리에서 세 번 돌았다. 순위 없는 줄을 999 위로 쳐서 낙폭을 쟀고,
+# 다음에는 하락에게 다섯 자리 중 둘을 떼어 줬고, 다음에는 두 무리를 한
+# 무게로 쟀다. 자리를 떼어 주면 1 칸 하락이 4 위를 잃은 줄을 밀어내고,
+# 한 무게로 재면 200 위를 잃은 게 1 위를 잃은 것보다 위에 선다. 지금은
+# 무리 우선 + 잃은 자리가 좋았던 것부터다. 그 맞바꿈은 `_moves` 에 적혀
+# 있다.
+#
+# **여기 잠그는 모양은 캡처 경로에서만 나온다.** `_moves` 에 줄이 들려면
+# `순위권밖` 이 서면서 `비교순위` 도 있어야 하는데, 애드로그 경로에는 그런
+# 줄이 없다 — 이력 있는 키워드는 234 처럼 값이 와서 `순위권밖` 이 안 서고,
+# 한 번도 안 잡힌 키워드는 `순위권밖` 이 서지만 비교할 옛 날짜가 없어
+# `비교순위` 가 `None` 이다. 그 짝은 캡처 판독(`read_doc`)이 만든다.
+#
+# 아래 값은 방이점 2026-08-18 캡처 실물에서 가져왔다(순위 46·50·60·62·98,
+# 비교순위 26·29·32·34·50). 999 는 자료에 있는 값이 아니라 옛 코드가 고른
+# 숫자다 — 캡처는 애드로그 PDF 에 찍힌 순위를 그대로 읽고, 그 값을 999 에서
+# 막는 것은 아무 데도 없다.
+
+def _처방(줄들):
+    snap = {**RICH_SNAP, "순위": 줄들}
+    return build_payload(dict(CLIENT, 스냅샷=[snap]),
+                         PLAN, PRODUCTS)["진단자료"]["처방"]
+
+
+def _잃음(키워드, 비교순위):
+    return {"키워드": 키워드, "순위": None, "순위권밖": True,
+            "조회수": None, "비교순위": 비교순위}
+
+
+def test_lost_keywords_lead_the_down_list_with_the_best_former_rank_first():
+    """순위를 잃은 게 순위가 내려간 것보다 무겁다. 잃은 것끼리는 좋았던 것부터.
+
+    「26위였는데 이제 안 보입니다」가 「50위였는데 안 보입니다」보다 센
+    말이고, 둘 다 「50위에서 98위로」보다 무겁다.
+
+    **두 무리를 한 무게로 재면 이 차례가 뒤집힌다** — 미노출 무게를
+    비교순위로 삼으면 50 이 26 을 이겨서 「50위 → 미노출」이 맨 위에
+    서고 낙폭 48 이 미노출 둘 사이에 낀다. 그 길로 가면 200 위를 잃은 게
+    1 위를 잃은 것보다 위에 선다(`_moves` 의 맞바꿈 문단).
+
+    ▲ 오름에는 순위가 있는 줄만 든다. 미노출은 오를 수 없다.
+    """
+    변화 = _처방([
+        _잃음("방이먹자골목맛집", 26),
+        _잃음("잠실역맛집", 50),
+        {"키워드": "잠실역근처맛집", "순위": 98, "순위권밖": False,
+         "조회수": 1200, "비교순위": 50},
+        {"키워드": "잠실무한리필", "순위": 8, "순위권밖": False,
+         "조회수": 1050, "비교순위": 9},
+    ])
+    assert [r["키워드"] for r in 변화["내림"]] == [
+        "방이먹자골목맛집", "잠실역맛집", "잠실역근처맛집"]
+    assert [r["키워드"] for r in 변화["오름"]] == ["잠실무한리필"]
+    assert 변화["내림"][0]["후"] == OUTSIDE_LABEL
+    assert 변화["내림"][-1]["후"] == "98위"
+
+
+def test_a_one_place_slip_never_outranks_a_lost_position():
+    """1 칸 내려간 줄이 자리를 잃은 줄을 밀어내면 안 된다.
+
+    리뷰가 종이로 잡은 자리다 — ▼ 다섯 줄 중 둘이 「10위→11위」·
+    「20위→21위」이고 「4위→미노출」·「5위→미노출」이 사라졌다. 1 칸
+    내려간 소식이 4 위를 잃은 소식을 밀어냈다. 사장님 앞에서 거꾸로다.
+    """
+    변화 = _처방([_잃음(f"잃은{n}위", n) for n in (1, 2, 4, 5, 9)] + [
+        {"키워드": "한칸내려감", "순위": 11, "순위권밖": False,
+         "조회수": 1000, "비교순위": 10},
+        {"키워드": "또한칸내려감", "순위": 21, "순위권밖": False,
+         "조회수": 900, "비교순위": 20},
+    ])
+    찍힌것 = [r["키워드"] for r in 변화["내림"]]
+    assert set(찍힌것) == {f"잃은{n}위" for n in (1, 2, 4, 5, 9)}
+    assert "한칸내려감" not in 찍힌것
+    assert "또한칸내려감" not in 찍힌것
+
+
+def test_the_down_block_never_loses_a_row_for_nothing():
+    """▼ 줄 수는 늘 `min(TOP_MOVES, 미노출 + 하락)` 이다.
+
+    자리를 나누는 셈을 넣었더니 여기가 깨졌다 — 미노출 다섯·하락 없는 달에
+    셋만 찍히고 두 줄이 아무 이득 없이 빠졌다. 무리 크기를 0..8 로 다 돌려
+    본다(81 가지).
+    """
+    for 잃은수 in range(9):
+        for 떨어진수 in range(9):
+            줄들 = [_잃음(f"잃은{i}", i + 1) for i in range(잃은수)]
+            줄들 += [{"키워드": f"떨어진{i}", "순위": 100 + i,
+                      "순위권밖": False, "조회수": None,
+                      "비교순위": 50 + i} for i in range(떨어진수)]
+            변화 = _처방(줄들)
+            실제 = len(변화["내림"]) if 변화 else 0
+            기대 = min(TOP_MOVES, 잃은수 + 떨어진수)
+            assert 실제 == 기대, (
+                f"미노출 {잃은수} · 하락 {떨어진수} → {실제} 줄 (기대 {기대})")
+
+
+def test_a_captured_row_with_both_a_rank_and_the_outside_mark_counts_as_lost():
+    """무리를 가르는 조건은 종이에 찍히는 조건과 같아야 한다.
+
+    저장소에 실재하는 순위권밖 줄은 딱 하나인데, 그게 이 모양이다 —
+    방이점 2026-08-18 캡처의 `{"키워드": "석촌호수 회식", "순위": 29,
+    "순위권밖": true, "조회수": 20}`. **순위와 순위권밖이 같이 차 있다.**
+    캡처 판독이 만드는 모양이고, 같은 키워드가 다음 캡처에서는
+    `"순위권밖": false` 로 온다.
+
+    `_rank_label` 은 이 줄을 미노출로 찍는다. 그러니 `순위 is None` 으로
+    무리를 가르면 29 위로 정렬되면서 종이에는 미노출로 찍히는 줄이 된다 —
+    50 위에서 29 위로 올랐다고 보고 「50위 → 미노출」을 ▲ 오름에 세운다.
+    """
+    변화 = _처방([
+        {"키워드": "석촌호수 회식", "순위": 29, "순위권밖": True,
+         "조회수": 20, "비교순위": 50},
+        {"키워드": "잠실역맛집", "순위": 98, "순위권밖": False,
+         "조회수": 29080, "비교순위": 50},
+    ])
+    assert 변화["오름"] == []
+    assert [r["키워드"] for r in 변화["내림"]] == ["석촌호수 회식", "잠실역맛집"]
+    assert 변화["내림"][0]["후"] == OUTSIDE_LABEL
+
+
+def test_a_lost_keyword_is_never_scored_as_the_999th_place():
+    """999 를 순위로 쓰면 실제 순위와 겹친다.
+
+    999 위였다가 안 잡힌 줄은 낙폭이 0 이라 오름에도 내림에도 안 들어
+    종이에서 통째로 사라졌고, 그보다 뒤였던 줄은 낙폭이 음수라
+    「1000위 → 미노출」이 ▲ 오름으로 찍혔다. 순위를 잃은 줄은 오를 수 없다.
+
+    낙폭이 실제로 큰 줄(50위 → 98위)도 그 사이에 끼어들었다 — 999 에서 뺀
+    낙폭과 실제 낙폭은 같은 자가 아니다.
+    """
+    변화 = _처방([
+        _잃음("딱999", 999),
+        _잃음("천위", 1000),
+        {"키워드": "잠실역근처맛집", "순위": 98, "순위권밖": False,
+         "조회수": 1200, "비교순위": 50},
+    ])
+    assert 변화["오름"] == []
+    assert [r["키워드"] for r in 변화["내림"]] == [
+        "딱999", "천위", "잠실역근처맛집"]
+
+
+def test_the_manual_never_names_a_rank_the_tool_does_not_measure():
+    """사용법이 라벨과 어긋나면 그 어긋남이 그대로 종이로 간다.
+
+    「30위 밖」은 코드 주석에서 시작해 라벨로, 라벨에서 문서로 번졌다.
+    애드로그가 30 에서 자른다는 말은 사실이 아니었고, 그 사이 사장님이
+    읽는 종이에 없는 숫자가 찍혔다. 문서와 라벨을 한 자리에 묶어 둔다.
+    """
+    사용법 = (Path(__file__).resolve().parent.parent / "사용법.md")
+    글 = 사용법.read_text(encoding="utf-8")
+    assert "30위 밖" not in 글
+    assert OUTSIDE_LABEL in 글
 
 
 def test_hidden_keywords_carry_a_count():
@@ -754,8 +924,10 @@ def test_empty_snapshot_does_not_bury_the_reading():
 def test_latest_of_several_real_snapshots_wins():
     """자료가 여럿이면 그중 가장 늦은 것을 쓴다."""
     from cmo.lib.proposal import _latest_snapshot
-    앞 = {"수집시각": "2026-08-01", "순위": [{"키워드": "가", "순위": 1}]}
-    뒤 = {"수집시각": "2026-08-10", "순위": [{"키워드": "나", "순위": 2}]}
+    앞 = {"수집시각": "2026-08-01",
+          "순위": [{"키워드": "가", "순위": 1, "조회수": 500}]}
+    뒤 = {"수집시각": "2026-08-10",
+          "순위": [{"키워드": "나", "순위": 2, "조회수": 800}]}
     assert _latest_snapshot({"스냅샷": [앞, 뒤]}) is 뒤
 
 
@@ -765,6 +937,88 @@ def test_all_empty_snapshots_give_nothing():
     껍데기 = {"수집시각": "2026-08-14", "플레이스": {"방문자리뷰": None}, "순위": []}
     assert _latest_snapshot({"스냅샷": [껍데기, 껍데기]}) == {}
     assert _latest_snapshot({"스냅샷": []}) == {}
+
+
+def test_an_empty_capture_is_not_counted_as_data():
+    """캡처가 아무것도 못 읽은 날 넣는 껍데기를 자료로 세면 안 된다.
+
+    판독기는 못 읽은 날에도 진단의 키를 다 채운다. 키가 있다고 자료로
+    세면 그 껍데기가 앞서 읽어 둔 스냅샷을 가린다.
+    """
+    from cmo.lib.proposal import _has_data, _latest_snapshot
+    좋은것 = {"수집시각": "2026-09-01",
+              "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170},
+              "순위": [{"키워드": "잠실맛집", "순위": 8}]}
+    빈캡처 = {"수집시각": "2026-09-15",
+              "플레이스": {"방문자리뷰": None, "블로그리뷰": None},
+              "순위": [],
+              "진단": {"기준일": None, "비교일": None, "대표키워드": [],
+                       "히든키워드": [], "리뷰": {"방문자": [], "블로그": []}}}
+    assert not _has_data(빈캡처)
+    assert _latest_snapshot({"스냅샷": [좋은것, 빈캡처]}) is 좋은것
+
+
+def test_a_capture_with_only_a_hidden_keyword_still_counts():
+    """히든키워드 하나만 읽어 온 캡처는 자료다 — 지나치게 엄해지면 안 된다."""
+    from cmo.lib.proposal import _has_data
+    assert _has_data({"진단": {"기준일": None, "히든키워드": ["숨은키워드"],
+                               "리뷰": {"방문자": [], "블로그": []}}})
+    assert _has_data({"진단": {"기준일": "2026-09-01", "히든키워드": []}})
+    # 리뷰 축은 「조회수 있는 방문자 줄」이 있어야 자료다. 제목만 남은
+    # 줄은 제안서가 한 글자도 안 찍으므로(`_reviews`) 자료로 안 센다.
+    assert _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요",
+                                                    "조회수": 500}],
+                                        "블로그": []}}})
+    assert not _has_data({"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}],
+                                            "블로그": []}}})
+
+
+def test_snapshot_with_picks_the_last_one_that_has_the_field():
+    """칸별로 고른다 — 그 값을 가진 마지막 스냅샷이다."""
+    from cmo.lib.proposal import _snapshot_with
+    앞 = {"수집시각": "2026-09-01", "순위": [{"키워드": "가", "순위": 1}]}
+    뒤 = {"수집시각": "2026-09-10", "순위": []}
+    client = {"스냅샷": [앞, 뒤]}
+    assert _snapshot_with(client, lambda s: s.get("순위")) is 앞
+    assert _snapshot_with(client, lambda s: s.get("없는칸")) == {}
+    assert _snapshot_with({"스냅샷": []}, lambda s: True) == {}
+
+
+def test_has_place_value_sees_values_not_the_dict():
+    """플레이스 dict 는 있는데 값이 전부 None 인 껍데기를 걸러낸다."""
+    from cmo.lib.proposal import _has_place_value
+    assert _has_place_value({"플레이스": {"방문자리뷰": 10, "블로그리뷰": None}})
+    assert not _has_place_value({"플레이스": {"방문자리뷰": None, "블로그리뷰": None}})
+    assert not _has_place_value({"플레이스": {}})
+    assert not _has_place_value({})
+
+
+def test_has_review_value_sees_the_rows_the_proposal_prints():
+    """리뷰에서 제안서가 종이에 찍는 것은 조회수 있는 방문자 줄뿐이다.
+
+    캡처가 리뷰를 못 찾은 날 채워 넣는 빈 껍데기(`read_doc.snapshot_from`
+    이 `{"방문자": [], "블로그": []}` 를 늘 채운다)도, 줄은 남았지만 찍을
+    값이 없는 줄도 걸러낸다. `_review_rows` 는 **제목만 있으면** 줄을
+    남기는데(`read_doc`), `_reviews` 는 **조회수 있는 방문자 줄만** 쓴다.
+    블로그 줄은 한 글자도 안 나간다.
+    """
+    from cmo.lib.proposal import _has_review_value
+    있음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요", "조회수": 500}],
+                              "블로그": []}}}
+    조회수없음 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요", "조회수": None}],
+                                    "블로그": []}}}
+    제목만 = {"진단": {"리뷰": {"방문자": [{"제목": "맛있어요"}], "블로그": []}}}
+    블로그만 = {"진단": {"리뷰": {"방문자": [],
+                                  "블로그": [{"제목": "방배동 소고기 맛집",
+                                              "작성일": "2026-05-26"}]}}}
+    빈것 = {"진단": {"리뷰": {"방문자": [], "블로그": []}}}
+    assert _has_review_value(있음)
+    assert not _has_review_value(조회수없음)
+    assert not _has_review_value(제목만)
+    assert not _has_review_value(블로그만)
+    assert not _has_review_value(빈것)
+    assert not _has_review_value({"진단": {}})
+    assert not _has_review_value({})
 
 
 # ── 상권 한 줄 ────────────────────────────────────────────
@@ -826,19 +1080,40 @@ def test_customer_page_carries_openub_and_trade_area():
 
 
 def test_search_page_carries_the_idle_numbers():
-    """총키워드·TOP3·TOP10·저장수는 읽어 놓고 안 쓰던 값이다."""
+    """총키워드·TOP3·TOP10·저장수는 읽어 놓고 안 쓰던 값이다.
+
+    스냅샷 모양은 `read_doc._snapshot()` 이 실제로 만드는 그대로다 —
+    여기서 `진단` 에 넣으면 생산 코드가 안 쓰는 자리를 검사하게 된다.
+    실제로 그래서 이 값들이 한 번도 종이에 안 찍혔다.
+    """
     client = {**CLIENT, "스냅샷": [{
         "수집시각": "2026-08-12T08:52:26",
         "플레이스": {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100},
         "순위": [{"키워드": "잠실맛집", "순위": 8}],
-        "진단": {"총키워드": 47, "TOP3": 3, "TOP10": 11},
+        "순위요약": {"총키워드": 47, "TOP3": 3, "TOP10": 11},
     }]}
     수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
-    이름들 = [c["이름"] for c in 수치]
-    assert "추적 키워드" in 이름들
-    assert "TOP 3" in 이름들
-    assert "TOP 10" in 이름들
-    assert "저장수" in 이름들
+    이름별 = {c["이름"]: c["값"] for c in 수치}
+    assert 이름별["추적 키워드"] == "47개"
+    assert 이름별["TOP 3"] == "3개"
+    assert 이름별["TOP 10"] == "11개"
+    assert 이름별["저장수"] == "100개"
+
+
+def test_search_page_reads_the_shape_read_doc_writes():
+    """판독기가 만드는 스냅샷을 그대로 먹여 본다.
+
+    두 모듈이 키 이름을 두 벌로 갖고 있으면 어느 날 조용히 어긋난다.
+    실제로 `순위요약`(쓰는 쪽)과 `진단`(읽는 쪽)이 어긋나 있었다.
+    """
+    from cmo.lib.read_doc import snapshot_from
+
+    reading = {"방문자리뷰": 1082, "블로그리뷰": 170, "저장수": 100,
+               "총키워드": 48, "TOP3": 1, "TOP10": 15,
+               "순위": [{"키워드": "잠실맛집", "순위": 8}]}
+    client = {**CLIENT, "스냅샷": [snapshot_from(reading)]}
+    수치 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["수치"]
+    assert {"추적 키워드", "TOP 3", "TOP 10"} <= {c["이름"] for c in 수치}
 
 
 # ── 빠진 진단 장 경고 ─────────────────────────────────────
@@ -930,15 +1205,6 @@ def test_a_half_filled_search_page_is_not_reported_missing():
     assert "검색에서의 자리" not in 경고
 
 
-def test_reviews_alone_keep_the_prescription_page_standing():
-    """처방이 없어도 리뷰 현황이 있으면 그 장은 선다(`proposal.html:227`)."""
-    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
-    for row in snap["순위"]:
-        row["비교순위"] = None            # 처방은 죽이고 리뷰는 살린다
-    경고 = " ".join(_warnings(dict(CLIENT, 스냅샷=[snap])))
-    assert "순위 변동과 이번 달 처방" not in 경고
-
-
 def test_warning_does_not_touch_the_payload():
     """경고는 읽기만 한다. 뽑는 값을 건드리면 안 된다."""
     from cmo.lib.proposal import missing_pages
@@ -946,3 +1212,494 @@ def test_warning_does_not_touch_the_payload():
     before = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     missing_pages(payload)
     assert json.dumps(payload, ensure_ascii=False, sort_keys=True) == before
+
+
+# ── 칸별로 최신 스냅샷을 읽는다 (두 출처) ─────────────────────
+#
+# 애드로그가 못 주는 칸이 둘 있다 — 히든키워드와 리뷰 목록. 캡처 판독에만
+# 있다. 마지막 한 건만 보면 애드로그로 갱신할 때마다 캡처가 넣어 둔 이
+# 둘이 가려진다. 칸마다 그 값을 가진 마지막 스냅샷에서 따로 읽는다.
+
+def test_proposal_keeps_capture_only_fields_after_an_adlog_sync():
+    """애드로그 갱신 한 번에 히든키워드·리뷰가 사라지면 안 된다.
+
+    API 에 이 둘이 없다. 캡처가 넣어 둔 것을 칸별로 살려 읽는다.
+    실데이터로 방이점 기회표가 8줄에서 0줄이 되는 걸 확인하고 고친 자리다.
+    """
+    캡처 = {
+        "수집시각": "2026-09-10T10:00:00",
+        "플레이스": {"방문자리뷰": 100, "블로그리뷰": 20, "저장수": 30},
+        "순위": [{"키워드": "캡처키워드", "순위": 5, "조회수": 1000}],
+        "순위요약": {"총키워드": 1, "TOP3": 0, "TOP10": 1},
+        "진단": {"기준일": "2026-09-10", "비교일": "2026-08-10",
+                 "히든키워드": ["숨은키워드"],
+                 "리뷰": {"방문자": [{"제목": "맛있어요", "조회수": 500}],
+                          "블로그": []}},
+    }
+    애드로그 = {
+        "수집시각": "2026-09-21T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25, "저장수": 40},
+        "순위": [{"키워드": "잠실새내 맛집", "순위": 26, "순위권밖": False,
+                  "조회수": 22160, "비교순위": 30}],
+        "순위요약": {"총키워드": 1, "TOP3": 0, "TOP10": 0},
+        "진단": {"기준일": "2026-09-21", "비교일": "2026-08-22"},
+    }
+    client = {**CLIENT, "스냅샷": [캡처, 애드로그]}
+    진단자료 = build_payload(client, PLAN, PRODUCTS)["진단자료"]
+
+    assert 진단자료["검색"]["히든키워드"], "히든키워드가 사라졌다"
+    assert 진단자료["리뷰"]["많이읽힌"], "리뷰 목록이 사라졌다"
+    assert 진단자료["검색"]["기회표"], "기회표가 사라졌다"
+    assert 진단자료["처방"], "처방이 사라졌다"
+
+
+def test_search_page_carries_the_rank_date():
+    """사장님이 「이 순위는 언제 것인가」를 종이에서 알아야 한다."""
+    client = {**CLIENT, "스냅샷": [{
+        "수집시각": "2026-09-21T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25, "저장수": 40},
+        "순위": [{"키워드": "가", "순위": 3, "순위권밖": False,
+                  "조회수": 100, "비교순위": None}],
+        "순위요약": {"총키워드": 1, "TOP3": 1, "TOP10": 1},
+        "진단": {"기준일": "2026-09-21", "비교일": None},
+    }]}
+    assert build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["기준일"] == "2026-09-21"
+
+
+def test_search_page_shows_the_span_but_the_prescription_shows_one_date():
+    """키워드마다 잰 날이 다르면 검색 장은 범위를, 처방 제목은 날짜 하나를 쓴다.
+
+    처방 제목이 `비교일 → 기준일` 이라, 그 자리에 범위가 들어가면
+    「8월 20일에서 9월 1일~9월 23일로」가 된다. 사장님이 읽는 종이다.
+    """
+    client = {**CLIENT, "스냅샷": [{
+        "수집시각": "2026-09-23T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25, "저장수": 40},
+        "순위": [{"키워드": "가", "순위": 3, "순위권밖": False,
+                  "조회수": 100, "비교순위": 9}],
+        "순위요약": {"총키워드": 1, "TOP3": 1, "TOP10": 1},
+        "진단": {"기준일": "2026-09-23",
+                 "기준일범위": "2026-09-01~2026-09-23",
+                 "비교일": "2026-08-20"},
+    }]}
+    진단자료 = build_payload(client, PLAN, PRODUCTS)["진단자료"]
+
+    assert 진단자료["검색"]["기준일"] == "2026-09-01~2026-09-23"
+    assert 진단자료["처방"]["기준일"] == "2026-09-23"
+    assert 진단자료["처방"]["비교일"] == "2026-08-20"
+
+
+def test_search_page_falls_back_to_the_single_date_without_a_span():
+    """날짜가 하나뿐인 날은 예전 그대로다. 옛 스냅샷에는 범위 칸이 아예 없다."""
+    client = {**CLIENT, "스냅샷": [{
+        "수집시각": "2026-09-21T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25, "저장수": 40},
+        "순위": [{"키워드": "가", "순위": 3, "순위권밖": False,
+                  "조회수": 100, "비교순위": None}],
+        "순위요약": {"총키워드": 1, "TOP3": 1, "TOP10": 1},
+        "진단": {"기준일": "2026-09-21", "비교일": None},
+    }]}
+    assert build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]["기준일"] \
+        == "2026-09-21"
+
+
+def test_an_empty_second_capture_does_not_erase_the_first_reviews():
+    """캡처가 그날 리뷰를 못 찾아도 앞서 읽어 둔 리뷰가 살아 있어야 한다.
+
+    판독기는 리뷰를 못 찾은 날에도 `{"방문자": [], "블로그": []}` 를
+    채워 넣는다. 그 껍데기를 「리뷰가 있는 스냅샷」으로 세면 사장님께
+    보여 줄 리뷰가 캡처 한 번에 사라진다.
+    """
+    캡처1 = {
+        "수집시각": "2026-09-01T10:00:00",
+        "플레이스": {"방문자리뷰": 100, "블로그리뷰": 20},
+        "순위": [{"키워드": "가", "순위": 5, "조회수": 1000}],
+        "진단": {"기준일": "2026-09-01", "비교일": "2026-08-01",
+                 "히든키워드": ["숨은"],
+                 "리뷰": {"방문자": [{"제목": "맛있어요", "조회수": 500}],
+                          "블로그": []}},
+    }
+    캡처2 = {**캡처1,
+             "수집시각": "2026-09-15T10:00:00",
+             "진단": {**캡처1["진단"], "기준일": "2026-09-15",
+                      "리뷰": {"방문자": [], "블로그": []}}}
+    client = {**CLIENT, "스냅샷": [캡처1, 캡처2]}
+
+    많이읽힌 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["리뷰"]["많이읽힌"]
+    assert [r["제목"] for r in 많이읽힌] == ["맛있어요"]
+
+
+def test_rank_date_follows_the_snapshot_that_gave_the_ranks():
+    """순위와 히든키워드가 다른 시점에서 와도 기준일은 순위 쪽이다.
+
+    애드로그에는 히든키워드가 없다. 캡처 쪽 기준일을 찍으면 사장님이
+    보는 날짜와 종이의 순위가 어긋난다.
+    """
+    캡처 = {
+        "수집시각": "2026-09-10T10:00:00",
+        "플레이스": {"방문자리뷰": 100, "블로그리뷰": 20},
+        "진단": {"기준일": "2026-09-10", "비교일": "2026-08-10",
+                 "히든키워드": ["숨은키워드"]},
+    }
+    애드로그 = {
+        "수집시각": "2026-09-21T14:00:00",
+        "출처": "애드로그",
+        "플레이스": {"방문자리뷰": 120, "블로그리뷰": 25},
+        "순위": [{"키워드": "가", "순위": 3, "순위권밖": False,
+                  "조회수": 100, "비교순위": None}],
+        "순위요약": {"총키워드": 1, "TOP3": 1, "TOP10": 1},
+        "진단": {"기준일": "2026-09-21", "비교일": "2026-08-22"},
+    }
+    검색 = build_payload({**CLIENT, "스냅샷": [캡처, 애드로그]},
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+
+    assert 검색["기준일"] == "2026-09-21"
+    assert 검색["히든키워드"], "히든키워드는 캡처에서 살아 있어야 한다"
+
+
+# ── 순위는 「줄이 있나」가 아니라 「값이 있나」로 센다 ──────────────
+#
+# 순위 줄은 칸 하나가 아니라 다섯 칸짜리 줄의 묶음이다. 줄이 몇 개
+# 있다는 사실과 그 줄에 찍을 값이 들었다는 사실은 다르다. 「지표 저장」
+# 은 손으로 친 순위를 `{키워드, 순위}` 두 칸으로만 담는데(`collect.
+# make_snapshot`), 줄이 있나만 보면 이 얇은 줄이 캡처·애드로그의 다섯
+# 칸짜리 줄을 이긴다. 오픈업 상권순위 하나 넣으려고 누른 저장 한 번에
+# 헤드라인·기회표·요약 카드·기준일·처방이 함께 사라졌다.
+
+HAND_TYPED_SNAP = {
+    "수집시각": "2026-08-20T11:00:00",
+    "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+    "순위": [{"키워드": "서초맛집", "순위": 2}],
+    "예상매출": {"상권순위": "상위 40%"},
+}
+
+
+def test_has_rank_value_sees_the_fields_the_proposal_prints():
+    """키워드가 종이에 닿는 문은 둘뿐이다 — 기회표(조회수)와 처방(비교순위)."""
+    from cmo.lib.proposal import _has_rank_value
+    assert _has_rank_value({"순위": [{"키워드": "가", "순위": 2, "조회수": 100}]})
+    assert _has_rank_value({"순위": [{"키워드": "가", "순위": 2, "비교순위": 9}]})
+    assert not _has_rank_value({"순위": [{"키워드": "가", "순위": 2}]})
+    assert not _has_rank_value({"순위": [{"키워드": "가", "순위": 2,
+                                          "순위권밖": False, "조회수": None,
+                                          "비교순위": None}]})
+    assert not _has_rank_value({"순위": []})
+    assert not _has_rank_value({})
+
+
+def test_hand_typed_ranks_are_not_counted_as_data():
+    """두 칸짜리 손입력 줄은 제안서가 읽을 칸이 없다 — 자료로 세면 안 된다."""
+    from cmo.lib.proposal import _has_data
+    assert not _has_data({"순위": [{"키워드": "서초맛집", "순위": 2}]})
+    assert _has_data({"순위": [{"키워드": "서초맛집", "순위": 2, "조회수": 5740}]})
+
+
+def test_a_hand_typed_rank_row_does_not_bury_the_capture():
+    """「지표 저장」 한 번에 검색 장이 비면 안 된다.
+
+    손입력 줄에는 조회수도 비교순위도 없다. 그 줄이 캡처를 이기면
+    사장님 앞에 놓을 근거가 통째로 사라진다.
+    """
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, HAND_TYPED_SNAP])
+    D = build_payload(client, PLAN, PRODUCTS)["진단자료"]
+    검색 = D["검색"]
+
+    assert 검색["헤드라인"] and "서초맛집" in 검색["헤드라인"]
+    assert [r["키워드"] for r in 검색["기회표"]][:2] == ["서초맛집", "방배동맛집"]
+    assert {c["이름"] for c in 검색["수치"]} >= {"추적 키워드", "TOP 3", "TOP 10"}
+    assert 검색["기준일"] == "08-12"
+    assert D["처방"], "처방이 사라졌다"
+
+
+def test_a_hand_typed_save_raises_no_missing_page_warning():
+    """장이 다 서 있으면 경고도 조용해야 한다 — 손님 장만 빈다."""
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, HAND_TYPED_SNAP])
+    붙인것 = " ".join(_warnings(client))
+    assert "검색에서의 자리" not in 붙인것
+    assert "순위 변동과 이번 달 처방" not in 붙인것
+
+
+# ── 요약 카드는 순위를 준 그 스냅샷에서 온다 ────────────────────
+#
+# 총키워드·TOP3·TOP10 은 기회표와 같은 판독에서 나온 숫자다. 따로 고르면
+# 「총 키워드 48개」라고 적힌 카드 밑에 기회표가 두어 줄만 있는 종이가
+# 나간다 — 숫자 둘이 서로 다른 시점을 말한다. 종이에 찍히는 날짜
+# (`기준일`)도 순위 쪽 것 하나뿐이라, 카드만 다른 날에서 오면 그 카드가
+# 남의 날짜를 달고 나간다.
+
+def test_rank_summary_comes_from_the_snapshot_that_gave_the_ranks():
+    """순위는 있는데 요약이 없는 스냅샷이 뽑히면 카드가 사라진다 — 그게 맞다.
+
+    그 시점에 요약이 없었다는 게 사실이다. 없는 걸 남의 시점에서
+    빌려 오지 않는다.
+    """
+    요약없는캡처 = {
+        "수집시각": "2026-08-20T10:00:00",
+        "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+        "순위": [{"키워드": "서초맛집", "순위": 4, "순위권밖": False,
+                  "조회수": 5740, "비교순위": None}],
+        "순위요약": {"총키워드": None, "TOP3": None, "TOP10": None},
+        "진단": {"기준일": "08-19", "비교일": None},
+    }
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, 요약없는캡처])
+    검색 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름들 = {c["이름"] for c in 검색["수치"]}
+
+    assert "추적 키워드" not in 이름들, "08-13 요약이 08-19 순위 위에 올라왔다"
+    assert 이름들.isdisjoint({"TOP 3", "TOP 10"})
+    assert [r["키워드"] for r in 검색["기회표"]] == ["서초맛집"]
+    assert 검색["기준일"] == "08-19"
+
+
+def test_a_summary_only_capture_does_not_outlive_the_ranks():
+    """순위를 한 줄도 못 읽고 요약만 읽힌 캡처가 카드를 갈아치우면 안 된다.
+
+    판독은 플레이스명이나 방문자리뷰만 읽혀도 통과하므로(`read_doc.
+    parse_reading`) 이런 캡처가 실제로 저장된다. 리더가 말한
+    「총 키워드 48개인데 기회표가 두어 줄인 종이」가 이 입력이다.
+    """
+    요약만읽힌캡처 = {
+        "수집시각": "2026-08-24T10:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": None, "저장수": None},
+        "순위": [],
+        "순위요약": {"총키워드": 48, "TOP3": 9, "TOP10": 20},
+        "진단": {"기준일": None, "비교일": None},
+    }
+    client = dict(CLIENT, 스냅샷=[RICH_SNAP, 요약만읽힌캡처])
+    검색 = build_payload(client, PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름별 = {c["이름"]: c["값"] for c in 검색["수치"]}
+
+    assert 이름별["추적 키워드"] == "51개", "기회표와 다른 날의 카드가 찍혔다"
+    assert 이름별["TOP 3"] == "6개"
+    assert 이름별["TOP 10"] == "11개"
+    assert len(검색["기회표"]) == 4
+    assert 검색["기준일"] == "08-12"
+
+
+def test_the_summary_stands_when_no_snapshot_has_usable_ranks():
+    """순위를 준 스냅샷이 아예 없으면 요약은 그걸 가진 스냅샷에서 읽는다.
+
+    기회표도 헤드라인도 안 서고 기준일도 안 찍히는 매장이다. 어긋날
+    상대가 없는데 카드까지 지우면 읽어 둔 값을 버리는 것이다.
+    """
+    요약과줄만 = {
+        "수집시각": "2026-08-24T10:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": None, "저장수": None},
+        "순위": [{"키워드": "서초맛집", "순위": 4, "순위권밖": False,
+                  "조회수": None, "비교순위": None}],
+        "순위요약": {"총키워드": 48, "TOP3": 9, "TOP10": 20},
+        "진단": {"기준일": "08-23", "비교일": None},
+    }
+    검색 = build_payload(dict(CLIENT, 스냅샷=[요약과줄만]),
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+    이름별 = {c["이름"]: c["값"] for c in 검색["수치"]}
+
+    assert 이름별["추적 키워드"] == "48개", "읽어 둔 요약 카드가 사라졌다"
+    assert 검색["기회표"] is None
+    assert 검색["기준일"] is None
+
+
+def test_a_missing_prescription_warns_even_when_reviews_survive():
+    """리뷰가 살아 있다고 처방이 빠진 걸 넘기면 안 된다.
+
+    서식은 처방이 없으면 장 제목(`d-moves-title`)을 감추고 리뷰 현황만
+    남긴다. 경고는 그 조건과 한 뜻이어야 한다.
+    """
+    from cmo.lib.proposal import missing_pages
+    snap = json.loads(json.dumps(RICH_SNAP, ensure_ascii=False))
+    for row in snap["순위"]:
+        row["비교순위"] = None            # 처방은 죽이고 리뷰는 살린다
+    payload = build_payload(dict(CLIENT, 스냅샷=[snap]), PLAN, PRODUCTS)
+
+    assert payload["진단자료"]["처방"] is None
+    assert payload["진단자료"]["리뷰"], "리뷰 현황은 그대로 서야 한다"
+    assert "순위 변동과 이번 달 처방" in " ".join(missing_pages(payload))
+
+
+# ── 플레이스 세 칸을 한 덩이로 고르지 않는다 ────────────────────
+#
+# 캡처 판독은 플레이스명만 읽히면 통과한다(`read_doc.parse_reading`).
+# 그래서 저장수 한 칸만 읽힌 판독이 실제로 만들어지는데, 세 칸을 한 덩이로
+# 고르면 그 판독이 앞선 판독의 방문자리뷰·블로그리뷰를 지운다. 서식은 그
+# 자리를 `0` 으로 찍는다 — 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고 말한다.
+
+두터운판독 = {"수집시각": "2026-09-20T09:00:00",
+              "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000}}
+
+
+def test_place_fields_are_read_one_box_at_a_time():
+    """저장수만 읽힌 판독이 앞선 판독의 리뷰수 둘을 가리면 안 된다."""
+    저장수만 = {"수집시각": "2026-09-22T09:00:00",
+                "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": 8100}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[두터운판독, 저장수만]),
+                            PLAN, PRODUCTS)
+
+    assert payload["지표"]["방문자리뷰"] == 895
+    assert payload["지표"]["블로그리뷰"] == 619
+    수치 = {c["이름"]: c["값"] for c in payload["진단자료"]["검색"]["수치"]}
+    assert 수치["방문자 리뷰"] == "895건"
+    assert 수치["저장수"] == "8,100개", "저장수는 새 판독 것이어야 한다"
+    assert payload["진단자료"]["리뷰"]["방문자수"] == 895
+    assert payload["진단자료"]["리뷰"]["블로그수"] == 619
+
+
+def test_a_reading_without_the_save_count_keeps_the_earlier_one():
+    """반대 방향도 같다 — 리뷰수만 읽힌 판독이 앞선 저장수를 지우면 안 된다."""
+    리뷰수만 = {"수집시각": "2026-09-22T09:00:00",
+                "플레이스": {"방문자리뷰": 910, "블로그리뷰": 630, "저장수": None}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[두터운판독, 리뷰수만]),
+                            PLAN, PRODUCTS)
+
+    수치 = {c["이름"]: c["값"] for c in payload["진단자료"]["검색"]["수치"]}
+    assert 수치["방문자 리뷰"] == "910건"
+    assert 수치["저장수"] == "8,000개", "저장수가 사라졌다"
+
+
+# ── 상권순위도 칸별로 읽는다 ────────────────────────────────────
+#
+# 상권순위만 든 스냅샷은 플레이스 세 칸이 전부 None 이라, 상권순위를
+# 플레이스 값으로 골라서 한 번도 안 뽑혔다 — 넣은 값이 제안서에 아예 안
+# 갔다. I-1 과 같은 뿌리다. 입력 칸은 2026-09-28 에 없앴고, 이 시험은
+# 옛 자료를 읽는 길을 지킨다.
+
+상권순위만 = {"수집시각": "2026-09-22T11:00:00",
+              "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+              "순위": [],
+              "예상매출": {"월매출": None, "상권순위": "상위 40%",
+                           "출처": "오픈업", "입력방식": "수동"}}
+
+
+def test_the_market_rank_is_read_from_the_snapshot_that_has_it():
+    """예상매출만 든 스냅샷에서도 상권순위가 제안서로 가야 한다."""
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만]), PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_a_later_capture_does_not_erase_the_market_rank():
+    """캡처가 뒤에 와도 앞서 넣은 상권순위는 살아 있어야 한다.
+
+    캡처 스냅샷에는 예상매출이 없다(`read_doc.snapshot_from`).
+    """
+    캡처 = {"수집시각": "2026-09-23T09:00:00",
+            "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+            "순위": [], "예상매출": None}
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만, 캡처]), PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_an_empty_market_rank_box_does_not_bury_the_earlier_one():
+    """옛 자료에 `{"상권순위": ""}` 모양이 있다 — 화면에 그 칸이 있던
+    동안 월매출만 넣은 저장이 남긴 것이다.
+
+    빈 글자를 값으로 세면 그 저장이 앞서 넣어 둔 상권순위를 가린다.
+    다섯 번 밟은 함정이 예상매출 쪽에서 되풀이되는 자리다.
+    """
+    월매출만 = {"수집시각": "2026-09-23T11:00:00",
+                "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+                "순위": [],
+                "예상매출": {"월매출": 42000000, "상권순위": "",
+                             "출처": "오픈업", "입력방식": "수동"}}
+    payload = build_payload(dict(CLIENT, 스냅샷=[상권순위만, 월매출만]),
+                            PLAN, PRODUCTS)
+    assert payload["지표"]["상권순위"] == "상위 40%"
+
+
+def test_has_revenue_value_sees_the_box_the_proposal_prints():
+    """제안서가 예상매출에서 읽는 칸은 상권순위 하나다 — 월매출은 안 나간다."""
+    from cmo.lib.proposal import _has_revenue_value
+    assert _has_revenue_value({"예상매출": {"상권순위": "상위 40%"}})
+    assert not _has_revenue_value({"예상매출": {"월매출": 42000000,
+                                                "상권순위": ""}})
+    assert not _has_revenue_value({"예상매출": {"상권순위": None}})
+    assert not _has_revenue_value({"예상매출": None})
+    assert not _has_revenue_value({})
+
+
+def test_a_snapshot_with_only_the_market_rank_counts_as_data():
+    """상권순위 한 칸만 든 스냅샷도 자료다 — 제안서가 읽는 칸이다."""
+    from cmo.lib.proposal import _has_data
+    assert _has_data({"예상매출": {"상권순위": "상위 40%"}})
+    assert not _has_data({"예상매출": {"월매출": 42000000, "상권순위": ""}})
+
+
+# ── 리뷰도 「줄이 있나」가 아니라 「값이 있나」로 센다 ──────────────
+#
+# 판정 함수 넷 중 이것만 리스트가 비었나만 봤다. `_review_rows` 는 제목만
+# 있으면 줄을 남기고(`read_doc`), `_reviews` 는 조회수 있는 방문자 줄만
+# 쓴다. 그래서 조회수를 못 읽은 한 줄짜리 캡처나 블로그만 읽힌 캡처가
+# 앞선 캡처의 「많이 읽힌 리뷰」를 지웠다. 이 저장소가 다섯 번 밟은 함정의
+# 마지막 자리다.
+
+리뷰있는캡처 = {
+    "수집시각": "2026-08-13T09:00:00",
+    "플레이스": {"방문자리뷰": 775, "블로그리뷰": 1415, "저장수": 100},
+    "순위": [], "예상매출": None,
+    "진단": {"기준일": "08-12", "비교일": None,
+             "리뷰": {"방문자": [{"제목": "아이들이 한우 먹고싶다고", "조회수": 1479,
+                                  "작성일": "2026-07-16"}],
+                      "블로그": []}},
+}
+
+
+def _많이읽힌(스냅샷들):
+    payload = build_payload(dict(CLIENT, 스냅샷=스냅샷들), PLAN, PRODUCTS)
+    return [r["제목"] for r in payload["진단자료"]["리뷰"]["많이읽힌"]]
+
+
+def test_a_capture_that_lost_the_view_counts_keeps_the_earlier_reviews():
+    """조회수를 못 읽은 리뷰 한 줄짜리 캡처가 앞선 리뷰를 지우면 안 된다."""
+    조회수없는캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": 1500, "저장수": 110},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [{"제목": "조회수를 못 읽은 리뷰",
+                                      "조회수": None, "작성일": "2026-08-20"}],
+                          "블로그": []}},
+    }
+    assert _많이읽힌([리뷰있는캡처, 조회수없는캡처]) == ["아이들이 한우 먹고싶다고"]
+
+
+def test_a_blog_only_capture_keeps_the_earlier_reviews():
+    """블로그 줄만 읽힌 캡처도 같다 — 블로그는 종이에 한 글자도 안 나간다."""
+    블로그만읽힌캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": 800, "블로그리뷰": 1500, "저장수": 110},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [],
+                          "블로그": [{"제목": "방배동 소고기 맛집 추천",
+                                      "작성일": "2026-05-26"}]}},
+    }
+    assert _많이읽힌([리뷰있는캡처, 블로그만읽힌캡처]) == ["아이들이 한우 먹고싶다고"]
+
+
+def test_a_thin_capture_does_not_silently_empty_the_review_page():
+    """얇은 캡처 한 번에 리뷰 장이 통째로 사라지면서 경고도 안 뜨는 일이 없어야 한다.
+
+    최종 리뷰 I-1(플레이스를 덩이로 고른다)과 겹쳤을 때의 모양이다.
+    저장수만 읽힌 캡처가 리뷰 건수를 지우고, 조회수 없는 리뷰 줄이 목록을
+    지우면 `_reviews` 가 `None` 을 낸다. 그런데 경고는 처방만 보므로
+    (`MISSING_MOVES`) 조용하다 — 빠진 줄 모르고 나가는 바로 그 모양이다.
+    """
+    from cmo.lib.proposal import missing_pages
+    얇은캡처 = {
+        "수집시각": "2026-08-26T09:00:00",
+        "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": 8100},
+        "순위": [], "예상매출": None,
+        "진단": {"기준일": "08-25", "비교일": None,
+                 "리뷰": {"방문자": [{"제목": "조회수를 못 읽은 리뷰",
+                                      "조회수": None}], "블로그": []}},
+    }
+    payload = build_payload(dict(CLIENT, 스냅샷=[리뷰있는캡처, 얇은캡처]),
+                            PLAN, PRODUCTS)
+    리뷰 = payload["진단자료"]["리뷰"]
+
+    assert 리뷰, "리뷰 장이 통째로 사라졌다 — 경고도 안 뜨는 자리다"
+    assert 리뷰["방문자수"] == 775
+    assert [r["제목"] for r in 리뷰["많이읽힌"]] == ["아이들이 한우 먹고싶다고"]
+    assert "리뷰" not in " ".join(missing_pages(payload))

@@ -12,12 +12,8 @@
 상대 서버 입장에서 그건 수집이 아니라 공격이고, 계정이 막히면 도구가 아니라
 거래가 끊긴다.
 
-┌─ 애드로그 엔드포인트·필드명은 아직 추정값이다 ────────────────────────┐
-│ ADLOG_ENDPOINT 와 응답 필드(`rank`·`score`·`date`)는 확인되지 않았다.  │
-│ **실제 API 문서로 교정하기 전까지 순위는 수동 입력으로 쓴다.**         │
-│ 추정 필드 위에 정교한 파싱을 쌓지 않는다 — 없으면 None 으로 둔다.      │
-│ 확인은 `-m network` 테스트 하나로만 한다.                              │
-└────────────────────────────────────────────────────────────────────────┘
+애드로그 순위는 `adlog.py` 가 API 로 받는다. 원장 병합과 스냅샷 파생만
+여기서 한다 — 고객사 모양을 아는 건 이 모듈이다.
 
 스냅샷에 들어가는 값은 그대로 클라이언트 JSON 이 되고 제안서까지 흘러간다.
 그래서 예외 원문을 스냅샷에 넣지 않는다. 짧은 사람 말로 바꾸고 원문은
@@ -25,22 +21,12 @@ stderr 로만 보낸다.
 """
 import json
 import re
-import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime
 
 VISITOR_RE = re.compile(r"방문자\s*리뷰\s*([\d,]+)")
 BLOG_RE = re.compile(r"블로그\s*리뷰\s*([\d,]+)")
 SAVE_RE = re.compile(r"저장\s*([\d,]+)")
-
-# 추정값 — 위 상자 참고. 반드시 https 여야 한다. Authorization 헤더에 키를
-# 평문으로 싣기 때문에 http 로 나가면 중간에서 키가 그대로 읽힌다.
-ADLOG_ENDPOINT = "https://adlog.ai.kr/api/place/rank"
-
-# 키는 환경변수에서만 읽는다. 파일에 적지 않는다.
-ADLOG_KEY_ENV = "ADLOG_API_KEY"
 
 FETCH_FAILED = "조회 실패"
 BAD_FORMAT = "응답 형식 오류"
@@ -84,22 +70,6 @@ def fetch_place(url: str, timeout_ms: int = 15000) -> dict:
     return {"매장명": name, "플레이스URL": url, **counts}
 
 
-def api_key_from_env() -> str | None:
-    """애드로그 키를 환경변수에서 읽는다. 없으면 None 을 돌려주고 알린다.
-
-    키가 없다고 수집 전체가 멈추면 안 된다 — 플레이스·매출은 그대로 모으고
-    순위만 건너뛴다.
-    """
-    import os
-
-    key = (os.environ.get(ADLOG_KEY_ENV) or "").strip()
-    if not key:
-        print(f"{ADLOG_KEY_ENV} 환경변수가 없습니다. 순위 조회는 건너뜁니다"
-              " (나머지 수집은 계속합니다).", file=sys.stderr)
-        return None
-    return key
-
-
 def require_https(endpoint: str) -> None:
     """평문 http 로는 요청을 만들지도 않는다.
 
@@ -130,36 +100,6 @@ def short_error(exc: Exception) -> str:
     return FETCH_FAILED
 
 
-def fetch_ranks(api_key: str, place_id: str, keywords: list[str]) -> list[dict]:
-    """애드로그 공식 API 로 키워드별 순위를 읽는다.
-
-    순위·지수는 10일 전 기준이다. 실시간처럼 쓰면 안 된다.
-    응답 필드명은 추정값이라 없으면 None 이다(모듈 상단 상자 참고).
-
-    키워드 하나가 실패해도 나머지는 계속 본다 — 열 개 중 하나 때문에
-    아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다.
-    """
-    require_https(ADLOG_ENDPOINT)
-
-    out = []
-    for kw in keywords:
-        req = urllib.request.Request(
-            f"{ADLOG_ENDPOINT}?place_id={urllib.parse.quote(str(place_id))}"
-            f"&keyword={urllib.parse.quote(kw)}",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as res:
-                data = json.loads(res.read().decode("utf-8"))
-            out.append({"키워드": kw, "순위": data.get("rank"),
-                        "지수": data.get("score"), "기준일": data.get("date")})
-        except Exception as exc:  # 실패해도 나머지 키워드는 계속 본다
-            print(f"[애드로그] {kw!r} 조회 실패: {exc!r}", file=sys.stderr)
-            out.append({"키워드": kw, "순위": None, "지수": None,
-                        "오류": short_error(exc)})
-    return out
-
-
 def make_snapshot(place: dict, ranks: list[dict], revenue: dict | None) -> dict:
     return {
         "수집시각": datetime.now().isoformat(timespec="seconds"),
@@ -174,3 +114,214 @@ def append_snapshot(client: dict, snapshot: dict) -> dict:
     updated = dict(client)
     updated["스냅샷"] = [*(updated.get("스냅샷") or []), snapshot]
     return updated
+
+
+def append_or_replace_snapshot(client: dict, snapshot: dict) -> dict:
+    """오늘 날짜의 애드로그 스냅샷을 전부 걸러내고 새 것을 끝에 붙인다.
+
+    같은 날 두 번 갱신하면 스냅샷이 늘어나던 자리다. **자리를 그대로
+    바꿔 끼우면 안 된다** — 그 사이 캡처가 끼면(오전 애드로그 → 낮
+    캡처 → 오후 갱신) 방금 받은 최신 순위가 캡처보다 앞자리로 밀려
+    `paintLastSnapshot`·`_latest_snapshot` 이 옛 캡처를 최신으로 읽는다.
+    걸러내고 끝에 붙이면 그럴 일이 없다. 캡처 스냅샷은 `출처` 가 없어
+    그대로 남는다.
+    """
+    오늘 = snapshot["수집시각"][:10]
+    남길것 = [s for s in (client.get("스냅샷") or [])
+              if not (s.get("출처") == "애드로그"
+                      and (s.get("수집시각") or "")[:10] == 오늘)]
+    return {**client, "스냅샷": [*남길것, snapshot]}
+
+
+def merge_ranks(ledger: dict, 플레이스ID: str, rows: list[dict]) -> dict:
+    """새로 받은 순위를 원장에 얹은 사본을 돌려준다. 원본은 안 건드린다.
+
+    날짜가 키라서 같은 날을 두 번 넣어도 한 벌이다. 이게 빈 스냅샷이
+    쌓이던 자리를 막는다 — 예전에는 누를 때마다 껍데기가 한 건씩
+    늘었고, 잠실점에만 그런 게 다섯 건이다.
+
+    지난 날짜는 지우지 않는다. 그게 다음 달 재계약 자리에서 내놓을
+    증거다.
+    """
+    out = {**ledger}
+    out["플레이스ID"] = 플레이스ID
+    out["갱신시각"] = datetime.now().isoformat(timespec="seconds")
+
+    키워드 = {k: {**v} for k, v in (ledger.get("키워드") or {}).items()}
+    for row in rows:
+        이름 = row["키워드"]
+        칸 = {**키워드.get(이름, {})}
+        칸["api_no"] = row.get("api_no")
+        # 아직 순위가 안 잡힌 키워드(2001)는 이 둘이 안 온다. None 으로
+        # 덮으면 기회표에서 그 키워드가 빠진다 — 옛 값을 지킨다.
+        if row.get("월검색수") is not None:
+            칸["월검색수"] = row["월검색수"]
+        if row.get("경쟁업체수") is not None:
+            칸["경쟁업체수"] = row["경쟁업체수"]
+        칸.setdefault("월검색수", None)
+        칸.setdefault("경쟁업체수", None)
+        칸["순위"] = {**(칸.get("순위") or {}), **(row.get("순위") or {})}
+        키워드[이름] = 칸
+    out["키워드"] = 키워드
+
+    # 날짜 단위로 통째 바꾸면 안 된다. 같은 날 뒤에 오는 키워드의 dict 가
+    # 앞의 것을 덮어서, 리뷰수가 빠진 응답이 하나 끼면 그날 매장지표
+    # 전체가 `None` 이 된다. 위 `월검색수`·`경쟁업체수` 와 같은 규칙으로
+    # 칸마다 병합한다 — `None` 으로는 안 덮는다.
+    지표 = {날짜: {**칸} for 날짜, 칸 in (ledger.get("매장지표") or {}).items()}
+    for row in rows:
+        for 날짜, 새칸 in (row.get("매장지표") or {}).items():
+            칸 = 지표.setdefault(날짜, {})
+            for 이름, 값 in (새칸 or {}).items():
+                if 값 is not None:
+                    칸[이름] = 값
+                칸.setdefault(이름, None)
+    out["매장지표"] = 지표
+
+    return out
+
+
+def _latest(by_date: dict):
+    """날짜 키 중 가장 늦은 것의 값. 비었으면 None."""
+    if not by_date:
+        return None
+    return by_date[max(by_date)]
+
+
+COMPARE_DAYS = 30
+
+
+def _comparison(순위: dict, 기준일: str) -> tuple:
+    """기준일에서 30 일 전에 가장 가까운 날짜와 그 순위.
+
+    API 가 석 달치를 준다. 처방 장은 비교순위가 있어야 서고, 없으면
+    통째로 빠진다. 30 일을 쓰는 이유는 이 도구가 월 단위로 돌기
+    때문이다 — 지난달 이맘때와 견준다.
+
+    30 일 이전 자료가 없으면 지어내지 않는다. 둘 다 None 이다.
+    """
+    from datetime import date
+
+    기준 = date.fromisoformat(기준일)
+    이전 = [d for d in 순위
+            if d < 기준일 and 순위[d] is not None
+            and (기준 - date.fromisoformat(d)).days >= COMPARE_DAYS]
+    if not 이전:
+        return None, None
+    고른날 = max(이전)
+    return 고른날, 순위[고른날]
+
+
+def _asof_span(날짜들: list[str]) -> str | None:
+    """측정일이 갈렸을 때만 `이른~늦은`. 하나로 모이면 None 이다.
+
+    가장 늦은 날 하나만 찍으면 키워드마다 마지막 측정일이 다를 때 3 주
+    묵은 순위가 오늘 잰 것으로 읽힌다 — 기준일을 찍기로 한 목적이 이
+    경우에만 거꾸로 돈다. `2026-09-01~2026-09-23` 이면 상무님이
+    「일부는 3 주 전 것」임을 알고 말할 수 있다.
+
+    **`기준일` 을 대신하지 않는다.** 처방 장 제목이 `비교일 → 기준일`
+    로 찍히는데 거기 범위가 들어가면 「8월 20일에서 9월 1일~9월 23일로」
+    가 되어 말이 안 된다. 검색 장(`proposal._search`)만 이걸 읽는다.
+
+    날짜가 하나로 모이면 비운다. 안 갈린 날에 `2026-09-23` 을 「범위」
+    라는 이름으로 실어 두면, 이 칸이 있다는 것만으로는 날짜가 갈렸는지
+    알 수 없다.
+    """
+    if not 날짜들:
+        return None
+    이른, 늦은 = min(날짜들), max(날짜들)
+    return None if 이른 == 늦은 else f"{이른}~{늦은}"
+
+
+def snapshot_from_ranks(ledger: dict, 볼키워드: list[dict] | None = None) -> dict | None:
+    """원장에서 스냅샷 한 건을 만든다. 값이 없으면 None 이다.
+
+    제안서가 읽는 모양 그대로 만든다. 순위 줄의 다섯 칸과 `진단` 의
+    기준일·비교일까지 채운다 — 처음에는 키워드·순위 둘만 실었는데,
+    그러면 기회표(`_opportunity`)와 처방(`_moves`)이 통째로 빠진다.
+    방이점 실데이터로 기회표 8 줄이 0 줄이 되는 걸 봤다.
+
+    `볼키워드` 는 **이번에 답을 받은** 키워드다(`client.json` 의 애드로그
+    키워드와 같은 모양 — `keyword`·`month_count`). 이걸 주면 그
+    키워드만 보고, 안 잡혀서 순위가 없는 키워드의 조회수를 여기서
+    가져온다. 안 주면 원장의 키워드를 전부 본다(옛 동작).
+
+    **「연결된 키워드 전부」를 주면 안 된다.** 아래에서 순위가 없는
+    키워드에 `순위권밖` 을 세우는데, 순위가 안 잡힌 날은 애드로그가 그
+    날짜 줄을 아예 안 줘서 원장에 기록이 안 남는다(한 번도 안 잡힌 키워드는
+    응답 자체가 2001 — `adlog._items` 가 그 읽기를 적어 뒀다). 그래서
+    원장만 봐서는 「조회 실패」와 「아직 안 잡혔다」가 구분되지 않고, 못
+    물어본 키워드까지 미노출로 찍힌다 —
+    사흘 전 2위였던 키워드를 두고 제안서가 「아직 안 보입니다」라고 말한
+    자리다. 거르는 것은 부르는 쪽 몫이다.
+    """
+    from .adlog import as_int
+
+    키워드 = ledger.get("키워드") or {}
+    if 볼키워드:
+        볼것 = [(kw["keyword"], 키워드.get(kw["keyword"], {}),
+                 kw.get("month_count")) for kw in 볼키워드]
+    else:
+        볼것 = [(이름, 칸, None) for 이름, 칸 in 키워드.items()]
+
+    순위, 기준일들, 비교일들 = [], [], []
+    for 이름, 칸, 목록조회수 in 볼것:
+        일자별 = 칸.get("순위") or {}
+        # **순위가 `None` 인 날을 걸러내고 고르면 안 된다.** 걸러내면 오늘
+        # 밀려난 키워드가 며칠 전 순위로 실린다 — 9/24 에 안 잡힌
+        # 키워드가 9/24 자 종이에 「3위」로 찍히고 TOP 3 에도 센다.
+        # `series()` 가 순위 `None` 인 날을 일부러 남겨 두는 이유가 이것이다.
+        최신 = max(일자별) if 일자별 else None
+        값 = 일자별[최신] if 최신 else None
+        비교일, 비교순위 = _comparison(일자별, 최신) if 최신 else (None, None)
+        조회수 = 칸.get("월검색수")
+        if 조회수 is None:
+            조회수 = 목록조회수
+        순위.append({
+            "키워드": 이름,
+            "순위": 값,
+            # 애드로그는 순위를 값으로 준다 — 234 위도 234 로 온다.
+            # 30 에서 자르지 않는다. 순위가 안 잡힌 날은 그 날짜 줄이 아예
+            # 없어서 `일자별` 에 안 남고, 한 번도 안 잡힌 키워드는 응답이
+            # 2001 이다. **답을 받았는데** 값이 없으면 그건 아직 순위가 안
+            # 잡혔다는 뜻이다(`adlog._items` 의 읽기와 같다). 못 물어본
+            # 키워드는 여기 오기 전에 걸러져 있어야 한다.
+            "순위권밖": 값 is None,
+            "조회수": 조회수,
+            "비교순위": 비교순위,
+        })
+        if 최신:
+            기준일들.append(최신)
+        if 비교일:
+            비교일들.append(비교일)
+
+    지표 = _latest(ledger.get("매장지표") or {}) or {}
+    place = {
+        "방문자리뷰": 지표.get("방문자리뷰"),
+        "블로그리뷰": 지표.get("블로그리뷰"),
+        "저장수": as_int(지표.get("저장수")),
+    }
+
+    # 신규 매장은 키워드가 대부분 안 잡혀서 순위만 보면 안 쌓인다.
+    # 조회수(월검색수)는 순위가 없어도 이미 받아온 값이라, 그거라도
+    # 있으면 쌓는다 — 신규 매장일수록 기능이 안 먹는 걸 막는다.
+    잡힌것 = [r["순위"] for r in 순위 if r["순위"] is not None]
+    조회수있음 = any(r["조회수"] is not None for r in 순위)
+    플레이스있음 = any(v is not None for v in place.values())
+    if not 잡힌것 and not 조회수있음 and not 플레이스있음:
+        return None
+
+    return {
+        "수집시각": datetime.now().isoformat(timespec="seconds"),
+        "출처": "애드로그",
+        "플레이스": place,
+        "순위": 순위,
+        "순위요약": {"총키워드": len(순위),
+                     "TOP3": sum(1 for v in 잡힌것 if v <= 3),
+                     "TOP10": sum(1 for v in 잡힌것 if v <= 10)},
+        "진단": {"기준일": max(기준일들) if 기준일들 else None,
+                 "기준일범위": _asof_span(기준일들),
+                 "비교일": max(비교일들) if 비교일들 else None},
+        "예상매출": None,
+    }

@@ -1,7 +1,10 @@
+import inspect
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -758,6 +761,765 @@ def test_proposal_response_is_quiet_when_nothing_is_missing(server,
     assert body["경고"] == []
 
 
+# --- 애드로그 ---------------------------------------------------------
+
+ADLOG_KEYWORDS = [
+    {"api_no": 1, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+     "keyword": "잠실새내 맛집", "month_count": 22160, "group_name": "기본"},
+    {"api_no": 2, "place_id": "9999", "place_name": "남의 가게",
+     "keyword": "남의 키워드", "month_count": 100, "group_name": "기본"},
+]
+ADLOG_DETAIL = [
+    {"api_no": 1, "rank_date": "2026-09-19", "rank_num": 26,
+     "visit_review_count": 895, "blog_review_count": 619,
+     "save_count": "8,000+", "place_count": 2520, "total_month_count": 22160},
+]
+LINKED = {"이름": "잠실점", "애드로그": {
+    "플레이스ID": "2069074461",
+    "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"}]}}
+
+
+def _adlog_env(monkeypatch):
+    monkeypatch.setenv("ADLOG_API_KEY", "키값")
+    monkeypatch.setenv("ADLOG_USER_ID", "테스트아이디")
+
+
+def test_adlog_places_lists_registered_keywords(server, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_keywords", lambda key, uid: ADLOG_KEYWORDS)
+
+    status, got = _get(server, "/api/adlog/places")
+
+    assert status == 200
+    assert len(got["items"]) == 2
+    assert got["갱신시각"]
+
+
+def test_adlog_places_uses_the_cache_on_the_second_call(server, monkeypatch):
+    """목록 한 번에 20 회를 부른다. 열 때마다 부르면 한도를 갉는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def counting(key, uid):
+        부른횟수.append(1)
+        return ADLOG_KEYWORDS
+
+    monkeypatch.setattr(srv, "_adlog_keywords", counting)
+
+    _get(server, "/api/adlog/places")
+    _get(server, "/api/adlog/places")
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_places_refresh_skips_the_cache(server, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def counting(key, uid):
+        부른횟수.append(1)
+        return ADLOG_KEYWORDS
+
+    monkeypatch.setattr(srv, "_adlog_keywords", counting)
+
+    _get(server, "/api/adlog/places")
+    _get(server, "/api/adlog/places?refresh=1")
+
+    assert len(부른횟수) == 2
+
+
+def test_adlog_places_without_key_says_what_to_do(server, monkeypatch):
+    monkeypatch.delenv("ADLOG_API_KEY", raising=False)
+    monkeypatch.delenv("ADLOG_USER_ID", raising=False)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _get(server, "/api/adlog/places")
+
+    assert exc.value.code == 400
+    assert "ADLOG_API_KEY" in json.loads(exc.value.read())["오류"]
+
+
+def test_adlog_sync_writes_the_ledger(server, tmp_data, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    원장 = store.ranks_read("잠실점")
+    assert 원장["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26}
+    assert 원장["플레이스ID"] == "2069074461"
+
+
+def test_adlog_sync_appends_one_snapshot(server, tmp_data, monkeypatch):
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 1
+    줄 = 스냅샷[0]["순위"][0]
+    assert 줄["키워드"] == "잠실새내 맛집"
+    assert 줄["순위"] == 26
+    assert 줄["순위권밖"] is False
+    assert 줄["조회수"] == 22160
+    assert 스냅샷[0]["플레이스"]["저장수"] == 8000
+
+
+def test_adlog_sync_twice_keeps_one_ledger_entry(server, tmp_data, monkeypatch):
+    """같은 날 두 번 눌러도 원장은 한 벌이다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    원장 = store.ranks_read("잠실점")
+    assert 원장["키워드"]["잠실새내 맛집"]["순위"] == {"2026-09-19": 26}
+
+
+def test_adlog_sync_of_an_unlinked_client_says_so(server, tmp_data, monkeypatch):
+    _adlog_env(monkeypatch)
+    Store(tmp_data).client_create({"이름": "농우본"})
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "농우본"})
+
+    assert exc.value.code == 400
+    assert "애드로그" in json.loads(exc.value.read())["오류"]
+
+
+def test_adlog_sync_without_values_adds_no_snapshot(server, tmp_data, monkeypatch):
+    """순위가 안 잡힌 새 키워드만 걸린 매장. 껍데기를 안 쌓는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: [])
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert got["스냅샷"] is None
+    assert store.client_read("잠실점").get("스냅샷") in (None, [])
+
+
+def test_adlog_sync_keeps_going_when_one_keyword_fails(server, tmp_data,
+                                                         monkeypatch):
+    """열 개 중 하나 때문에 아홉 개를 못 보면 그날 미팅 자료가 통째로 빈다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def 하나만_실패(key, uid, api_no):
+        if api_no == 2:
+            raise AdlogError("조회할 키워드 번호가 없습니다.")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 하나만_실패)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"},
+                   {"api_no": 2, "keyword": "안 잡히는 키워드"}]}})
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    assert got["경고"]
+    원장 = store.ranks_read("잠실점")
+    assert "잠실새내 맛집" in 원장["키워드"]
+    assert "안 잡히는 키워드" not in 원장["키워드"]
+
+
+def test_adlog_sync_says_how_many_it_was_asked_for(server, tmp_data,
+                                                    monkeypatch):
+    """절반 성공한 갱신은 못 받은 키워드가 이번 제안서에서 통째로 빠진다.
+
+    화면이 그 말을 하려면 몇 개 중 몇 개를 받았는지 서버가 알려줘야
+    한다. 지금은 받은 개수만 가서, 쉰 개 중 셋만 받은 것과 셋을 다
+    받은 것이 화면에서 같아 보인다.
+    """
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_실패(key, uid, api_no):
+        if api_no == 2:
+            raise AdlogError("조회할 키워드 번호가 없습니다.")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_실패)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["요청"] == 2
+    assert got["갱신"] == 1
+
+
+def test_adlog_sync_asked_matches_got_when_nothing_failed(server, tmp_data,
+                                                           monkeypatch):
+    """다 받은 날은 두 수가 같다 — 화면이 「몇 개 중」을 안 붙이는 근거다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["요청"] == got["갱신"] == 1
+
+
+def test_adlog_error_does_not_leak_the_original(server, tmp_data, monkeypatch):
+    """예외 원문에 URL·키가 섞인다. 화면에는 사람 말만 간다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+
+    def boom(key, uid, no):
+        raise AdlogError("이 PC 의 IP 를 애드로그에 등록해야 합니다.")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", boom)
+    Store(tmp_data).client_create(LINKED)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert exc.value.code == 502
+    본문 = exc.value.read().decode("utf-8")
+    assert "IP 를 애드로그에 등록" in json.loads(본문)["오류"]
+    assert "키값" not in 본문
+
+
+def test_adlog_sync_of_a_missing_client_returns_404(server, monkeypatch):
+    _adlog_env(monkeypatch)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(server, "/api/adlog/sync", {"slug": "없는가게"})
+
+    assert exc.value.code == 404
+
+
+def test_adlog_sync_twice_in_a_day_keeps_one_snapshot(server, tmp_data, monkeypatch):
+    """인수 기준 3. 원장만이 아니라 스냅샷도 한 건이어야 한다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(store.client_read("잠실점")["스냅샷"]) == 1
+
+
+def test_adlog_sync_does_not_replace_a_capture_snapshot(server, tmp_data, monkeypatch):
+    """캡처로 넣은 스냅샷은 애드로그가 덮지 않는다. 출처가 다르다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create({**LINKED, "스냅샷": [
+        {"수집시각": "2026-09-19T09:00:00",
+         "플레이스": {"방문자리뷰": 1, "블로그리뷰": 1, "저장수": 1},
+         "순위": [{"키워드": "캡처키워드", "순위": 3}]},
+    ]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 2
+    assert 스냅샷[0]["순위"][0]["키워드"] == "캡처키워드"
+
+
+def test_adlog_sync_counts_only_linked_keywords(server, tmp_data, monkeypatch):
+    """원장에 옛 매장 키워드가 남아 있어도 스냅샷에는 연결된 것만 든다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+    store.ranks_write("잠실점", {
+        "플레이스ID": "2069074461",
+        "키워드": {"남의 키워드": {"api_no": 999, "월검색수": 1,
+                                  "순위": {"2026-09-19": 1}}},
+        "매장지표": {}})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    assert [r["키워드"] for r in snap["순위"]] == ["잠실새내 맛집"]
+
+
+def test_adlog_sync_stops_on_an_account_level_error(server, tmp_data, monkeypatch):
+    """4004(IP 미등록)는 다음 키워드를 불러도 같은 답이다. 바로 멈춘다."""
+    from cmo import server as srv
+    from cmo.lib.adlog import AdlogError
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def ip_막힘(key, uid, api_no):
+        부른횟수.append(api_no)
+        raise AdlogError("이 PC 의 IP 를 애드로그에 등록해야 합니다.")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", ip_막힘)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"},
+                   {"api_no": 3, "keyword": "다"}]}})
+
+    with pytest.raises(urllib.error.HTTPError):
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_sync_stops_after_a_timeout(server, tmp_data, monkeypatch):
+    """애드로그가 느린 날은 키워드마다 느리다. 하나에 63초까지 가는데
+    이 서버는 요청을 하나씩 처리한다 — 57개면 한 시간을 멈춘다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def 느림(key, uid, api_no):
+        부른횟수.append(api_no)
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 느림)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"},
+                   {"api_no": 3, "keyword": "다"}]}})
+
+    with pytest.raises(urllib.error.HTTPError):
+        _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert len(부른횟수) == 1
+
+
+def test_adlog_sync_sleeps_between_keywords(server, tmp_data, monkeypatch):
+    """애드로그가 과도한 트래픽을 사전 안내 없이 차단한다고 경고한다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    잔횟수 = []
+    monkeypatch.setattr(srv.time, "sleep", lambda s: 잔횟수.append(s))
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "가"}, {"api_no": 2, "keyword": "나"}]}})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert 잔횟수, "키워드 사이에 쉬지 않았다"
+
+
+def test_relinking_a_client_archives_the_old_ledger(server, tmp_data):
+    """플레이스ID 가 바뀌면 옛 원장을 옆으로 치운다.
+
+    화면의 「다시 잇기」는 `linkAdlog` 가 `POST /api/clients/{slug}` 로
+    새 애드로그 블록을 보내는 경로를 쓴다 — 그 자리가 옛 원장을
+    보관하는 곳이다.
+    """
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "옛날", "키워드": [{"api_no": 1, "keyword": "가"}]}})
+    store.ranks_write("잠실점", {"플레이스ID": "옛날", "키워드": {"가": {}}})
+
+    _post(server, "/api/clients/잠실점", {"이름": "잠실점", "애드로그": {
+        "플레이스ID": "새것", "키워드": [{"api_no": 2, "keyword": "나"}]}})
+
+    assert store.ranks_read("잠실점") == {}
+    보관 = list((tmp_data / "clients" / "잠실점").glob("ranks-옛날-*.json"))
+    assert len(보관) == 1
+
+
+def test_adlog_sync_after_a_same_day_capture_keeps_order(server, tmp_data, monkeypatch):
+    """오전에 이미 애드로그로 갱신했고, 낮에 캡처를 넣은 뒤 오후에 다시
+    갱신해도 최신 갱신이 마지막에 와야 한다.
+
+    자리를 바꿔 끼우면(리스트를 거꾸로 훑어 첫 자리를 덮으면) 방금 받은
+    순위가 그사이에 낀 캡처보다 앞자리로 간다. `paintLastSnapshot`·
+    `_latest_snapshot` 은 마지막 스냅샷을 보므로 그러면 옛 캡처가
+    최신으로 읽힌다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: ADLOG_DETAIL)
+
+    오늘 = datetime.now().strftime("%Y-%m-%d")
+    store = Store(tmp_data)
+    store.client_create({**LINKED, "스냅샷": [
+        {"수집시각": f"{오늘}T09:00:00", "출처": "애드로그",
+         "플레이스": {"방문자리뷰": 1, "블로그리뷰": 1, "저장수": 1},
+         "순위": [{"키워드": "잠실새내 맛집", "순위": 30}]},
+        {"수집시각": f"{오늘}T11:00:00",
+         "플레이스": {"방문자리뷰": 2, "블로그리뷰": 2, "저장수": 2},
+         "순위": [{"키워드": "캡처키워드", "순위": 3}]},
+    ]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    스냅샷 = store.client_read("잠실점")["스냅샷"]
+    assert len(스냅샷) == 2
+    assert 스냅샷[-1].get("출처") == "애드로그"
+    assert 스냅샷[-1]["순위"][0]["순위"] == 26  # 방금 갱신한 값(ADLOG_DETAIL)
+    assert 스냅샷[0]["순위"][0]["키워드"] == "캡처키워드"
+
+
+def test_adlog_sync_stops_after_a_timeout_but_keeps_what_it_got(server, tmp_data,
+                                                                  monkeypatch):
+    """하나는 성공하고 둘째에서 타임아웃이 나면, 받은 것까지는 저장하고
+    경고를 함께 돌려준다. 세 번째는 부르지 않는다."""
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    부른횟수 = []
+
+    def 하나는_성공_둘째는_타임아웃(key, uid, api_no):
+        부른횟수.append(api_no)
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 하나는_성공_둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점", "애드로그": {
+        "플레이스ID": "2069074461",
+        "키워드": [{"api_no": 1, "keyword": "잠실새내 맛집"},
+                   {"api_no": 2, "keyword": "나"}, {"api_no": 3, "keyword": "다"}]}})
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200
+    assert got["갱신"] == 1
+    assert got["경고"]
+    assert len(부른횟수) == 2
+    원장 = store.ranks_read("잠실점")
+    assert "잠실새내 맛집" in 원장["키워드"]
+
+
+# ── 조회 실패와 안 잡힘을 가른다 ───────────────────────────────
+#
+# 애드로그는 안 잡힌 날을 `rank_num: 0` 이나 `null` 로 주지 않는다. 그
+# 날짜 줄을 아예 안 준다(한 번도 잡힌 적 없는 키워드는 응답 자체가
+# `code: 2001`). `_items()` 가 그걸 빈 목록으로 돌려주고 `merge_ranks` 는
+# 거기서 아무것도 안 쌓으므로, **원장만 봐서는 「조회 실패」와 「안
+# 잡혔다」가 구분되지 않는다.** 그래서 서버가 이번에 답을 받은 키워드
+# 목록을 따로 들고 스냅샷에 넘긴다.
+
+_HALF_LINKED = {"이름": "잠실점", "애드로그": {
+    "플레이스ID": "2069074461",
+    "키워드": [{"api_no": 1, "keyword": "잠실양꼬치", "month_count": 3000},
+               {"api_no": 2, "keyword": "잠실새내맛집", "month_count": 22160}]}}
+
+
+def test_a_keyword_that_never_answered_gets_no_row(server, tmp_data, monkeypatch):
+    """못 물어본 키워드를 「순위권밖」으로 세우면 안 된다.
+
+    타임아웃 한 번에 사흘 전 2위였던 키워드가 미노출로 찍힌다.
+    이번 스냅샷에는 그 키워드가 아예 없는 것이 맞다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_타임아웃(key, uid, api_no):
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"]
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    assert [r["키워드"] for r in snap["순위"]] == ["잠실양꼬치"]
+    assert snap["순위요약"]["총키워드"] == 1
+
+
+def test_a_keyword_with_no_data_still_gets_an_outside_row(server, tmp_data,
+                                                          monkeypatch):
+    """이력 없음(2001)도 조회 성공이다. 줄을 만들고 조회수를 함께 싣는다.
+
+    이 줄이 빠지면 「월 22,160번 검색되는 곳에서 아직 안 보입니다」라는
+    가장 센 근거가 사라진다. 실패와 달리 여기서는 답을 받았다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(
+        srv, "_adlog_ranks",
+        lambda key, uid, api_no: [] if api_no == 2 else ADLOG_DETAIL)
+
+    store = Store(tmp_data)
+    store.client_create(_HALF_LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"] is None
+    줄별 = {r["키워드"]: r
+            for r in store.client_read("잠실점")["스냅샷"][-1]["순위"]}
+    밖 = 줄별["잠실새내맛집"]
+    assert 밖["순위권밖"] is True
+    assert 밖["순위"] is None
+    assert 밖["조회수"] == 22160
+
+
+def test_a_keyword_that_answered_with_no_rank_today_is_outside(
+        server, tmp_data, monkeypatch):
+    """애드로그가 오늘 `rank_num: null` 로 답하면 안 잡힌 것이다.
+
+    이건 조회 실패가 아니다 — 물어봤고 답도 받았다. 며칠 전 순위를 오늘
+    것으로 실으면 9/24 자 종이에 「3위」가 찍히고 TOP 3 에도 센다.
+    """
+    from cmo import server as srv
+
+    _adlog_env(monkeypatch)
+    monkeypatch.setattr(srv, "_adlog_ranks", lambda key, uid, no: [
+        {"api_no": 1, "rank_date": "2026-09-20", "rank_num": 3,
+         "visit_review_count": 895, "blog_review_count": 619,
+         "save_count": "8,000+", "place_count": 2520,
+         "total_month_count": 22160},
+        {"api_no": 1, "rank_date": "2026-09-24", "rank_num": None,
+         "visit_review_count": 900, "blog_review_count": 620,
+         "save_count": "8,100+", "place_count": 2520,
+         "total_month_count": 22160},
+    ])
+
+    store = Store(tmp_data)
+    store.client_create(LINKED)
+
+    status, got = _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    assert status == 200 and got["경고"] is None
+    snap = store.client_read("잠실점")["스냅샷"][-1]
+    줄 = snap["순위"][0]
+    assert 줄["순위"] is None
+    assert 줄["순위권밖"] is True
+    assert snap["순위요약"]["TOP3"] == 0
+    assert snap["진단"]["기준일"] == "2026-09-24"
+
+
+def test_a_half_failed_sync_never_calls_a_ranked_keyword_invisible(
+        server, tmp_data, monkeypatch):
+    """사장님이 가장 먼저 읽는 문장이 타임아웃 한 번에 거짓말하면 안 된다."""
+    from cmo import server as srv
+    from cmo.lib.proposal import build_payload
+
+    _adlog_env(monkeypatch)
+
+    def 둘째는_타임아웃(key, uid, api_no):
+        if api_no == 2:
+            raise TimeoutError("The read operation timed out")
+        return ADLOG_DETAIL
+
+    monkeypatch.setattr(srv, "_adlog_ranks", 둘째는_타임아웃)
+
+    store = Store(tmp_data)
+    store.client_create({**_HALF_LINKED, "스냅샷": [{
+        "수집시각": "2026-09-19T10:00:00",
+        "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+        "순위": [{"키워드": "잠실새내맛집", "순위": 2, "순위권밖": False,
+                  "조회수": 22160, "비교순위": 5},
+                 {"키워드": "잠실양꼬치", "순위": 1, "순위권밖": False,
+                  "조회수": 3000, "비교순위": 1}],
+        "순위요약": {"총키워드": 2, "TOP3": 2, "TOP10": 2},
+        "진단": {"기준일": "2026-09-19", "비교일": "2026-08-19"},
+    }]})
+
+    _post(server, "/api/adlog/sync", {"slug": "잠실점"})
+
+    검색 = build_payload(store.client_read("잠실점"),
+                         PLAN, PRODUCTS)["진단자료"]["검색"]
+    assert "잠실새내맛집" not in (검색["헤드라인"] or "")
+    # 라벨 글자를 여기 박으면 안 된다. `OUTSIDE_LABEL` 이 바뀐 날 이
+    # 단언은 아무것도 안 막으면서 조용히 통과한다.
+    from cmo.lib.proposal import OUTSIDE_LABEL
+
+    표 = {r["키워드"]: r["순위표시"] for r in (검색["기회표"] or [])}
+    assert 표.get("잠실새내맛집") != OUTSIDE_LABEL
+
+
+# ── .env 로더 ─────────────────────────────────────────────────
+#
+# `.env.example` 이 "옆에 .env 를 만들어 넣으라" 고 시키는데 그 파일을
+# 읽는 코드가 없었다. 여는 법은 `run_cmo.bat` 더블클릭 하나뿐이라 셸이
+# 없고, 그래서 넣었다고 믿는 사람에게 「환경변수에 넣으십시오」가 떴다.
+
+
+@pytest.fixture
+def 빈환경(monkeypatch):
+    """`os.environ` 을 사본으로 갈아 끼우고 애드로그 키를 비운다.
+
+    로더가 넣은 값이 다른 시험으로 새지 않고, 개발자 PC 의 실제
+    환경변수가 결과를 가리지도 않는다.
+    """
+    사본 = {k: v for k, v in os.environ.items()
+            if k not in ("ADLOG_API_KEY", "ADLOG_USER_ID")}
+    monkeypatch.setattr(os, "environ", 사본)
+    return 사본
+
+
+def _env_file(tmp_path, 내용: str) -> Path:
+    path = tmp_path / ".env"
+    path.write_text(내용, encoding="utf-8")
+    return path
+
+
+def test_load_env_fills_a_missing_value(tmp_path, 빈환경):
+    from cmo import server as srv
+
+    srv.load_env(_env_file(tmp_path, "ADLOG_API_KEY=키값\nADLOG_USER_ID=아이디\n"))
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def test_load_env_does_not_overwrite_what_is_already_set(tmp_path, 빈환경):
+    """`setx`·CI·`monkeypatch` 가 계속 이겨야 한다.
+
+    이걸 어기면 스위트가 여럿 깨진다 — 키를 지우고 400 을 보는 시험들이
+    파일에서 되살아난 값을 집는다.
+    """
+    빈환경["ADLOG_API_KEY"] = "이미있는값"
+
+    srv_load(tmp_path, "ADLOG_API_KEY=파일값\nADLOG_USER_ID=아이디\n")
+
+    assert os.environ["ADLOG_API_KEY"] == "이미있는값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def srv_load(tmp_path, 내용: str) -> None:
+    from cmo import server as srv
+
+    srv.load_env(_env_file(tmp_path, 내용))
+
+
+def test_load_env_strips_a_bom_and_crlf_and_quotes(tmp_path, 빈환경):
+    """메모장으로 저장하면 BOM 이 붙어 이름이 `\ufeffADLOG_API_KEY` 가 된다.
+
+    그러면 "넣었는데 안 된다" 가 그대로 재발한다. 줄 끝 `\r` 과 값을
+    감싼 따옴표도 같이 벗긴다.
+    """
+    from cmo import server as srv
+
+    path = tmp_path / ".env"
+    path.write_bytes('\ufeffADLOG_API_KEY="키값"\r\nADLOG_USER_ID=\'아이디\'\r\n'
+                     .encode("utf-8"))
+
+    srv.load_env(path)
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert os.environ["ADLOG_USER_ID"] == "아이디"
+
+
+def test_load_env_skips_comments_and_lines_without_an_equals(tmp_path, 빈환경):
+    srv_load(tmp_path, "\n# 애드로그 OpenAPI 키\n이건줄만있다\nADLOG_API_KEY=키값\n")
+
+    assert os.environ["ADLOG_API_KEY"] == "키값"
+    assert "이건줄만있다" not in os.environ
+
+
+def test_load_env_without_a_file_is_quiet(tmp_path, 빈환경):
+    """없는 게 정상인 설치도 있다. 셸이나 `setx` 로 넣은 PC 가 그렇다."""
+    from cmo import server as srv
+
+    srv.load_env(tmp_path / ".env")          # 만들지 않는다
+
+    assert "ADLOG_API_KEY" not in os.environ
+
+
+def test_the_env_file_sits_next_to_the_code_not_the_cwd():
+    """`run_cmo.bat` 이 `cd ..` 로 들어온다. cwd 를 보면 못 찾는다."""
+    from cmo import server as srv
+
+    assert srv.ENV_FILE == srv.CMO / ".env"
+
+
+def test_env_is_read_only_when_the_server_starts():
+    """import 시점에 읽으면 시험이 개발자 PC 의 실제 키를 집는다."""
+    from cmo import server as srv
+
+    줄들 = inspect.getsource(srv).splitlines()
+    assert not [줄 for 줄 in 줄들 if 줄.startswith("load_env(")]
+    assert "load_env(" in inspect.getsource(srv.main)
+
+
+def test_main_reads_the_env_file_before_serving(tmp_path, monkeypatch, 빈환경):
+    """`.bat` 더블클릭이 유일한 여는 법이라 여기서 읽지 않으면 아무도 안 읽는다."""
+    from cmo import server as srv
+
+    monkeypatch.setattr(
+        srv, "ENV_FILE", _env_file(tmp_path, "ADLOG_API_KEY=파일값\n"))
+
+    class 바로멈추는서버:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(srv, "serve", lambda *a, **k: 바로멈추는서버())
+    monkeypatch.setattr(srv.webbrowser, "open", lambda url: None)
+
+    assert srv.main() == 0
+    assert os.environ["ADLOG_API_KEY"] == "파일값"
 # --- 공유용 비밀번호 ---
 # 터널로 밖에 열 때만 건다. 비밀번호가 없으면 고객사 데이터와 내부전용
 # 마진이 링크 가진 누구에게나 보인다.

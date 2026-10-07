@@ -78,12 +78,12 @@
     clearDoc();               // 앞 매장 판독이 남으면 안 된다
     clearOpenub();            // 오픈업도 같은 이유로 비운다
     paintLastSnapshot(client);
+    paintAdlogLink(client);
 
     // 지표 칸은 매장마다 새로 입력한다. 앞 매장 값이 남아 있으면
     // saveMetrics() 가 그걸 다음 매장에 그대로 얹는다 — #f-revenue 는
     // .manual-cost 라 가리기가 켜져 있으면 안 보이는 채로 남의 매장에
     // 저장된다.
-    el("f-market-rank").value = "";
     el("f-revenue").value = "";
     el("f-keyword").value = "";
     // 평소엔 애드로그 PDF 로 받는다. 플레이스 직접 긁기는 그게 안 될 때만
@@ -122,7 +122,7 @@
   // 나뉘면(open()·saveClient() 에 흩어지면) 한쪽만 고치고 잊는 사고가
   // 난다(I-5).
   function lock(disabled) {
-    for (const id of ["metrics", "doc", "openub"]) {
+    for (const id of ["metrics", "doc", "openub", "adlog"]) {
       if (disabled) el(id).setAttribute("disabled", "");
       else el(id).removeAttribute("disabled");
     }
@@ -133,6 +133,12 @@
     el("panel-title").textContent = slug ? "매장 정보" : "새 매장";
     say("client-msg", "");
     say("metrics-msg", "");
+    // 앞 매장에서 띄운 후보가 남은 채 다음 매장이 열리면 남의 플레이스를
+    // 잇게 된다 — 매장을 열 때마다 반드시 다시 감춘다.
+    adlogItems = [];
+    el("adlog-candidates").setAttribute("hidden", "");
+    el("adlog-link").setAttribute("hidden", "");
+    say("adlog-msg", "");
     // 수집은 서버가 저장된 매장을 읽어야 돈다. 신규는 저장 전까지 잠근다.
     lock(!slug);
 
@@ -203,13 +209,19 @@
 
     try {
       if (editingSlug) {
-        // 스냅샷은 폼에 없다. 읽어서 그대로 얹지 않으면 수집 이력이 날아간다.
-        // 메모는 이제 폼(#f-memo)의 몫이다 — data.메모 를 그대로 쓴다.
-        // before.메모 로 덮으면 방금 고친 메모가 저장 직후 원래대로
-        // 되돌아간다.
+        // 폼에 없는 칸은 다른 경로가 쓴 자료다 — 스냅샷(수집)·오픈업(판독)·
+        // 애드로그(연결). 폼 값만 보내면 서버가 client.json 을 통째로
+        // 덮어써서 그게 조용히 날아간다. 한때 스냅샷만 골라 살렸는데,
+        // 칸이 하나 늘 때마다 여기를 고쳐야 했고 오픈업은 그 사이에
+        // 빠졌다(Task 8 리뷰에서 드러났다).
+        //
+        // before 를 바닥에 깔고 폼 값을 그 위에 편다. formData() 는 폼
+        // 칸을 빈 값까지 전부 돌려주므로 폼 칸은 언제나 폼이 이긴다 —
+        // 사람이 지운 값은 빈 값으로 덮인다. 메모도 폼의 몫이라 이 순서로
+        // 방금 고친 메모가 되돌아가지 않는다.
         const before = await window.API.client(editingSlug);
         await window.API.saveClient(editingSlug, {
-          ...data, slug: editingSlug, 스냅샷: before.스냅샷 || [],
+          ...before, ...data, slug: editingSlug,
         });
       } else {
         const made = await window.API.createClient(data);
@@ -237,11 +249,12 @@
       }))
       .filter((r) => r.순위 !== null);
 
-    const 상권순위 = text("f-market-rank");
+    // 상권순위 칸은 지웠다 — 넣은 값이 제안서에 한 자도 안 나갔다.
+    // 옛 스냅샷에는 그 칸이 남아 있고 `proposal` 이 아직 읽는다.
     const 월매출 = num("f-revenue");
-    const revenue = (상권순위 || 월매출 !== null)
-      ? { 월매출, 상권순위, 출처: "오픈업", 입력방식: "수동" }
-      : null;
+    const revenue = 월매출 === null
+      ? null
+      : { 월매출, 출처: "오픈업", 입력방식: "수동" };
 
     // 저장 중에는 이 칸을 비워 둔다. 화면을 기다리는 쪽이 .ok 와 :not(.ok)
     // 로 이 칸의 모든 상태를 나눠 갖고 있어서, 중간 문구를 넣으면 어느
@@ -272,6 +285,149 @@
       // 실패해도 성공 메시지는 그대로 띄운다 — 안 그러면 실제로는 저장된
       // 지표를 상무님이 못 본 걸로 알고 다시 눌러 스냅샷이 중복 쌓인다.
       say("metrics-msg", "지표를 저장했습니다. (최근 수집 표시는 갱신하지 못했습니다.)", true);
+    }
+  }
+
+  /* 애드로그 연결 — 등록된 플레이스를 골라 매장에 잇는다.
+
+     등록(슬롯 소비)은 여기서 안 한다. 슬롯은 멤버십에서 나오고 삭제에
+     월 한도가 있어, 도구가 마음대로 늘리면 되돌리기가 어렵다. 새
+     키워드는 애드로그 화면에서 사람이 넣는다. */
+
+  let adlogItems = [];
+
+  function paintAdlogLink(client) {
+    const 연결 = (client && client.애드로그) || null;
+    if (!연결 || !연결.플레이스ID) {
+      el("adlog-linked").textContent = "연결 안 됨";
+      el("adlog-sync").disabled = true;
+      return;
+    }
+    const n = (연결.키워드 || []).length;
+    el("adlog-linked").textContent =
+      `${연결.플레이스명 || 연결.플레이스ID} · 키워드 ${n}개`;
+    el("adlog-sync").disabled = n === 0;
+  }
+
+  function paintCandidates(이름) {
+    // 플레이스 하나에 키워드가 여럿이다. 매장 단위로 접어 보여준다.
+    const byPlace = new Map();
+    for (const it of adlogItems) {
+      const key = String(it.place_id);
+      if (!byPlace.has(key)) {
+        byPlace.set(key, { place_id: key, place_name: it.place_name, 키워드: [] });
+      }
+      byPlace.get(key).키워드.push({ api_no: it.api_no, keyword: it.keyword });
+    }
+
+    // 이름이 겹치는 후보를 위로. 206 곳을 눈으로 훑게 두면 아무도 안 쓴다.
+    const 점수 = (p) => (이름 && p.place_name && p.place_name.includes(이름) ? 0
+      : 이름 && p.place_name && 이름.includes(p.place_name.split(" ")[0]) ? 1 : 2);
+    const 후보 = [...byPlace.values()].sort(
+      (a, b) => 점수(a) - 점수(b) ||
+        (a.place_name || "").localeCompare(b.place_name || ""));
+
+    const box = el("adlog-candidates");
+    box.innerHTML = "";
+    for (const p of 후보) {
+      const option = document.createElement("option");
+      option.value = p.place_id;
+      option.textContent = `${p.place_name} · 키워드 ${p.키워드.length}개`;
+      box.appendChild(option);
+    }
+    box.removeAttribute("hidden");
+    el("adlog-link").removeAttribute("hidden");
+
+    // 플레이스URL 이 이미 있으면 그 자리를 미리 골라 둔다.
+    const url = el("f-place-url").value || "";
+    const 아이디 = (url.match(/(\d{6,})/) || [])[1];
+    if (아이디 && byPlace.has(아이디)) box.value = 아이디;
+    else if (후보.length) box.value = 후보[0].place_id;
+  }
+
+  async function findAdlog(refresh) {
+    // 두 버튼이 같은 목록을 부른다. 한쪽만 잠그면 다른 쪽으로 또 나간다.
+    const buttons = [el("adlog-find"), el("adlog-refresh")];
+    buttons.forEach((b) => { b.disabled = true; });
+    say("adlog-msg", "");
+    try {
+      const got = await window.API.adlogPlaces(Boolean(refresh));
+      adlogItems = got.items || [];
+      paintCandidates(el("f-name").value.trim());
+      say("adlog-msg", `등록된 플레이스 ${new Set(adlogItems.map((i) => i.place_id)).size}곳`, true);
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  async function linkAdlog() {
+    if (!editingSlug) return;
+    const 아이디 = el("adlog-candidates").value;
+    const 묶음 = adlogItems.filter((i) => String(i.place_id) === 아이디);
+    if (!묶음.length) return;
+
+    // 잇는 동안 이 칸을 비워 둔다 — 앞선 「등록된 플레이스 N곳」이 남아
+    // 있으면 화면을 기다리는 쪽도, 사람도 이미 끝난 걸로 읽는다.
+    // saveMetrics() 가 같은 이유로 그렇게 돼 있다.
+    say("adlog-msg", "");
+    const button = el("adlog-link");
+    button.disabled = true;
+    try {
+      const client = await window.API.client(editingSlug);
+      const 애드로그 = {
+        플레이스ID: 아이디,
+        플레이스명: 묶음[0].place_name,
+        연결시각: new Date().toISOString().slice(0, 19),
+        키워드: 묶음.map((i) => ({ api_no: i.api_no, keyword: i.keyword,
+                                   month_count: i.month_count })),
+      };
+      // 빈 칸만 채운다 — 손으로 고친 값을 되돌리지 않는다. 폼에 방금
+      // 친 값은 아직 저장 전이라 서버의 client 에는 없다 — 폼도 본다.
+      const 갱신 = { ...client, 애드로그 };
+      if (!(client.플레이스URL || "").trim()) {
+        const 폼값 = (el("f-place-url").value || "").trim();
+        갱신.플레이스URL = 폼값 ||
+          `https://m.place.naver.com/restaurant/${아이디}/home`;
+      }
+      await window.API.saveClient(editingSlug, 갱신);
+
+      el("f-place-url").value = 갱신.플레이스URL || "";
+      paintAdlogLink(갱신);
+      el("adlog-candidates").setAttribute("hidden", "");
+      el("adlog-link").setAttribute("hidden", "");
+      say("adlog-msg", `${묶음[0].place_name} 에 이었습니다.`, true);
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function syncAdlog() {
+    if (!editingSlug) return;
+    const button = el("adlog-sync");
+    button.disabled = true;
+    say("adlog-msg", "");
+    try {
+      const got = await window.API.adlogSync(editingSlug);
+      // 못 받은 키워드는 이번 제안서에서 통째로 빠진다. 받은 개수만
+      // 말하면 쉰 개 중 셋만 받은 날과 셋을 다 받은 날이 똑같아 보인다.
+      const 요청 = got.요청 ?? got.갱신;
+      const 못받음 = Math.max(0, 요청 - got.갱신);
+      const 머리 = 못받음
+        ? `키워드 ${요청}개 중 ${got.갱신}개를 갱신했습니다.`
+        : `키워드 ${got.갱신}개를 갱신했습니다.`;
+      const 꼬리 = got.경고 ? ` (${got.경고})` : "";
+      const 빠짐 = 못받음
+        ? ` 못 받은 ${못받음}개는 이번 제안서에서 빠집니다.` : "";
+      say("adlog-msg", `${머리}${꼬리}${빠짐}`, !못받음);
+      paintLastSnapshot(await window.API.client(editingSlug));
+    } catch (err) {
+      say("adlog-msg", err.message);
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -526,5 +682,10 @@
       if (files.length) readOpenub(files);
     });
     el("apply-openub").addEventListener("click", applyOpenub);
+
+    el("adlog-find").addEventListener("click", () => findAdlog(false));
+    el("adlog-refresh").addEventListener("click", () => findAdlog(true));
+    el("adlog-link").addEventListener("click", linkAdlog);
+    el("adlog-sync").addEventListener("click", syncAdlog);
   });
 })();

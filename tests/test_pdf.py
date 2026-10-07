@@ -3,6 +3,8 @@
 언젠가 서식을 고치다 실수로 실비를 노출시키는 날이 온다.
 사람 주의력이 아니라 이 테스트가 잡아야 한다.
 """
+import copy
+
 import fitz
 import pytest
 
@@ -305,7 +307,7 @@ def rich_pdf_text(tmp_path_factory):
 def test_opportunity_table_is_printed(rich_pdf_text):
     assert "서초맛집" in rich_pdf_text
     assert "5,740" in rich_pdf_text
-    assert "30위 밖" in rich_pdf_text
+    assert "미노출" in rich_pdf_text
 
 
 def test_headline_is_printed(rich_pdf_text):
@@ -315,6 +317,67 @@ def test_headline_is_printed(rich_pdf_text):
 def test_rank_moves_are_printed(rich_pdf_text):
     assert "07-29" in rich_pdf_text and "08-12" in rich_pdf_text
     assert "18위" in rich_pdf_text and "77위" in rich_pdf_text
+
+
+def test_lost_keywords_lead_the_down_list_on_paper(tmp_path):
+    """▼ 목록이 종이에서 서는 순서를 본다. payload 시험은 이걸 못 본다.
+
+    `lib/proposal.py` 와 `templates/proposal.html` 은 거울 두 벌이라,
+    거울이 어긋나는 사고는 정의상 payload 시험 밖이다. `_moves` 가 낸
+    차례가 서식을 지나 종이까지 그대로 오는지는 값만 봐서는 모른다 —
+    한 번 쓴 줄을 다시 정렬하는 서식 한 줄이면 끊긴다. 사장님이 ▼ 맨
+    위에서 읽는 줄이 이번 달 가장 센 말이다.
+
+    미노출 둘이 잃은 자리가 좋았던 것부터 서고 하락이 그 뒤다. 두 무리를
+    한 무게로 재면 이 세 줄의 차례가 통째로 바뀐다(`_moves` 의 맞바꿈 문단).
+    값은 방이점 2026-08-18 캡처 실물이고, 30 을 넘는 순위가 종이에 값으로
+    찍히는지도 여기서 본다 — 98 위는 98 위로 나간다.
+    """
+    client = copy.deepcopy(RICH_CLIENT_PDF)
+    client["스냅샷"][0]["순위"] = [
+        {"키워드": "방이먹자골목맛집", "순위": None, "순위권밖": True,
+         "조회수": 5600, "비교순위": 26},
+        {"키워드": "잠실역맛집", "순위": None, "순위권밖": True,
+         "조회수": 29080, "비교순위": 50},
+        {"키워드": "잠실역근처맛집", "순위": 98, "순위권밖": False,
+         "조회수": 1200, "비교순위": 50},
+    ]
+
+    글 = "\n".join(_쪽별글(client, tmp_path, "낙폭차례.pdf"))
+
+    assert "잠실역근처맛집\n50위 → 98위" in 글, "98위가 종이에 값으로 안 찍혔다"
+    자리 = [글.index(kw) for kw in
+            ("방이먹자골목맛집", "잠실역맛집", "잠실역근처맛집")]
+    assert 자리 == sorted(자리), f"▼ 차례가 종이에서 뒤집혔다: {자리}"
+
+
+def test_a_one_place_slip_never_takes_a_slot_on_paper(tmp_path):
+    """1 칸 내려간 줄이 자리를 잃은 줄을 종이에서 밀어내면 안 된다.
+
+    리뷰가 종이로 잡은 자리다 — ▼ 다섯 줄 중 둘이 「10위→11위」·
+    「20위→21위」이고 자리를 잃은 줄 둘이 사라졌다. 값 쪽은
+    `test_proposal` 이 잠그고, 여기서는 사장님이 실제로 받는 다섯 줄을 본다.
+    """
+    client = copy.deepcopy(RICH_CLIENT_PDF)
+    client["스냅샷"][0]["순위"] = [
+        {"키워드": f"잃은{n}위짜리", "순위": None, "순위권밖": True,
+         "조회수": 1000 * n, "비교순위": n} for n in (1, 2, 4, 5, 9)
+    ] + [
+        {"키워드": "한칸내려감", "순위": 11, "순위권밖": False,
+         "조회수": 900, "비교순위": 10},
+        {"키워드": "또한칸내려감", "순위": 21, "순위권밖": False,
+         "조회수": 800, "비교순위": 20},
+    ]
+
+    글 = "\n".join(_쪽별글(client, tmp_path, "한칸.pdf"))
+
+    # 라벨은 리터럴로 둔다 — `in` 단언은 라벨이 바뀌면 빨개져서 알려 준다.
+    # `OUTSIDE_LABEL` 에 묶으면 라벨 값 자체를 아무도 안 잠근다.
+    for n in (1, 2, 4, 5, 9):
+        assert f"잃은{n}위짜리\n{n}위 → 미노출" in 글, (
+            f"자리를 잃은 줄({n}위)이 종이에서 빠졌다")
+    assert "한칸내려감\n10위 → 11위" not in 글, "1 칸 하락이 ▼ 자리를 가져갔다"
+    assert "또한칸내려감\n20위 → 21위" not in 글, "1 칸 하락이 ▼ 자리를 가져갔다"
 
 
 def test_hidden_and_reviews_are_printed(rich_pdf_text):
@@ -329,8 +392,16 @@ def test_internal_marks_never_reach_the_pdf(rich_pdf_text):
 
 
 def test_plain_client_pdf_has_no_diagnosis_section(pdf_text):
-    """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다."""
-    assert "30위 밖" not in pdf_text["text"]
+    """기존 매장은 네 장이 안 나온다. 빈 표를 만들지 않는다.
+
+    라벨은 `OUTSIDE_LABEL` 에서 가져온다. 글자를 박아 두면 라벨이 바뀌는
+    날 이 단언이 아무것도 안 막으면서 초록으로 남는다 — 이번 라운드가
+    「30위 밖」을 「미노출」로 바꿀 때 실제로 그 모양의 죽은 단언을
+    `test_server.py` 에서 하나 찾았다.
+    """
+    from cmo.lib.proposal import OUTSIDE_LABEL
+
+    assert OUTSIDE_LABEL not in pdf_text["text"]
     assert "아직 안 보입니다" not in pdf_text["text"]
     assert "키워드 기회표" not in pdf_text["text"]
 
@@ -471,11 +542,18 @@ _THIN_SNAP = {
     "진단": {"기준일": "08-13", "비교일": "07-30", "리뷰": {"방문자": [], "블로그": []}},
 }
 
+# 비교순위가 없어 처방은 못 서고 리뷰만 남는 매장. 장 제목이 종이에서
+# 사라지는 자리라, 경고가 그걸 말해야 한다. 이 줄이 없으면 「처방이
+# 빠졌는데 리뷰 덕에 조용한」 경우가 시험에 한 번도 안 걸린다.
+_NO_MOVES_SNAP = {**_RICH_SNAP,
+                  "순위": [{**r, "비교순위": None} for r in _RICH_SNAP["순위"]]}
+
 _CASES = {
     "빈매장": _BARE_CLIENT,
     "애드로그만": dict(_BARE_CLIENT, 스냅샷=[_RICH_SNAP]),
     "오픈업만": dict(_BARE_CLIENT, 오픈업=_OPENUB),
     "조회수없음": dict(_BARE_CLIENT, 스냅샷=[_THIN_SNAP]),
+    "처방없이리뷰만": dict(_BARE_CLIENT, 스냅샷=[_NO_MOVES_SNAP]),
     "다찬매장": dict(_BARE_CLIENT, 스냅샷=[_RICH_SNAP], 오픈업=_OPENUB),
 }
 
@@ -564,6 +642,12 @@ def test_the_issuer_still_appears_somewhere(tmp_path):
 _장제목 = ("이 가게에 오는 손님", "검색에서의 자리", "순위 변동과 이번 달 처방",
            "실행 구성", "저희가 다른 점", "1개월차 실행 일정")
 
+# 처방이 빠진 날에는 「리뷰 현황」이 장 제목 자리로 올라온다
+# (`proposal.html` 의 `d-moves-title` 주석). 평소에는 처방 장 안의 작은
+# 제목이라 `_장제목` 에는 넣지 않는다 — 넣으면 장 사이 틈을 재는 시험이
+# 그 작은 제목을 장 경계로 착각한다.
+_쪽제목 = (*_장제목, "리뷰 현황")
+
 
 @pytest.mark.parametrize("사례", list(_CASES))
 def test_every_page_carries_a_real_section(사례, tmp_path):
@@ -575,7 +659,7 @@ def test_every_page_carries_a_real_section(사례, tmp_path):
     """
     쪽들 = _쪽별글(_CASES[사례], tmp_path, f"{사례}_껍데기.pdf")
     맹탕 = [번호 for 번호, 글 in enumerate(쪽들, start=1)
-            if not any(제목 in 글 for 제목 in _장제목)]
+            if not any(제목 in 글 for 제목 in _쪽제목)]
     assert not 맹탕, (
         f"[{사례}] {맹탕} 쪽에 장이 하나도 없다 (전체 {len(쪽들)}쪽). "
         f"그 쪽 내용: {쪽들[맹탕[0] - 1][:80]!r}")
@@ -713,3 +797,39 @@ def test_the_floor_area_survives(tmp_path):
     """중복을 지우면서 평수까지 버리면 안 된다 — 머리글엔 평수가 없었다."""
     쪽들 = _쪽별글_밀도(tmp_path, "평수.pdf")
     assert "55평" in 쪽들[0], f"평수가 사라졌다: {쪽들[0][:220]!r}"
+
+
+# ── 못 읽은 리뷰 건수를 0 으로 찍지 않는다 ─────────────────────
+#
+# 판독은 플레이스명만 읽혀도 통과한다. 그래서 리뷰 목록은 읽혔는데
+# 방문자리뷰·블로그리뷰 건수는 못 읽은 스냅샷이 실제로 만들어진다.
+# 서식이 그 자리를 `|| 0` 으로 채우면 종이에 「방문자 리뷰 0건」이 찍힌다 —
+# 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고 말하는 것이다.
+
+_REVIEWS_WITHOUT_COUNTS = {
+    "수집시각": "2026-08-14T00:26:31",
+    "플레이스": {"방문자리뷰": None, "블로그리뷰": None, "저장수": None},
+    "순위": [], "예상매출": None,
+    "진단": {"기준일": None, "비교일": None,
+             "리뷰": {"방문자": [{"제목": "양꼬치가 두툼합니다", "조회수": 900,
+                                  "작성일": "2026-07-16"}], "블로그": []}},
+}
+
+
+def test_unread_review_counts_are_not_printed_as_zero(tmp_path):
+    """건수를 못 읽은 날 「방문자 리뷰 0건」이 종이에 찍히면 안 된다."""
+    쪽들 = _쪽별글(dict(_BARE_CLIENT, 스냅샷=[_REVIEWS_WITHOUT_COUNTS]),
+                   tmp_path, "리뷰건수없음.pdf")
+    전체 = "".join(쪽들)
+    assert "양꼬치가 두툼합니다" in 전체, "리뷰 목록이 사라졌다"
+    assert "0건" not in 전체, f"없는 건수를 0 으로 찍었다: {전체[:400]!r}"
+
+
+def test_a_real_zero_review_count_is_still_printed(tmp_path):
+    """진짜 0 건은 0 으로 찍는다 — 감추면 그것도 거짓말이다."""
+    진짜영 = {**_REVIEWS_WITHOUT_COUNTS,
+              "플레이스": {"방문자리뷰": 0, "블로그리뷰": 0, "저장수": None}}
+    쪽들 = _쪽별글(dict(_BARE_CLIENT, 스냅샷=[진짜영]), tmp_path, "리뷰0건.pdf")
+    전체 = "".join(쪽들)
+    assert "방문자 리뷰 0건" in 전체, f"진짜 0 건이 사라졌다: {전체[:400]!r}"
+    assert "블로그 리뷰 0건" in 전체

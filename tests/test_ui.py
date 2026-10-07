@@ -1277,12 +1277,10 @@ def test_metrics_fields_reset_between_clients(page_at, no_network):
     page_at.click("#save-client")
     page_at.wait_for_selector("#metrics:not([disabled])")
     page_at.fill("#f-revenue", "42000000")
-    page_at.fill("#f-market-rank", "상위 40%")
     page_at.click("#panel-close")
 
     page_at.click("#new-client")
     assert page_at.locator("#f-revenue").input_value() == ""
-    assert page_at.locator("#f-market-rank").input_value() == ""
 
 
 def test_registering_new_client_clears_board(page_at, no_network):
@@ -1401,12 +1399,30 @@ def test_rank_rows_follow_keywords(page_at):
     assert page_at.locator("#rank-rows .rank-row").count() == 1
 
 
+def test_the_dead_market_rank_field_is_gone(page_at, no_network):
+    """상권순위 칸에 넣은 값은 제안서에 한 자도 안 나갔다.
+
+    서식이 손님·검색·처방 세 장으로 바뀌며(2026-08-15) 그 카드가 사라졌고
+    `templates/proposal.html` 에 `지표` 를 읽는 줄이 하나도 없다. 저장소
+    자료에 채워진 값도 없다 — 빈 글자만 둘. 사장님 앞에서 채워 봐야
+    아무 데도 안 닿는 칸을 화면에 두지 않는다.
+
+    읽는 쪽(`proposal._has_revenue_value`·`_metrics`)은 그대로 둔다. 옛
+    스냅샷에 그 칸이 들어 있다.
+    """
+    _register(page_at)
+    # 옆 칸이 있는지 먼저 본다 — 화면이 아예 안 뜬 경우에도 count() 는
+    # 0 이라, 그것만 보면 「칸이 없다」와 「화면이 없다」를 못 가른다.
+    assert page_at.locator("#f-revenue").count() == 1, "지표 칸이 안 떴다"
+    assert page_at.locator("#f-market-rank").count() == 0
+
+
 def test_manual_metrics_save_without_place(page_at, tmp_data, no_network):
     """체크를 끄면 플레이스 없이 손으로 넣은 값만 저장된다."""
     _register(page_at)
     page_at.uncheck("#f-fetch-place")
     page_at.fill("#rank-rows .rank-input", "17")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
 
@@ -1415,7 +1431,7 @@ def test_manual_metrics_save_without_place(page_at, tmp_data, no_network):
         .read_text(encoding="utf-8"))
     snapshot = saved["스냅샷"][0]
     assert snapshot["순위"] == [{"키워드": "인계동 삼겹살", "순위": 17}]
-    assert snapshot["예상매출"]["상권순위"] == "상위 40%"
+    assert snapshot["예상매출"]["월매출"] == 42000000
 
 
 def test_place_failure_shows_message_and_screen_survives(page_at, no_network):
@@ -1505,7 +1521,7 @@ def test_empty_rank_is_not_saved(page_at, tmp_data, no_network):
     """안 넣은 순위를 0위로 저장하면 제안서가 거짓말을 한다."""
     _register(page_at)
     page_at.uncheck("#f-fetch-place")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
 
@@ -1815,6 +1831,39 @@ def test_edit_keeps_snapshots(page_at, tmp_data, no_network):
     assert saved["업종"] == "고깃집"
 
 
+def test_saving_store_info_keeps_fields_the_form_does_not_own(page_at, tmp_data, no_network):
+    """폼에 없는 칸은 다른 경로가 쓴 자료다 — 스냅샷(수집)·애드로그(연결)·
+    오픈업(판독). 메모 하나 고쳐 저장했다고 애드로그 연결이나 오픈업
+    판독이 조용히 사라지면 안 된다(Task 8 리뷰에서 발견)."""
+    store = Store(tmp_data)
+    slug = store.client_create({
+        "이름": "보존테스트",
+        "메모": "",
+        "애드로그": {"플레이스ID": "1", "플레이스명": "보존테스트",
+                    "연결시각": "2026-09-21T00:00:00",
+                    "키워드": [{"api_no": 1, "keyword": "가"}]},
+        "오픈업": [{"기준월": "2026-06"}],
+    })
+
+    # 이 매장은 UI 가 아니라 Store 로 직접 만들었다 — #client-select 는
+    # 페이지가 처음 뜰 때 한 번 목록을 받아 오므로, 새로고침해야 보인다.
+    page_at.reload()
+    page_at.wait_for_selector(".product-row")
+    page_at.select_option("#client-select", slug)
+    page_at.click("#edit-client")
+    page_at.wait_for_selector("#client-panel:not([hidden])")
+    expect(page_at.locator("#f-name")).to_have_value("보존테스트")
+
+    page_at.fill("#f-memo", "고친 메모")
+    page_at.click("#save-client")
+    page_at.wait_for_selector("#client-msg.ok:not(:empty)")
+
+    after = store.client_read(slug)
+    assert after["애드로그"]["플레이스ID"] == "1"
+    assert after["오픈업"][0]["기준월"] == "2026-06"
+    assert after["메모"] == "고친 메모"
+
+
 # --- I-1: 패널에 메모 칸 추가 ---
 # 시드 12곳처럼 "미확인" 문구가 메모에 적혀 있고, 지금은 화면에서 고칠 방법이
 # 없다. 등록 때 저장되는지, 편집 때 채워져 열리는지, 고쳐 저장하면 반영되되
@@ -1845,7 +1894,7 @@ def test_memo_prefills_on_edit_and_survives_resave_with_snapshot_intact(page_at,
     # 누르면 도구가 설계대로 탈출구 안내를 띄우고 저장하지 않는다 —
     # 여기서 필요한 건 스냅샷 한 건이므로 체크를 끄고 손입력만 저장한다.
     page_at.uncheck("#f-fetch-place")
-    page_at.fill("#f-market-rank", "상위 40%")
+    page_at.fill("#f-revenue", "42000000")
     page_at.click("#save-metrics")
     page_at.wait_for_selector("#metrics-msg.ok:not(:empty)")
     page_at.click("#panel-close")
@@ -2089,3 +2138,270 @@ def test_doc_blocks_more_than_six(page_at, no_network):
         for i in range(7)])
     expect(page_at.locator("#doc-msg")).to_contain_text("6장")
     expect(page_at.locator("#apply-doc")).to_be_disabled()
+
+
+# --- 애드로그 연결 ----------------------------------------------------
+
+ADLOG_PLACES = {
+    "갱신시각": "2026-09-21T14:00:00",
+    "items": [
+        {"api_no": 1, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+         "keyword": "잠실새내 맛집", "month_count": 22160},
+        {"api_no": 2, "place_id": "2069074461", "place_name": "미친양꼬치 잠실점",
+         "keyword": "잠실 맛집", "month_count": 77000},
+        {"api_no": 3, "place_id": "1446675910", "place_name": "로얄피그 한남점",
+         "keyword": "한남 맛집", "month_count": 5000},
+    ],
+}
+
+
+@pytest.fixture
+def page_with_adlog(page_at):
+    page_at.route("**/api/adlog/places*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(ADLOG_PLACES, ensure_ascii=False)))
+    page_at.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 2, "경고": None, "스냅샷": {
+            "수집시각": "2026-09-21T14:30:00",
+            "플레이스": {"방문자리뷰": 895, "블로그리뷰": 619, "저장수": 8000},
+            "순위": [{"키워드": "잠실새내 맛집", "순위": 26}],
+            "순위요약": {"총키워드": 2, "TOP3": 0, "TOP10": 0},
+            "예상매출": None}}, ensure_ascii=False)))
+    return page_at
+
+
+def _open_new_store(page, 이름):
+    page.click("#new-client")
+    page.fill("#f-name", 이름)
+    page.click("#save-client")
+    page.wait_for_selector("#client-msg.ok")
+
+
+def test_refresh_locks_both_buttons_while_it_runs(page_with_adlog):
+    """도는 동안 두 버튼 다 잠긴다 — 둘이 같은 목록을 부르기 때문이다.
+
+    한쪽만 잠그면 다른 쪽을 눌러 같은 요청이 또 나간다. 목록 조회는
+    애드로그를 스무 번 부르는 일이라 중복이 그냥 두 배로 비싸다.
+    """
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+
+    # 응답을 붙잡아 둔 채로 잠김 상태를 본다.
+    붙잡은것 = []
+    page_with_adlog.route("**/api/adlog/places*",
+                          lambda route: 붙잡은것.append(route))
+    page_with_adlog.click("#adlog-refresh")
+
+    expect(page_with_adlog.locator("#adlog-refresh")).to_be_disabled()
+    expect(page_with_adlog.locator("#adlog-find")).to_be_disabled()
+
+    page_with_adlog.unroute("**/api/adlog/places*")
+
+
+def test_adlog_box_is_locked_before_saving(page_at):
+    """저장 전에는 잠겨 있다 — 자료 넣기 칸과 같은 규칙이다."""
+    page_at.click("#new-client")
+    assert page_at.locator("#adlog").get_attribute("disabled") is not None
+
+
+def test_find_lists_places_grouped_by_store(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    텍스트 = page_with_adlog.locator("#adlog-candidates").inner_text()
+    assert "미친양꼬치 잠실점" in 텍스트
+    assert "로얄피그 한남점" in 텍스트
+
+
+def test_matching_store_comes_first(page_with_adlog):
+    """이름이 같은 후보를 위에 올린다. 206 곳에서 눈으로 찾게 두면 안 쓴다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    첫줄 = page_with_adlog.locator("#adlog-candidates option").first.inner_text()
+    assert "미친양꼬치 잠실점" in 첫줄
+
+
+def test_candidate_shows_how_many_keywords(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+
+    첫줄 = page_with_adlog.locator("#adlog-candidates option").first.inner_text()
+    assert "2" in 첫줄
+
+
+def test_linking_enables_sync(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+
+    # 「등록된 플레이스 N곳」이 이미 #adlog-msg.ok 를 채워 둔 상태라, 그
+    # 셀렉터를 그대로 기다리면 linkAdlog() 의 완료를 기다리지 않고 즉시
+    # 통과한다 — #adlog-sync 가 실제로 풀리는 상태 전이 자체를 기다린다.
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+
+def test_sync_reports_what_it_got(page_with_adlog):
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg.ok >> text=2")
+
+    assert "2" in page_with_adlog.locator("#adlog-msg").inner_text()
+
+
+def test_sync_says_which_keywords_will_be_missing(page_with_adlog):
+    """절반 성공한 갱신이 제안서를 조용히 줄이면 안 된다.
+
+    못 받은 키워드는 이번 종이에서 통째로 빠지는데, 지금은 화면도
+    `missing_pages` 도 그 말을 안 한다. 쉰 개 중 셋만 받은 종이가
+    그대로 미팅에 나간다.
+    """
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 1, "요청": 2, "스냅샷": None,
+                         "경고": "애드로그 조회에 실패했습니다."},
+                        ensure_ascii=False)))
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg >> text=빠집니다")
+
+    문구 = page_with_adlog.locator("#adlog-msg").inner_text()
+    assert "2개 중 1개" in 문구
+    assert "애드로그 조회에 실패했습니다" in 문구
+    assert "1개는 이번 제안서에서 빠집니다" in 문구
+    assert "ok" not in (page_with_adlog.locator("#adlog-msg")
+                        .get_attribute("class") or "")
+
+
+def test_sync_that_got_everything_does_not_talk_about_missing_ones(
+        page_with_adlog):
+    """다 받은 날 「몇 개 중」을 붙이면 경고가 값싸진다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신": 2, "요청": 2, "스냅샷": None, "경고": None},
+                        ensure_ascii=False)))
+
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_selector("#adlog-msg.ok")
+
+    문구 = page_with_adlog.locator("#adlog-msg").inner_text()
+    assert "키워드 2개를 갱신했습니다." in 문구
+    assert "빠집니다" not in 문구
+
+
+def test_sync_button_is_locked_while_running(page_with_adlog):
+    """키워드 쉰 개면 한참 돈다. 두 번 누르면 호출이 두 배가 된다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    page_with_adlog.route("**/api/adlog/sync", lambda route: None)  # 매달아 둔다
+    page_with_adlog.click("#adlog-sync")
+    page_with_adlog.wait_for_timeout(150)
+
+    assert page_with_adlog.locator("#adlog-sync").is_disabled()
+
+
+def test_refresh_button_asks_for_a_fresh_list(page_with_adlog):
+    """애드로그에 키워드를 새로 등록하고 돌아와도 캐시 때문에 하루를 기다린다."""
+    요청들 = []
+    page_with_adlog.on("request", lambda r: 요청들.append(r.url)
+                       if "/api/adlog/places" in r.url else None)
+
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.click("#adlog-refresh")
+    page_with_adlog.wait_for_timeout(300)
+
+    assert any("refresh=1" in u for u in 요청들)
+
+
+def test_linking_saves_month_count(page_with_adlog, tmp_data):
+    """month_count 가 빠지면 Task 10 의 조회수 폴백이 빈손이 된다."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    saved = json.loads(
+        (tmp_data / "clients" / "미친양꼬치_잠실점" / "client.json")
+        .read_text(encoding="utf-8"))
+    키워드들 = saved["애드로그"]["키워드"]
+    assert {kw["keyword"]: kw["month_count"] for kw in 키워드들} == {
+        "잠실새내 맛집": 22160, "잠실 맛집": 77000,
+    }
+
+
+def test_candidates_survive_a_place_without_a_name(page_with_adlog):
+    """place_name 이 빈 아이템이 섞여도 정렬에서 죽지 않는다 (M-8)."""
+    # 이름 없는 후보가 둘이면 정렬이 그 둘을 반드시 맞비교한다 — 어느
+    # 쪽이 비교식의 왼쪽에 오든 place_name 이 null 이라 던진다.
+    page_with_adlog.route("**/api/adlog/places*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"갱신시각": "2026-09-21T14:00:00", "items": [
+            {"api_no": 8, "place_id": "998", "place_name": None,
+             "keyword": "이름없음1", "month_count": 100},
+            {"api_no": 9, "place_id": "999", "place_name": None,
+             "keyword": "이름없음2", "month_count": 100},
+            *ADLOG_PLACES["items"],
+        ]}, ensure_ascii=False)))
+
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_timeout(300)
+
+    # 죽으면 findAdlog() 의 catch 가 예외 메시지를 여기 그대로 찍는다.
+    assert "Cannot read" not in page_with_adlog.locator("#adlog-msg").inner_text()
+    assert page_with_adlog.locator("#adlog-candidates option").count() == 4
+
+
+def test_linking_keeps_the_url_you_just_typed(page_with_adlog, tmp_data):
+    """서버엔 아직 없어도 폼에 방금 친 URL 은 자동 생성 URL 에 덮이지 않는다 (M-7)."""
+    _open_new_store(page_with_adlog, "미친양꼬치 잠실점")
+    page_with_adlog.fill(
+        "#f-place-url", "https://m.place.naver.com/restaurant/123456/home")
+
+    page_with_adlog.click("#adlog-find")
+    page_with_adlog.wait_for_selector("#adlog-candidates option")
+    page_with_adlog.select_option("#adlog-candidates", "2069074461")
+    page_with_adlog.click("#adlog-link")
+    expect(page_with_adlog.locator("#adlog-sync")).to_be_enabled()
+
+    assert page_with_adlog.locator("#f-place-url").input_value() == \
+        "https://m.place.naver.com/restaurant/123456/home"
+    saved = json.loads(
+        (tmp_data / "clients" / "미친양꼬치_잠실점" / "client.json")
+        .read_text(encoding="utf-8"))
+    assert saved["플레이스URL"] == \
+        "https://m.place.naver.com/restaurant/123456/home"

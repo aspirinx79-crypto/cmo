@@ -101,7 +101,7 @@
     </div>
 
     <div id="d-reviews-wrap">
-      <h3>리뷰 현황</h3>
+      <h3 id="d-reviews-title">리뷰 현황</h3>
       <p id="d-review-counts"></p>
       <ul id="d-review-list"></ul>
     </div>
@@ -113,6 +113,7 @@
   <div class="쪽" id="p-search">
   <section id="s-search" hidden>
     <h2>검색에서의 자리</h2>
+    <p class="fine" id="d-search-asof"></p>
     <div class="headline" id="d-headline"></div>
     <div class="metrics" id="d-numbers"></div>
 
@@ -235,6 +236,12 @@
       보임("s-search", Boolean(S.헤드라인 || (S.수치 || []).length ||
                                 S.기회표 || S.히든키워드));
 
+      // 순위·히든키워드가 다른 시점에서 올 수 있다. 순위 기준일을 찍어
+      // 사장님이 「이 순위는 언제 것인가」를 종이에서 알 수 있게 한다.
+      const 검색기준일 = document.getElementById("d-search-asof");
+      검색기준일.textContent = S.기준일 ? `순위 기준 ${S.기준일}` : "";
+      검색기준일.hidden = !S.기준일;
+
       document.getElementById("d-headline").textContent = S.헤드라인 || "";
       보임("d-headline", Boolean(S.헤드라인));
       document.getElementById("d-numbers").innerHTML = 카드(S.수치 || []);
@@ -264,8 +271,18 @@
         `<span>${esc(r.전)} → ${esc(r.후)}</span></div>`;
       // 날짜를 못 읽은 날 「(null → null)」 이 사장님께 나갔다.
       const 기간 = (R && R.비교일 && R.기준일) ? ` (${R.비교일} → ${R.기준일})` : "";
+      // 이 장은 처방과 리뷰 현황 두 덩이를 담는다. 처방이 없는데 제목이
+      // 그대로면 종이가 「순위 변동과 이번 달 처방」을 약속해 놓고 리뷰만
+      // 보여준다 — 빠진 줄 모르고 나가는 바로 그 모양이다. 리뷰까지
+      // 감추면 값이 있는 것을 숨기게 되므로, 남은 덩이의 이름을 제목으로
+      // 올리고 안쪽 제목은 겹치니 감춘다. 쪽마다 장 제목이 하나는 있어야
+      // 한다(`test_every_page_carries_a_real_section`).
+      //
+      // `proposal.missing_pages` 의 MISSING_MOVES 가 이 줄의 거울이다 —
+      // 「순위 변동과 이번 달 처방」이 종이에 찍히는 조건이 곧 `R` 이다.
       document.getElementById("d-moves-title").textContent =
-        `순위 변동과 이번 달 처방${기간}`;
+        R ? `순위 변동과 이번 달 처방${기간}` : "리뷰 현황";
+      보임("d-reviews-title", Boolean(R));
 
       const 한쪽 = (있나, wrapId, listId, lineId, placeId, rows, line, place, cls, mark) => {
         보임(wrapId, 있나);
@@ -287,9 +304,17 @@
 
       보임("d-reviews-wrap", Boolean(D.리뷰));
       if (D.리뷰) {
-        document.getElementById("d-review-counts").textContent =
-          `방문자 리뷰 ${Number(D.리뷰.방문자수 || 0).toLocaleString()}건 · ` +
-          `블로그 리뷰 ${Number(D.리뷰.블로그수 || 0).toLocaleString()}건`;
+        // `|| 0` 으로 채우면 안 된다. 판독이 리뷰 건수를 못 읽은 날에도
+        // 리뷰 목록은 읽히므로 이 줄이 서는데, 그때 종이에 「방문자 리뷰
+        // 0건」이 찍혔다 — 값이 빠지는 것보다 나쁘다. 없는 걸 0 이라고
+        // 말하는 것이다. 진짜 0 건은 0 으로 찍는다. 둘을 가른다.
+        const 건수 = [["방문자 리뷰", D.리뷰.방문자수],
+                      ["블로그 리뷰", D.리뷰.블로그수]]
+          .filter(([, n]) => n !== null && n !== undefined)
+          .map(([이름, n]) => `${이름} ${Number(n).toLocaleString()}건`);
+        const 건수줄 = document.getElementById("d-review-counts");
+        건수줄.textContent = 건수.join(" · ");
+        건수줄.hidden = !건수.length;
         document.getElementById("d-review-list").innerHTML =
           D.리뷰.많이읽힌.map((r) =>
             `<li>${esc(r.제목)} — ${Number(r.조회수).toLocaleString()}회 읽힘</li>`

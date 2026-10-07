@@ -245,3 +245,96 @@ def test_client_create_shows_up_in_clients_list(tmp_data):
     store = Store(tmp_data)
     store.client_create(NEW_CLIENT)
     assert [c["slug"] for c in store.clients()] == ["하루인_인계점"]
+
+
+# --- 순위 원장 --------------------------------------------------------
+
+def test_ranks_read_of_a_new_client_is_empty(tmp_data):
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+    assert store.ranks_read("잠실점") == {}
+
+
+def test_ranks_round_trip(tmp_data):
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+    원장 = {"플레이스ID": "2069074461",
+            "키워드": {"잠실새내 맛집": {"api_no": 1, "순위": {"2026-09-19": 26}}}}
+    store.ranks_write("잠실점", 원장)
+    assert store.ranks_read("잠실점") == 원장
+
+
+def test_ranks_live_beside_client_json(tmp_data):
+    """폴더를 열면 눈에 보여야 한다 — client.json 과 나란히 둔다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+    store.ranks_write("잠실점", {"플레이스ID": "1"})
+    assert (tmp_data / "clients" / "잠실점" / "ranks.json").exists()
+
+
+def test_ranks_path_refuses_escaping_slug(tmp_data):
+    """slug 는 경로 조각 하나다. `..` 로 data 바깥을 못 가리킨다."""
+    store = Store(tmp_data)
+    with pytest.raises(ValueError):
+        store.ranks_read("../../etc")
+
+
+def test_ranks_archive_moves_the_old_ledger(tmp_data):
+    """매장을 다시 이으면 옛 원장은 옆에 남긴다. 이미 쌓인 증거다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+    store.ranks_write("잠실점", {"플레이스ID": "옛날", "키워드": {"가": {}}})
+
+    store.ranks_archive("잠실점", "옛날")
+
+    assert store.ranks_read("잠실점") == {}
+    보관 = list((tmp_data / "clients" / "잠실점").glob("ranks-옛날-*.json"))
+    assert len(보관) == 1
+
+
+def test_ranks_archive_of_a_client_without_a_ledger_does_nothing(tmp_data):
+    """한 번도 갱신하지 않은 매장을 다시 이어도 원장 파일이 없어 조용히 넘어간다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+
+    store.ranks_archive("잠실점", "옛날")  # 예외 없이 통과해야 한다
+
+    assert store.ranks_read("잠실점") == {}
+
+
+def test_ranks_archive_does_not_overwrite_a_previous_archive_of_the_same_place(tmp_data):
+    """A→B→A 로 다시 이으면 플레이스ID 가 겹친다. 옛 보관도 증거라 안 덮는다."""
+    store = Store(tmp_data)
+    store.client_create({"이름": "잠실점"})
+
+    store.ranks_write("잠실점", {"플레이스ID": "A", "키워드": {"가": {}}})
+    store.ranks_archive("잠실점", "A")  # A → B
+
+    store.ranks_write("잠실점", {"플레이스ID": "B", "키워드": {"나": {}}})
+    store.ranks_archive("잠실점", "B")  # B → A (다시)
+
+    store.ranks_write("잠실점", {"플레이스ID": "A", "키워드": {"다": {}}})
+    store.ranks_archive("잠실점", "A")  # A 로 다시 — 옛 A 보관과 이름이 겹친다
+
+    A보관들 = list((tmp_data / "clients" / "잠실점").glob("ranks-A-*.json"))
+    assert len(A보관들) == 2
+
+
+# --- 애드로그 목록 캐시 ----------------------------------------------
+
+def test_adlog_cache_is_empty_before_first_fetch(tmp_data):
+    assert Store(tmp_data).adlog_cache_read() == {}
+
+
+def test_adlog_cache_round_trip(tmp_data):
+    store = Store(tmp_data)
+    캐시 = {"갱신시각": "2026-09-21T14:00:00", "items": [{"api_no": 1}]}
+    store.adlog_cache_write(캐시)
+    assert store.adlog_cache_read() == 캐시
+
+
+def test_adlog_cache_lives_outside_client_folders(tmp_data):
+    """고객사 자료가 아니다. 지워도 되는 물건이라 따로 둔다."""
+    store = Store(tmp_data)
+    store.adlog_cache_write({"items": []})
+    assert (tmp_data / "_cache" / "adlog_places.json").exists()
