@@ -756,3 +756,65 @@ def test_proposal_response_is_quiet_when_nothing_is_missing(server,
                     {"slug": "하루인_인계점", "월": "2026-09"})
 
     assert body["경고"] == []
+
+
+# --- 공유용 비밀번호 ---
+# 터널로 밖에 열 때만 건다. 비밀번호가 없으면 고객사 데이터와 내부전용
+# 마진이 링크 가진 누구에게나 보인다.
+
+@pytest.fixture
+def locked(tmp_data, cmo_dir):
+    httpd = serve(0, Store(tmp_data), cmo_dir / "app", password="열쇠")
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    httpd.shutdown()
+
+
+def _auth(user, pw):
+    import base64
+    token = base64.b64encode(f"{user}:{pw}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
+@pytest.mark.parametrize("path", ["/", "/api/clients"])
+def test_locked_rejects_without_password(locked, path):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(locked + path)
+    assert exc.value.code == 401
+    assert "Basic" in exc.value.headers["WWW-Authenticate"]
+
+
+def test_locked_rejects_wrong_password(locked):
+    req = urllib.request.Request(locked + "/api/clients", headers=_auth("cmo", "틀림"))
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req)
+    assert exc.value.code == 401
+
+
+def test_locked_rejects_post_without_password(locked):
+    req = urllib.request.Request(
+        locked + quote("/api/clients/하루인_인계점"),
+        data=json.dumps(CLIENT).encode("utf-8"), method="POST")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req)
+    assert exc.value.code == 401
+
+
+def test_locked_accepts_right_password(locked):
+    req = urllib.request.Request(locked + "/api/clients", headers=_auth("아무나", "열쇠"))
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200 and json.loads(r.read()) == []
+
+
+def test_idle_connection_does_not_block_others(server):
+    """브라우저는 미리 소켓을 열어 두고 아무것도 안 보낸다. 여럿이 쓰면
+    그 소켓 하나에 서버 전체가 멈추면 안 된다."""
+    import socket
+    host, port = server.removeprefix("http://").split(":")
+    idle = socket.create_connection((host, int(port)))
+    try:
+        with urllib.request.urlopen(server + "/api/clients", timeout=3) as r:
+            assert r.status == 200
+    finally:
+        idle.close()

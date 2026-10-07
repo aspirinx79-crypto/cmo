@@ -5,11 +5,14 @@
 밖으로 나가는 경로는 `POST /api/collect` 하나뿐이고, 그것도 사람이 눌러야
 한 건 돈다. 나머지 화면은 인터넷이 끊긴 자리에서도 전부 돌아간다.
 """
+import base64
+import hmac
 import json
+import os
 import re
 import sys
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -58,10 +61,38 @@ def _read_captures(files, api_key):
     return read_captures(files, api_key)
 
 
-def make_handler(store: Store, app_dir: Path):
+def make_handler(store: Store, app_dir: Path, password: str | None = None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass  # 미팅 중 콘솔이 시끄러우면 안 된다
+
+        def _locked_out(self) -> bool:
+            """공유 터널로 열었을 때만 비밀번호를 묻는다. 아이디는 아무거나.
+
+            터널 주소는 링크만 알면 누구나 들어온다. 고객사 데이터와
+            내부전용 마진, 저장 기능까지 다 열려 있으니 문을 하나 둔다.
+            """
+            if not password:
+                return False
+            header = self.headers.get("Authorization") or ""
+            if header.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(header[6:]).decode("utf-8")
+                    given = decoded.partition(":")[2]
+                    if hmac.compare_digest(given.encode("utf-8"),
+                                           password.encode("utf-8")):
+                        return False
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            body = "비밀번호가 필요합니다.".encode("utf-8")
+            self.send_response(401)
+            self.send_header("WWW-Authenticate",
+                             'Basic realm="CMO", charset="UTF-8"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
 
         # --- 응답 도우미 ---
         def _json(self, data, status=200):
@@ -262,6 +293,8 @@ def make_handler(store: Store, app_dir: Path):
 
         # --- 라우팅 ---
         def do_GET(self):
+            if self._locked_out():
+                return
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
 
@@ -299,6 +332,8 @@ def make_handler(store: Store, app_dir: Path):
             self.send_error(404)
 
         def do_POST(self):
+            if self._locked_out():
+                return
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             force = "force=1" in (parsed.query or "")
@@ -396,15 +431,25 @@ def make_handler(store: Store, app_dir: Path):
     return Handler
 
 
-def serve(port: int, store: Store, app_dir: Path) -> HTTPServer:
-    return HTTPServer(("127.0.0.1", port), make_handler(store, app_dir))
+def serve(port: int, store: Store, app_dir: Path,
+          password: str | None = None) -> HTTPServer:
+    # 공유할 때도 127.0.0.1 에만 붙는다. 밖에서는 터널을 거쳐서만 들어온다.
+    # 연결마다 스레드를 둔다. 브라우저가 미리 열어 둔 빈 소켓 하나에
+    # 여럿이 쓰는 서버 전체가 멈추면 안 된다.
+    httpd = ThreadingHTTPServer(("127.0.0.1", port),
+                                make_handler(store, app_dir, password))
+    httpd.daemon_threads = True
+    return httpd
 
 
 def main() -> int:
     store = Store(CMO / "data")
-    httpd = serve(8765, store, CMO / "app")
+    password = os.environ.get("CMO_PASSWORD") or None
+    httpd = serve(8765, store, CMO / "app", password)
     url = "http://127.0.0.1:8765/"
     print(f"CMO 기획 도구 — {url}\n창을 닫으면 종료됩니다.")
+    if password:
+        print("공유 모드 — 열 때 비밀번호를 묻습니다(아이디는 아무거나).")
     webbrowser.open(url)
     try:
         httpd.serve_forever()

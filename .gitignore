@@ -8,3 +8,6 @@ data/_raw_kakao/
 # 캐시·산출물
 __pycache__/
 .pytest_cache/
+
+# 공유 링크 비밀번호(share_cmo.ps1 이 만든다)
+share_password.txt

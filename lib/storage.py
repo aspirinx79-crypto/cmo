@@ -4,7 +4,9 @@
 폴더를 열면 눈에 보이고 git 으로 되돌릴 수 있다.
 """
 import json
+import os
 import re
+import threading
 from pathlib import Path
 
 FORBIDDEN_RE = re.compile(r'[\\/:*?"<>|]+')
@@ -51,8 +53,12 @@ def _read(path: Path) -> dict | list:
 
 
 def _write(path: Path, data) -> None:
+    """임시 파일에 다 쓴 뒤 바꿔 끼운다. 공유 모드에선 여럿이 동시에
+    읽고 쓰는데, 반쯤 쓰인 파일을 읽으면 JSON 이 깨져 보인다."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class Store:
