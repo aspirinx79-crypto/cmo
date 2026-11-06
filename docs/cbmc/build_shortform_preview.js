@@ -6,6 +6,9 @@ const fa = require("react-icons/fa");
 const { applyTheme } = require("/root/.claude/skills/synced/1a62ff30-a17b-4a9d-bb46-a287bcb80359_f6686bbd-ce69-4d88-ac53-ac3e093346d8/pptx/scripts/apply_theme.js");
 
 const OUT = process.argv[2] || "deck.pptx";
+// "capcut" (편집 앱 버전) | "insta" (인스타그램에서 바로 만드는 버전)
+const VARIANT = process.argv[3] || "capcut";
+const INSTA = VARIANT === "insta";
 const FONT = "맑은 고딕";
 const THEME = {
   name: "CBMC Shortform",
@@ -152,7 +155,9 @@ async function icon(name, color, size = 256) {
   const cur = [
     ["FaLightbulb", "1. 숏폼 이해하기", "쇼츠·릴스·틱톡의 특징과 '끝까지 보게 만드는' 원리"],
     ["FaPen", "2. 1분 대본 쓰기", "훅 - 메시지 - 초대, 3단 공식으로 나만의 대본 완성"],
-    ["FaVideo", "3. 스마트폰 촬영·편집", "현장 실습: 세로 촬영, 자막·음악 넣기 (CapCut 등 무료 앱)"],
+    INSTA
+      ? ["FaInstagram", "3. 인스타그램으로 바로", "현장 실습: 앱 하나로 촬영·자막·음악까지 (편집 앱 설치 없음)"]
+      : ["FaVideo", "3. 스마트폰 촬영·편집", "현장 실습: 세로 촬영, 자막·음악 넣기 (CapCut 등 무료 앱)"],
     ["FaBuilding", "4. 킹덤컴퍼니에 적용", "회사 소개, 일터 간증, VIP 초대 영상으로 바로 활용"],
   ];
   for (let i = 0; i < 4; i++) {
@@ -188,6 +193,30 @@ async function icon(name, color, size = 256) {
   s.addText("다음 모임에서는 이 공식으로 각자 30초짜리 '나의 일터 이야기'를 직접 만들어 봅니다.", { x: 0.6, y: 4.4, w: 8.8, h: 0.5, fontSize: 14, bold: true, color: C.accent1, margin: 0, isTextBox: true });
   s.addNotes("가장 중요한 것은 첫 3초입니다. 질문이나 의외의 한마디로 시작하고, 내 일터의 실제 이야기를 짧게 전한 뒤, 마지막에 반드시 초대의 말로 마무리합니다. 예시는 강의에서 더 다양하게 보여 드립니다.");
 
+  // ---------- Slide 5b (insta only): Reels in 5 steps ----------
+  if (INSTA) {
+    s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "강의 내용" });
+    s.addText("인스타그램 릴스, 5단계면 끝", { placeholder: "title" });
+    const rs = [
+      ["FaPlusSquare", "＋ 누르기", "인스타그램을 열고 아래쪽 ＋ 버튼"],
+      ["FaFilm", "릴스 선택", "화면 아래에서 '릴스'를 누르기"],
+      ["FaVideo", "찍기", "가운데 동그란 버튼을 눌러 촬영"],
+      ["FaFont", "글씨·음악", "'텍스트'로 큰 자막, '음악'으로 찬양"],
+      ["FaShare", "공유", "'공유'를 누르면 완성!"],
+    ];
+    for (let i = 0; i < 5; i++) {
+      const x = 0.6 + i * 1.78;
+      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.3, w: 1.62, h: 3.0, fill: { color: C.background2 }, rectRadius: 0.12, objectName: "reelStep" + i });
+      s.addShape(pres.shapes.OVAL, { x: x + 0.46, y: 1.5, w: 0.7, h: 0.7, fill: { color: i === 4 ? C.accent2 : C.accent1 }, objectName: "reelNum" + i });
+      s.addText(String(i + 1), { x: x + 0.46, y: 1.5, w: 0.7, h: 0.7, fontSize: 24, bold: true, color: C.background1, align: "center", valign: "middle", margin: 0, isTextBox: true });
+      s.addImage({ data: await icon(rs[i][0], HEX.dk2), x: x + 0.56, y: 2.4, w: 0.5, h: 0.5, altText: rs[i][1] });
+      s.addText(rs[i][1], { x: x + 0.1, y: 3.0, w: 1.42, h: 0.45, fontSize: 17, bold: true, color: C.text2, align: "center", margin: 0, isTextBox: true });
+      s.addText(rs[i][2], { x: x + 0.12, y: 3.45, w: 1.38, h: 0.8, fontSize: 13, color: C.text1, align: "center", valign: "top", margin: 0, isTextBox: true });
+    }
+    s.addText("따로 설치할 앱이 없습니다. 이미 쓰시는 인스타그램 하나면 충분합니다!", { x: 0.6, y: 4.5, w: 8.8, h: 0.5, fontSize: 15, bold: true, color: C.accent1, margin: 0, isTextBox: true });
+    s.addNotes("인스타그램 앱 안에서 바로 릴스를 만드는 순서입니다. 1) 아래 ＋ 버튼, 2) 릴스 선택, 3) 동그란 버튼으로 촬영하거나 사진첩의 영상을 고릅니다, 4) '텍스트'로 큰 글씨 자막을 넣고 '음악'에서 찬양을 고릅니다, 5) '공유'를 누르면 끝입니다. 앱 버전에 따라 버튼 위치가 조금 다를 수 있으니, 현장에서 한 분씩 함께 따라 해 봅니다.");
+  }
+
   // ---------- Slide 6: Use cases ----------
   pres.addSection({ title: "활용" });
   s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "활용" });
@@ -213,7 +242,9 @@ async function icon(name, color, size = 256) {
   s.addText("11월 21일, 이것만 준비해 오세요", { placeholder: "title" });
   const prep = [
     ["FaBatteryFull", "충전된 스마트폰", "실습은 모두 스마트폰으로 합니다"],
-    ["FaDownload", "무료 편집 앱 설치", "CapCut(캡컷) 미리 설치 - 어려우면 현장에서 도와드립니다"],
+    INSTA
+      ? ["FaInstagram", "인스타그램 로그인", "아이디·비밀번호 메모해 오기 - 계정이 없으면 현장에서 함께 만듭니다"]
+      : ["FaDownload", "무료 편집 앱 설치", "CapCut(캡컷) 미리 설치 - 어려우면 현장에서 도와드립니다"],
     ["FaCommentDots", "회사 소개 한 문장", "\"우리 회사는 ______ 로 이웃을 섬깁니다\""],
     ["FaHeart", "간증 한 장면", "일터에서 하나님의 은혜를 경험한 순간 하나 떠올리기"],
   ];
@@ -226,7 +257,7 @@ async function icon(name, color, size = 256) {
     s.addText(prep[i][2], { x: x + 1.05, y: y + 0.6, w: 3.1, h: 0.6, fontSize: 13, color: C.text1, margin: 0, valign: "top", isTextBox: true });
   }
   s.addText("잘 찍는 기술보다 진솔한 이야기가 더 중요합니다. 처음이셔도 괜찮습니다!", { x: 0.6, y: 4.4, w: 8.8, h: 0.5, fontSize: 14, bold: true, color: C.accent1, margin: 0, isTextBox: true });
-  s.addNotes("연세가 있으신 회원분들도 부담 갖지 않으셔도 됩니다. 앱 설치가 어려우면 현장에서 함께 설치해 드립니다.");
+  s.addNotes((INSTA ? "새 앱을 설치하실 필요가 없습니다. 인스타그램 아이디와 비밀번호만 메모해 오시면, 현장에서 한 분씩 도와드리며 함께 만들어 봅니다. 자녀나 손주에게 미리 로그인을 부탁해 두셔도 좋습니다." : "연세가 있으신 회원분들도 부담 갖지 않으셔도 됩니다. 앱 설치가 어려우면 현장에서 함께 설치해 드립니다."));
 
   // ---------- Slide 8: Closing ----------
   pres.addSection({ title: "안내" });
