@@ -67,7 +67,7 @@ async function icon(name, color, size = 256) {
   s.addText("1분이면 충분합니다", { placeholder: "title" });
   s.addText("숏폼으로 일터에서 복음을 전하라", { x: 0.6, y: 2.75, w: 5.8, h: 0.6, fontSize: 22, color: C.accent4, bold: true, margin: 0, isTextBox: true });
   s.addText([
-    { text: "11월 21일(토) 차기모임 · 숏폼강의", options: { breakLine: true } },
+    { text: "11월 21일(토) 차기모임 · 숏폼강의 | 강사 이인선 대표", options: { breakLine: true } },
     { text: "\"너희는 온 천하에 다니며 만민에게 복음을 전파하라\" (막 16:15)" },
   ], { x: 0.6, y: 3.75, w: 5.8, h: 0.9, fontSize: 14, color: C.background2, margin: 0, paraSpaceAfter: 6, isTextBox: true });
   // phone mockup
@@ -78,6 +78,32 @@ async function icon(name, color, size = 256) {
   s.addText("0:59", { x: 7.15, y: 3.05, w: 2.0, h: 0.4, fontSize: 18, bold: true, color: C.background1, align: "center", margin: 0, isTextBox: true });
   s.addText("#일터선교 #CBMC", { x: 7.15, y: 4.2, w: 2.0, h: 0.4, fontSize: 11, color: C.background1, align: "center", margin: 0, isTextBox: true });
   s.addNotes("오늘은 다음 모임(11월 21일)에 진행할 숏폼강의를 미리 소개합니다. 핵심 메시지는 '1분이면 충분하다'입니다. 스마트폰 하나로 일터에서 복음과 킹덤컴퍼니의 가치를 전할 수 있습니다.");
+
+  // ---------- Slide 1b: Speaker ----------
+  pres.addSection({ title: "강사 소개" });
+  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "강사 소개" });
+  s.addText("강사 소개", { placeholder: "title" });
+  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 1.25, w: 2.9, h: 3.7, fill: { color: C.background2 }, rectRadius: 0.12, objectName: "photoCard" });
+  s.addImage({ path: require("path").join(__dirname, "speaker.jpg"), x: 0.75, y: 1.4, w: 2.6, h: 2.92, altText: "이인선 강사 사진", objectName: "speakerPhoto" });
+  s.addText("맛고양  이인선", { x: 0.75, y: 4.4, w: 2.6, h: 0.45, fontSize: 18, bold: true, color: C.text2, align: "center", valign: "middle", margin: 0, isTextBox: true });
+  s.addText([
+    { text: "맛고양 채널주  ·  (주)먹스타 대표이사", options: { breakLine: true } },
+    { text: "現 (주)상생어벤져스 상무이사" },
+  ], { x: 3.9, y: 1.25, w: 5.5, h: 0.65, fontSize: 14, bold: true, color: C.accent1, margin: 0, valign: "top", isTextBox: true });
+  const stats = [["400+", "숏폼 마케팅\n진행 업체"], ["2.5억+", "숏폼 누적\n조회수"], ["25만+", "10개 채널\n팔로워"], ["100회+", "숏폼마케팅\n강의"]];
+  for (let i = 0; i < 4; i++) {
+    const x = 3.9 + i * 1.4;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 2.05, w: 1.28, h: 1.3, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "statCard" + i });
+    s.addText(stats[i][0], { x, y: 2.15, w: 1.28, h: 0.5, fontSize: 20, bold: true, color: i === 1 ? C.accent2 : C.text2, align: "center", valign: "middle", margin: 0, isTextBox: true });
+    s.addText(stats[i][1], { x, y: 2.65, w: 1.28, h: 0.6, fontSize: 11, color: C.text1, align: "center", valign: "top", margin: 0, isTextBox: true });
+  }
+  s.addText([
+    { text: "SBA경제진흥원 · 소상공인진흥공단 숏폼마케팅 강사", options: { bullet: true, breakLine: true } },
+    { text: "명륜진사갈비 등 400개 업체 숏폼 마케팅 진행", options: { bullet: true, breakLine: true } },
+    { text: "먹스타 커뮤니티 운영, CU·당근 공식 인플루언서", options: { bullet: true, breakLine: true } },
+    { text: "SNS마케팅 전문가 1급, 중앙대 외식경영 최고경영자과정", options: { bullet: true } },
+  ], { x: 3.9, y: 3.55, w: 5.5, h: 1.45, fontSize: 13, color: C.text1, margin: 0, valign: "top", paraSpaceAfter: 5, isTextBox: true });
+  s.addNotes("다음 모임 강사님을 소개합니다. 맛집 채널 '맛고양'을 운영하는 이인선 대표님입니다. 400개가 넘는 업체의 숏폼 마케팅을 진행했고, 누적 조회수 2억 5천만 회 이상, 10개 채널 팔로워 25만 명 이상을 보유한 현장 전문가입니다. SBA경제진흥원과 소상공인진흥공단 등에서 100회 이상 강의하셨습니다.");
 
   // ---------- Slide 2: Why shortform ----------
   pres.addSection({ title: "왜 숏폼인가" });
@@ -211,7 +237,7 @@ async function icon(name, color, size = 256) {
   s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 5.4, y: 0.6, w: 4.0, h: 4.3, fill: { color: C.background1 }, rectRadius: 0.15, objectName: "infoCard" });
   const info = [
     ["FaCalendarAlt", "일시", "11월 21일(토) 차기모임"],
-    ["FaVideo", "내용", "숏폼강의 + 실습"],
+    ["FaVideo", "강의", "숏폼강의 + 실습\n강사 이인선 대표"],
     ["FaMapMarkerAlt", "장소", "하나교회 2층\n서초구 방배천로16길 17"],
     ["FaSubway", "교통", "이수역 6번 · 사당역 11번 출구"],
     ["FaHandsHelping", "섬김", "3조"],
