@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>양재CBMC 숏폼 특강 포스터</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root { --navy:#14306B; --navy2:#0D1F4A; --sky:#1E9BD7; --gold:#F5A623; --ink:#1A2440; --mist:#EEF4FA; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { word-break:keep-all; width:794px; height:1123px; background:#fff; font-family:'Noto Sans KR', sans-serif; color:var(--ink); }
+  .poster { width:794px; height:1123px; position:relative; overflow:hidden; display:flex; flex-direction:column; }
+
+  /* top brand area */
+  .top { background:var(--navy); color:#fff; padding:40px 56px 0; position:relative; height:600px; }
+  .top::after { content:""; position:absolute; right:-140px; top:-140px; width:420px; height:420px; border-radius:50%; background:rgba(30,155,215,.18); }
+  .brand { display:flex; align-items:center; gap:16px; position:relative; z-index:1; }
+  .brand .mark { background:var(--gold); color:var(--navy2); font-weight:900; font-size:46px; padding:6px 24px; border-radius:12px; letter-spacing:-.5px; }
+  .brand .sub { font-size:18px; line-height:1.35; opacity:.9; }
+  .brand .sub b { font-size:22px; }
+  .eyebrow { margin-top:34px; display:inline-block; border:2px solid var(--gold); color:var(--gold); font-weight:700; font-size:22px; padding:6px 18px; border-radius:30px; position:relative; z-index:1; }
+  h1 { margin-top:14px; font-size:70px; font-weight:900; line-height:1.12; letter-spacing:-2px; position:relative; z-index:1; }
+  h1 em { font-style:normal; color:var(--gold); }
+  .lead { margin-top:14px; font-size:28px; font-weight:700; color:#BFE3F5; position:relative; z-index:1; }
+
+  .speaker { position:absolute; right:48px; bottom:0; width:270px; z-index:1; text-align:center; }
+  .speaker .photo { width:270px; height:300px; border-radius:135px 135px 0 0; overflow:hidden; background:#dfe8f2; border:6px solid var(--sky); border-bottom:none; }
+  .speaker .photo img { width:100%; height:100%; object-fit:cover; object-position:center 15%; }
+  .speaker .tag { position:absolute; left:50%; transform:translateX(-50%); bottom:18px; background:#fff; color:var(--navy); border-radius:14px; padding:8px 18px; white-space:nowrap; box-shadow:0 6px 18px rgba(0,0,0,.25); }
+  .speaker .tag b { font-size:24px; font-weight:900; }
+  .speaker .tag span { display:block; font-size:14px; color:#4a5670; font-weight:500; }
+
+  .creds { margin-top:22px; position:relative; z-index:1; display:flex; gap:12px; }
+  .cred { background:rgba(255,255,255,.1); border-radius:14px; padding:12px 14px; min-width:100px; }
+  .cred b { display:block; font-size:28px; font-weight:900; color:#fff; }
+  .cred span { font-size:14px; color:#BFE3F5; }
+
+  /* body */
+  .body { flex:1; padding:28px 56px 0; display:flex; flex-direction:column; gap:20px; }
+  .what { display:flex; gap:14px; }
+  .what .item { flex:1; background:var(--mist); border-radius:18px; padding:18px 16px; }
+  .what .num { width:40px; height:40px; border-radius:50%; background:var(--sky); color:#fff; font-weight:900; font-size:22px; display:flex; align-items:center; justify-content:center; }
+  .what .item:nth-child(2) .num { background:var(--gold); }
+  .what .item:nth-child(3) .num { background:var(--navy); }
+  .what h3 { margin-top:10px; font-size:24px; font-weight:900; color:var(--navy); letter-spacing:-.5px; }
+  .what p { margin-top:4px; font-size:17px; line-height:1.4; color:#33405c; }
+
+  .info { display:grid; grid-template-columns:110px 1fr; row-gap:10px; font-size:26px; align-items:baseline; }
+  .info dt { font-weight:900; color:var(--sky); }
+  .info dd { font-weight:700; color:var(--ink); }
+  .info dd small { display:block; font-size:18px; font-weight:500; color:#4a5670; margin-top:2px; }
+
+  .bring { background:#FFF4DE; border-radius:16px; padding:14px 20px; font-size:21px; font-weight:700; color:#6b4300; }
+  .bring b { color:#b36b00; margin-right:8px; }
+
+  .foot { margin-top:auto; background:var(--navy2); color:#fff; padding:20px 56px; display:flex; justify-content:space-between; align-items:center; }
+  .foot .verse { font-size:18px; line-height:1.45; color:#dbe7f5; }
+  .foot .verse b { color:var(--gold); }
+  .foot .invite { font-size:26px; font-weight:900; color:var(--gold); text-align:right; line-height:1.2; }
+  .foot .invite span { display:block; font-size:16px; color:#fff; font-weight:500; }
+</style>
+</head>
+<body>
+<div class="poster">
+  <section class="top">
+    <div class="brand">
+      <div class="mark">양재CBMC</div>
+      <div class="sub"><b>한국CBMC 양재지회</b><br>since 1995 · 기독실업인 일터선교</div>
+    </div>
+    <div class="eyebrow">토요기도회 특별강의</div>
+    <h1>1분이면<br><em>충분합니다</em></h1>
+    <p class="lead">스마트폰 하나로<br>일터에서 복음을 전하는 숏폼</p>
+    <div class="creds">
+      <div class="cred"><b>400+</b><span>숏폼 마케팅 업체</span></div>
+      <div class="cred"><b>2.5억+</b><span>누적 조회수</span></div>
+      <div class="cred"><b>100회+</b><span>숏폼 강의</span></div>
+    </div>
+    <div class="speaker">
+      <div class="photo"><img src="speaker.jpg" alt="이인선 강사"></div>
+      <div class="tag"><b>이인선 강사</b><span>맛고양 채널주 · (주)먹스타 대표이사</span></div>
+    </div>
+  </section>
+
+  <section class="body">
+    <div class="what">
+      <div class="item"><div class="num">1</div><h3>숏폼 이해</h3><p>쇼츠·릴스, 왜 끝까지 보게 될까?</p></div>
+      <div class="item"><div class="num">2</div><h3>인스타 바로 실습</h3><p>앱 설치 없이 릴스 5단계 따라하기</p></div>
+      <div class="item"><div class="num">3</div><h3>일터에 적용</h3><p>회사 소개 · 간증 · VIP 초대 영상</p></div>
+    </div>
+    <dl class="info">
+      <dt>일시</dt><dd>2026년 11월 21일 (토)</dd>
+      <dt>장소</dt><dd>하나교회 2층<small>서울 서초구 방배천로16길 17 · 이수역 6번, 사당역 11번 출구</small></dd>
+    </dl>
+    <div class="bring"><b>준비물</b>충전된 스마트폰 · 인스타그램 아이디/비밀번호 메모</div>
+  </section>
+
+  <footer class="foot">
+    <p class="verse"><b style="color:#fff">주최 · 한국CBMC 양재지회</b><br>"온 천하에 다니며 복음을 전파하라" <b>막 16:15</b></p>
+    <p class="invite">VIP와 함께 오세요<span>처음 오시는 분 누구나 환영합니다</span></p>
+  </footer>
+</div>
+</body>
+</html>
