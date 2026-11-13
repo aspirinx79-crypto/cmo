@@ -12,6 +12,11 @@ const { applyTheme } = require(process.env.PPTX_APPLY_THEME ||
 const OUT = process.argv[2] || "영업의_본질_교육자료.pptx";
 const SPEAKER_PHOTO = path.join(__dirname, "..", "cbmc", "speaker.jpg");
 const IMG = (f) => path.join(__dirname, "img", f);
+// 개인·재무 증빙(계약서, 원천징수영수증, 세금계산서)은 img/private/에만 두고 저장소에 올리지 않는다.
+// PUBLIC=1 로 빌드하거나 파일이 없으면 그 자리에 "비공개 증빙" 상자를 넣는다.
+const fs = require("fs");
+const PUBLIC = process.env.PUBLIC === "1";
+const PIMG = (f) => path.join(__dirname, "img", "private", f);
 const FONT = "맑은 고딕";
 const THEME = {
   name: "Sales Essence",
@@ -43,6 +48,12 @@ async function icon(name, color) {
   pres.author = "이인선";
   const C = pres.SchemeColor;
   const T = { isTextBox: true, margin: 0 };
+  const privateImage = (s, file, opts) => {
+    const p = PIMG(file);
+    if (!PUBLIC && fs.existsSync(p)) return s.addImage({ ...opts, path: p });
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: opts.x, y: opts.y, w: opts.w, h: opts.h, fill: { color: C.background2 }, line: { color: C.accent6, width: 1, dashType: "dash" }, rectRadius: 0.08, objectName: (opts.objectName || "private") + "Placeholder" });
+    s.addText("비공개 증빙 자료\n(" + opts.altText + ")", { ...T, x: opts.x, y: opts.y, w: opts.w, h: opts.h, fontSize: 11, color: C.accent6, align: "center", valign: "middle" });
+  };
 
   pres.defineSlideMaster({
     title: "COVER", background: { color: HEX.dk2 },
@@ -301,28 +312,32 @@ async function icon(name, color) {
 
   s = content("숫자로 보는 변화",
     "전역하기 전 마지막 연봉이 약 6,200만 원이었습니다. 지금은 한 달에 약 8천만 원의 매출을 내고 있습니다. 1년 동안 벌던 것보다 많은 금액을 한 달에, 저를 믿고 대표님들이 맡겨 주고 계신 겁니다. 그리고 창업 1년 만에 회사 가치를 인정받아 M&A까지 했습니다. 자랑이 아니라, 저를 믿고 계속 유지해 주시는 대표님들 덕분입니다.");
-  const stats = [["6,200만 원", "전역 전 마지막 '연봉'", C.accent6], ["약 8천만 원", "지금의 '월' 매출", C.accent1], ["80~90%", "만남 대비 계약률", C.accent2]];
-  stats.forEach(([n, l, col], i) => {
-    const x = 0.6 + i * 3.0;
-    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.45, w: 2.8, h: 2.3, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "stat" + i });
-    s.addText(n, { ...T, x, y: 1.75, w: 2.8, h: 0.9, fontSize: 30, bold: true, color: col, align: "center", valign: "middle" });
-    s.addText(l, { ...T, x, y: 2.75, w: 2.8, h: 0.5, fontSize: 16, color: C.text1, align: "center" });
+  [["salary_2023.jpg", 618, 401, "전역 전 마지막 연봉", "6,200만 원", "2023년 근로소득 원천징수영수증", C.accent6],
+   ["sales_invoice.jpg", 522, 347, "지금의 한 달 매출", "약 8천만 원", "전자세금계산서 월 매출 합계", C.accent1]].forEach(([f, w, h, lab, num, cap, col], i) => {
+    const x = 0.6 + i * 4.55, bw = 4.25;
+    s.addText([{ text: lab + "  ", options: { fontSize: 15, color: C.text1 } }, { text: num, options: { fontSize: 26, bold: true, color: col } }],
+      { ...T, x, y: 1.1, w: bw, h: 0.55, valign: "middle" });
+    const H = 2.3, iw = Math.min(bw, H * w / h), ih = iw * h / w;
+    privateImage(s, f, { x: x + (bw - iw) / 2, y: 1.72, w: iw, h: ih, altText: cap, objectName: "proof" + i });
+    s.addText(cap, { ...T, x, y: 1.72 + ih + 0.05, w: bw, h: 0.3, fontSize: 11, color: C.accent6, align: "center" });
   });
-  takeaway(s, "1년 연봉보다 많은 매출을 한 달에 — 그리고 창업 1년 만에 M&A", 4.2);
+  s.addImage({ data: await icon("FaArrowRight", HEX.accent1), x: 4.82, y: 2.7, w: 0.36, h: 0.36, altText: "변화" });
+  takeaway(s, "1년 연봉보다 많은 매출을 한 달에 — 계약률 80~90%, 창업 1년 만에 M&A", 4.55);
 
   s = content("신뢰가 쌓이면 계약의 크기가 달라진다",
     "처음에는 동네 식당 한 곳부터 시작했습니다. 결과로 신뢰가 쌓이니까 점점 금액이 큰 계약이 생겼습니다. 깡우동과 1억 2천만 원, 코이라멘과 1억 2천만 원 연간 계약을 했고, 제주맥주와는 먹스타파티 5천만 원 계약을 했습니다. 작은 계약을 제대로 해낸 것이 큰 계약으로 돌아왔습니다.");
-  const big = [["깡우동", "1억 2천만 원", "1년 계약 · 월 1,000만 원", "숏폼 영상 제작(월 8회) + SNS 채널 관리", "FaUtensils"],
-    ["코이라멘", "1억 2천만 원", "1년 계약 · 월 1,000만 원", "숏폼 영상 제작(월 8회) + SNS 채널 관리", "FaUtensils"],
-    ["제주맥주", "5천만 원", "먹스타파티 총 5회", "회당 숏폼 영상 30~50개 제작", "FaGlassCheers"]];
+  const big = [["contract_kkang.jpg", 515, 311, "깡우동", "1억 2천만 원", "1년 · 숏폼 월 8회 + SNS 관리"],
+    ["contract_koi.jpg", 520, 311, "코이라멘", "1억 2천만 원", "1년 · 숏폼 월 8회 + SNS 관리"],
+    ["contract_jeju.jpg", 469, 311, "제주맥주", "5천만 원", "먹스타파티 5회 · 회당 숏폼 30~50개"]];
   for (let i = 0; i < 3; i++) {
-    const x = 0.6 + i * 3.0;
-    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.3, w: 2.8, h: 2.95, fill: { color: i === 2 ? SOFT_ORANGE : C.background2 }, rectRadius: 0.12, objectName: "bigDeal" + i });
-    await circleIcon(s, big[i][4], x + 0.25, 1.5, 0.6, C.accent1);
-    s.addText(big[i][0], { ...T, x: x + 1.0, y: 1.5, w: 1.7, h: 0.6, fontSize: 19, bold: true, color: C.text2, valign: "middle" });
-    s.addText(big[i][1], { ...T, x: x + 0.2, y: 2.25, w: 2.5, h: 0.65, fontSize: 24, bold: true, color: C.accent1, valign: "middle" });
-    s.addText(big[i][2], { ...T, x: x + 0.25, y: 2.95, w: 2.4, h: 0.4, fontSize: 14, bold: true, color: C.text2 });
-    s.addText(big[i][3], { ...T, x: x + 0.25, y: 3.35, w: 2.4, h: 0.8, fontSize: 13, color: C.text1, valign: "top" });
+    const [f, w, h, name, amt, det] = big[i];
+    const x = 0.6 + i * 3.0, bw = 2.8, H = 1.7;
+    const iw = Math.min(bw, H * w / h), ih = iw * h / w;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.15, w: bw, h: 3.25, fill: { color: i === 2 ? SOFT_ORANGE : C.background2 }, rectRadius: 0.12, objectName: "bigDeal" + i });
+    privateImage(s, f, { x: x + (bw - iw) / 2 + 0.05, y: 1.25, w: iw - 0.1, h: ih - 0.1 * h / w, altText: name + " 계약서", objectName: "contract" + i });
+    s.addText(name, { ...T, x: x + 0.2, y: 3.0, w: 2.4, h: 0.4, fontSize: 16, bold: true, color: C.text2 });
+    s.addText(amt, { ...T, x: x + 0.2, y: 3.38, w: 2.4, h: 0.5, fontSize: 24, bold: true, color: C.accent1, valign: "middle" });
+    s.addText(det, { ...T, x: x + 0.2, y: 3.9, w: 2.45, h: 0.4, fontSize: 12, color: C.text1 });
   }
   takeaway(s, "작은 계약을 제대로 해내면, 다음 계약의 단위가 바뀐다", 4.5);
 
@@ -539,15 +554,20 @@ async function icon(name, color) {
   takeaway(s, "모임은 판매하는 곳이 아니라, 신뢰를 저축하는 곳");
 
   s = content("사례: 강화도 「바다향기」 — 밥 먹다 생긴 계약",
-    "최근 일입니다. CADO 워크숍으로 강화도에 갔다가 바다향기라는 식당에서 밥을 먹었습니다. 영수증을 받아서 제가 직접 영수증 리뷰를 써 드렸는데, 그 리뷰가 영수증 리뷰 1등으로 올라갔습니다. 그 화면을 사장님께 보여 드리면서 '마케팅 궁금한 거 있으시면 연락 주세요' 하고 왔습니다. 며칠 뒤 사장님이 먼저 전화를 주셨고, CMO 계약을 했습니다. 지금도 계속 함께하고 있습니다. [영수증 리뷰 사진을 받으면 이 슬라이드에 추가]");
-  await flow(s, [
-    ["워크숍", "CADO 워크숍으로 강화도 방문"],
-    ["식사", "식당에서 밥 먹고 영수증 받기"],
-    ["리뷰 1등", "직접 쓴 영수증 리뷰가 1등으로"],
-    ["한마디", "화면을 보여 드리며 \"마케팅 궁금하면 연락 주세요\""],
-    ["먼저 전화", "사장님이 먼저 연락 → CMO 계약, 지금도 진행 중"],
-  ]);
-  takeaway(s, "말로 설득하지 않았다 — 실력을 먼저 보여 주니 고객이 찾아왔다");
+    "최근 일입니다. CADO 워크숍으로 강화도에 갔다가 바다향기라는 식당에서 밥을 먹었습니다. 영수증을 받아서 제가 직접 영수증 리뷰를 써 드렸는데, 그 리뷰가 영수증 리뷰 1등으로 올라갔습니다. 그 화면을 사장님께 보여 드리면서 '마케팅 궁금한 거 있으시면 연락 주세요' 하고 왔습니다. 며칠 뒤 사장님이 먼저 전화를 주셨고, CMO 계약을 했습니다. 지금도 계속 함께하고 있습니다.");
+  s.addImage({ path: IMG("badahyanggi_review.jpg"), x: 0.6, y: 1.15, w: 3.05 * 633 / 781, h: 3.05, altText: "강사가 직접 쓴 바다향기 영수증 리뷰", objectName: "reviewShot" });
+  s.addText("강사가 직접 쓴 영수증 리뷰", { ...T, x: 0.6, y: 4.24, w: 3.05 * 633 / 781, h: 0.25, fontSize: 11, color: C.accent6, align: "center" });
+  const bh = [["CADO 워크숍", "강화도 방문, 바다향기에서 식사"], ["영수증 리뷰", "영수증을 받아 직접 리뷰 작성"], ["리뷰 1등", "내 리뷰가 영수증 리뷰 1등으로"],
+    ["한마디", "화면을 보여 드리며 \"마케팅 궁금하면 연락 주세요\""], ["먼저 전화", "사장님이 먼저 연락 → CMO 계약, 지금도 진행 중"]];
+  for (let i = 0; i < 5; i++) {
+    const y = 1.15 + i * 0.66;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 3.45, y, w: 5.95, h: 0.56, fill: { color: i === 4 ? SOFT_GREEN : C.background2 }, rectRadius: 0.08, objectName: "bhStep" + i });
+    s.addShape(pres.shapes.OVAL, { x: 3.55, y: y + 0.08, w: 0.4, h: 0.4, fill: { color: i === 4 ? C.accent2 : C.accent1 }, objectName: "bhNum" + i });
+    s.addText(String(i + 1), { ...T, x: 3.55, y: y + 0.08, w: 0.4, h: 0.4, fontSize: 15, bold: true, color: C.background1, align: "center", valign: "middle" });
+    s.addText(bh[i][0], { ...T, x: 4.1, y, w: 1.45, h: 0.56, fontSize: 15, bold: true, color: C.text2, valign: "middle" });
+    s.addText(bh[i][1], { ...T, x: 5.55, y, w: 3.75, h: 0.56, fontSize: 13, color: C.text1, valign: "middle" });
+  }
+  takeaway(s, "말로 설득하지 않았다 — 실력을 먼저 보여 주니 고객이 찾아왔다", 4.62);
 
   s = content("소개가 소개를 낳는다",
     "고객이 들어오는 길 1위는 지인 소개입니다. 마케팅 서비스에 만족하셨기 때문입니다. 특히 BNI에서 소개받아 계약한 사례가 정말 많습니다. 그리고 그렇게 소개받은 매장이 또 다른 매장을 소개해 줘서 계약을 했습니다. 만족한 고객이 다음 고객을 데려옵니다.");
