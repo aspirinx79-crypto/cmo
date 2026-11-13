@@ -11,6 +11,7 @@ const { applyTheme } = require(process.env.PPTX_APPLY_THEME ||
 
 const OUT = process.argv[2] || "영업의_본질_교육자료.pptx";
 const SPEAKER_PHOTO = path.join(__dirname, "..", "cbmc", "speaker.jpg");
+const IMG = (f) => path.join(__dirname, "img", f);
 const FONT = "맑은 고딕";
 const THEME = {
   name: "Sales Essence",
@@ -177,7 +178,7 @@ async function icon(name, color) {
     { text: "(주)상생어벤져스컴퍼니 상무이사  ·  (주)먹스타 대표이사", options: { breakLine: true } },
     { text: "크리에이터 「먹스타선장 맛고양」" },
   ], { ...T, x: 3.9, y: 1.25, w: 5.5, h: 0.65, fontSize: 14, bold: true, color: C.accent1, valign: "top" });
-  const stats0 = [["약 20년", "육군 부사관\n군 생활"], ["38개", "군 복무 중\n취득 자격증"], ["2.5억+", "숏폼 누적\n조회수"], ["1년", "창업 후\nM&A까지"]];
+  const stats0 = [["약 20년", "육군 부사관\n군 생활"], ["40개", "군 복무 중\n취득 자격증"], ["2.5억+", "숏폼 누적\n조회수"], ["1년", "창업 후\nM&A까지"]];
   for (let i = 0; i < 4; i++) {
     const x = 3.9 + i * 1.4;
     s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 2.05, w: 1.28, h: 1.3, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "statCard" + i });
@@ -209,42 +210,71 @@ async function icon(name, color) {
   sectionSlide("01", "왜 영업인가", "안정의 20년, 그리고 성취의 시작", "강사 본인의 이야기로 공감대를 만드는 파트입니다. (15분)");
 
   s = content("나의 첫 직업: 육군 부사관 약 20년",
-    "저는 약 20년 동안 육군 부사관으로 근무했습니다. 대충 산 게 아닙니다. 대체불가부사관에 선정되기도 했고, 미군 부사관학교에 파견 근무도 다녀왔습니다. 군 생활 중에 행정사, 산업안전기사 등 자격증을 38개나 땄습니다. 거기서 조직 관리와 시스템, 그리고 실행력을 익혔습니다.");
-  await cards(s, [
-    ["FaMedal", "대체불가부사관 선정", "조직에서 인정받는 부사관이었다"],
-    ["FaFlagUsa", "미군 부사관학교 파견", "더 넓은 세상에서 배우고 경험했다"],
-    ["FaCertificate", "자격증 38개", "행정사 · 산업안전기사 등 — 쉬지 않고 공부했다"],
-  ], { h: 2.6 });
-  takeaway(s, "군에서 배운 것: 조직 관리, 시스템, 그리고 끝까지 해내는 실행력");
+    "저는 약 20년 동안 육군 부사관으로 근무했습니다. 대충 산 게 아닙니다. 표창도 받았고, 대체불가부사관에 선정되기도 했습니다. 2014년에는 미8군 와이트먼 부사관학교(Wightman NCO Academy)의 Warrior Leader Course를 수료했습니다. 미군들과 함께 교육받으면서 더 넓은 세상을 봤습니다. 거기서 조직 관리와 시스템, 그리고 끝까지 해내는 실행력을 익혔습니다.");
+  const army = [["army_award.jpg", 652, 444, "표창 수상 · 대체불가부사관 선정"], ["army_usfk.jpg", 654, 444, "미군 부사관학교 교육 동기들과"], ["nco_academy_diploma.jpg", 511, 674, "미8군 부사관학교 수료 (2014)"]];
+  { const H = 2.3, y = 1.35; let x = 0.6;
+    const ws = army.map(([, w, h]) => H * w / h), gap = (8.8 - ws.reduce((a, b) => a + b, 0)) / 2;
+    for (let i = 0; i < 3; i++) {
+      s.addImage({ path: IMG(army[i][0]), x, y, w: ws[i], h: H, altText: army[i][3], objectName: "armyPhoto" + i });
+      s.addText(army[i][3], { ...T, x, y: y + H + 0.08, w: ws[i], h: 0.4, fontSize: 12, color: C.text1, align: "center" });
+      x += ws[i] + gap;
+    } }
+  takeaway(s, "군에서 배운 것: 조직 관리, 시스템, 그리고 끝까지 해내는 실행력", 4.55);
+
+  s = content("쉬지 않고 공부했다: 자격증 40개",
+    "군 생활 중에 행정사, 산업안전기사를 비롯해 자격증을 40개 땄습니다. 시간이 남아서가 아니라, 쉬지 않고 공부했기 때문입니다. 영업도 똑같습니다. 공부한 만큼 대표님 앞에서 막힘이 없습니다. 이 습관이 지금 영업의 바탕이 됐습니다.");
+  s.addImage({ path: IMG("certificates_40.jpg"), x: 0.6, y: 1.2, w: 3.2 * 450 / 591, h: 3.2, altText: "자격증 40개 모음 사진", objectName: "certPhoto" });
+  s.addText("40개", { ...T, x: 4.0, y: 1.3, w: 5.4, h: 1.0, fontSize: 60, bold: true, color: C.accent1, valign: "middle" });
+  s.addText("군 복무 중 취득한 자격증", { ...T, x: 4.0, y: 2.3, w: 5.4, h: 0.45, fontSize: 18, bold: true, color: C.text2 });
+  s.addText([
+    { text: "행정사 · 산업안전기사 등 국가자격", options: { bullet: true, breakLine: true } },
+    { text: "근무가 끝난 시간에 꾸준히 공부한 결과", options: { bullet: true, breakLine: true } },
+    { text: "영업에서도 같다: 공부한 만큼 막힘이 없다", options: { bullet: true } },
+  ], { ...T, x: 4.0, y: 2.95, w: 5.4, h: 1.4, fontSize: 15, color: C.text1, valign: "top", paraSpaceAfter: 6 });
+  takeaway(s, "꾸준함은 배신하지 않는다 — 군에서 만든 공부 습관이 영업의 무기가 됐다", 4.55);
 
   s = content("20년 군 생활이 내게 준 것과 주지 않은 것",
-    "1년 뒤, 5년 뒤 월급이 얼마인지 알 수 있는 안정감은 있었습니다. 연봉도 6,500만 원 정도로 적지 않았습니다. 그런데 '내가 이걸 해서 이런 성과를 냈다'는 성취감은 하나도 없었습니다. 요즘 사람들은 직업을 고를 때 꿈과 미래를 봅니다. 월급만으로는 몇십억 하는 서울 아파트는 절대 살 수 없겠다는 생각도 들었습니다.");
-  compare(s, ["군 생활 20년이 준 것", ["따박따박 들어오는 월급", "1년 뒤, 5년 뒤가 예측되는 안정감", "연봉 약 6,500만 원 — 생활과 저축 가능", "평생 받는 군인연금"]],
+    "1년 뒤, 5년 뒤 월급이 얼마인지 알 수 있는 안정감은 있었습니다. 전역 전 마지막 연봉도 6,200만 원 정도로 적지 않았습니다. 그런데 '내가 이걸 해서 이런 성과를 냈다'는 성취감은 하나도 없었습니다. 요즘 사람들은 직업을 고를 때 꿈과 미래를 봅니다. 월급만으로는 몇십억 하는 서울 아파트는 절대 살 수 없겠다는 생각도 들었습니다.");
+  compare(s, ["군 생활 20년이 준 것", ["따박따박 들어오는 월급", "1년 뒤, 5년 뒤가 예측되는 안정감", "마지막 연봉 약 6,200만 원 — 생활과 저축 가능", "평생 받는 군인연금"]],
     ["주지 않은 것", ["내가 한 일에 대한 성과와 성취감", "꿈과 미래에 대한 기대", "월급만으로는 닿을 수 없는 목표 (서울 아파트)"]]);
   takeaway(s, "안정은 있었지만, '내가 해냈다'는 느낌은 없었다");
 
-  s = content("39살부터 연금을 받는데, 왜 영업을?",
-    "저는 39살부터 군인연금을 받고 있습니다. 많은 분들이 물어보십니다. '연금 나오는데 그냥 편하게 살지, 왜 이렇게 힘들게 일해요?' 제 답은 이렇습니다. 연금은 생활을 지켜 줍니다. 하지만 성취감은 주지 못합니다. 그리고 좋은 제품과 서비스가 있는데도 홍보를 못 해서 사라지는 가게들을 너무 많이 봤습니다. 그분들을 돕는 일이 하고 싶었습니다.");
-  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.6, y: 1.3, w: 4.25, h: 3.0, fill: { color: C.background2 }, rectRadius: 0.12, objectName: "pensionCard" });
-  await circleIcon(s, "FaShieldAlt", 0.9, 1.55, 0.7, C.accent6);
-  s.addText("39살부터 평생 연금", { ...T, x: 0.9, y: 2.4, w: 3.7, h: 0.5, fontSize: 22, bold: true, color: C.text2 });
-  s.addText("이미 '안정'은 확보되어 있었다.\n편하게 살 수 있는 선택지가 있었다.", { ...T, x: 0.9, y: 2.95, w: 3.7, h: 1.1, fontSize: 15, color: C.text1, valign: "top" });
-  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 5.15, y: 1.3, w: 4.25, h: 3.0, fill: { color: SOFT_ORANGE }, rectRadius: 0.12, objectName: "choiceCard" });
-  await circleIcon(s, "FaFire", 5.45, 1.55, 0.7, C.accent1);
-  s.addText("그래도 나는 성취를 택했다", { ...T, x: 5.45, y: 2.4, w: 3.8, h: 0.5, fontSize: 21, bold: true, color: C.accent1 });
-  s.addText("좋은 상품이 있는데도 홍보를 못 해\n사라지는 가게들을 돕고 싶었다.", { ...T, x: 5.45, y: 2.95, w: 3.8, h: 1.1, fontSize: 15, color: C.text1, valign: "top" });
-  takeaway(s, "영업은 돈 때문에만 하는 일이 아니다 — '내가 해냈다'를 느끼는 일", 4.5);
+  s = content("39살부터 매달 연금이 나오는데, 왜 영업을?",
+    "저는 20년 군 생활을 해서 39살부터 매달 약 180만 원씩 군인연금을 받고 있습니다. 많은 분들이 물어보십니다. '연금 나오는데 그냥 편하게 살지, 왜 이렇게 힘들게 일해요?' 제 답은 이렇습니다. 연금은 생활을 지켜 줍니다. 하지만 성취감은 주지 못합니다. 그리고 좋은 제품과 서비스가 있는데도 홍보를 못 해서 사라지는 가게들을 너무 많이 봤습니다. 그분들을 돕는 일이 하고 싶었습니다.");
+  s.addImage({ path: IMG("pension_sms.jpg"), x: 0.6, y: 1.2, w: 1.65, h: 1.65 * 685 / 347, altText: "매달 연금 입금 문자", objectName: "pensionSms" });
+  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 2.5, y: 1.3, w: 3.3, h: 3.0, fill: { color: C.background2 }, rectRadius: 0.12, objectName: "pensionCard" });
+  await circleIcon(s, "FaShieldAlt", 2.75, 1.5, 0.6, C.accent6);
+  s.addText("매달 약 180만 원", { ...T, x: 2.75, y: 2.25, w: 2.9, h: 0.5, fontSize: 21, bold: true, color: C.text2 });
+  s.addText("39살부터 평생 받는 군인연금.\n이미 '안정'은 확보되어 있었다.\n편하게 살 수 있는 선택지가 있었다.", { ...T, x: 2.75, y: 2.8, w: 2.9, h: 1.4, fontSize: 14, color: C.text1, valign: "top" });
+  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 6.05, y: 1.3, w: 3.35, h: 3.0, fill: { color: SOFT_ORANGE }, rectRadius: 0.12, objectName: "choiceCard" });
+  await circleIcon(s, "FaFire", 6.3, 1.5, 0.6, C.accent1);
+  s.addText("그래도 성취를 택했다", { ...T, x: 6.3, y: 2.25, w: 3.0, h: 0.5, fontSize: 20, bold: true, color: C.accent1 });
+  s.addText("좋은 상품이 있는데도 홍보를 못 해 사라지는 가게들을 돕고 싶었다.", { ...T, x: 6.3, y: 2.8, w: 2.95, h: 1.4, fontSize: 14, color: C.text1, valign: "top" });
+  takeaway(s, "영업은 돈 때문에만 하는 일이 아니다 — '내가 해냈다'를 느끼는 일", 4.6);
+
+  s = content("실패도 있었다: 전업투자로 번 8억을 다 잃다",
+    "솔직하게 말씀드리겠습니다. 저는 전업투자를 2년 했습니다. 한때 8억까지 벌었지만, 다 날렸습니다. 블로그에 투자 기록만 267편을 남길 만큼 열심히 했지만, 시장은 제가 통제할 수 있는 게 아니었습니다. 그때 깨달았습니다. 운과 시장에 맡기는 돈은 언제든 사라질 수 있다. 하지만 내가 사람을 만나고 신뢰를 쌓아서 버는 돈은 내가 만든 것이고, 쌓인다. 그래서 저는 영업을 합니다.");
+  s.addImage({ path: IMG("invest_stock.jpg"), x: 0.6, y: 1.2, w: 1.6, h: 1.6 * 756 / 382, altText: "투자 손실 화면 (계좌 정보 가림)", objectName: "stockShot" });
+  s.addImage({ path: IMG("invest_blog.jpg"), x: 2.35, y: 1.2, w: 1.6, h: 1.6 * 756 / 400, altText: "블로그 투자 기록 카테고리", objectName: "blogShot" });
+  [["시장에 맡긴 돈", "8억까지 벌었지만 다 잃었다 · 내가 통제할 수 없다 · 쌓이지 않는다", C.accent6, C.background2],
+   ["내가 만드는 돈 (영업)", "하는 만큼 돌아온다 · 신뢰는 내가 통제한다 · 고객과 소개가 쌓인다", C.accent1, SOFT_ORANGE]].forEach(([h, d, col, fill], i) => {
+    const y = 1.2 + i * 1.6;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 4.5, y, w: 4.9, h: 1.4, fill: { color: fill }, rectRadius: 0.12, objectName: "moneyCard" + i });
+    s.addText(h, { ...T, x: 4.8, y: y + 0.15, w: 4.4, h: 0.45, fontSize: 18, bold: true, color: col });
+    s.addText(d, { ...T, x: 4.8, y: y + 0.65, w: 4.4, h: 0.65, fontSize: 14, color: C.text1, valign: "top" });
+  });
+  takeaway(s, "운에 맡긴 돈은 사라졌고, 신뢰로 번 돈은 쌓였다", 4.55);
 
   s = content("숫자로 보는 변화",
-    "군 시절 연봉이 약 6,500만 원이었습니다. 지금은 한 달에 6,500만 원이 넘는 매출을 내고 있습니다. 1년 12개월 동안 할 일을 한 달에, 저를 믿고 대표님들이 맡겨 주고 계신 겁니다. 그리고 창업 1년 만에 회사 가치를 인정받아 M&A까지 했습니다. 자랑이 아니라, 저를 믿고 계속 유지해 주시는 대표님들 덕분입니다.");
-  const stats = [["6,500만 원", "군 시절 '연봉'", C.accent6], ["6,500만 원↑", "지금의 '월' 매출", C.accent1], ["80~90%", "만남 대비 계약률", C.accent2]];
+    "전역하기 전 마지막 연봉이 약 6,200만 원이었습니다. 지금은 한 달에 약 8천만 원의 매출을 내고 있습니다. 1년 동안 벌던 것보다 많은 금액을 한 달에, 저를 믿고 대표님들이 맡겨 주고 계신 겁니다. 그리고 창업 1년 만에 회사 가치를 인정받아 M&A까지 했습니다. 자랑이 아니라, 저를 믿고 계속 유지해 주시는 대표님들 덕분입니다.");
+  const stats = [["6,200만 원", "전역 전 마지막 '연봉'", C.accent6], ["약 8천만 원", "지금의 '월' 매출", C.accent1], ["80~90%", "만남 대비 계약률", C.accent2]];
   stats.forEach(([n, l, col], i) => {
     const x = 0.6 + i * 3.0;
     s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.45, w: 2.8, h: 2.3, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "stat" + i });
     s.addText(n, { ...T, x, y: 1.75, w: 2.8, h: 0.9, fontSize: 30, bold: true, color: col, align: "center", valign: "middle" });
     s.addText(l, { ...T, x, y: 2.75, w: 2.8, h: 0.5, fontSize: 16, color: C.text1, align: "center" });
   });
-  takeaway(s, "1년 동안 할 일을 한 달에 — 그리고 창업 1년 만에 M&A", 4.2);
+  takeaway(s, "1년 연봉보다 많은 매출을 한 달에 — 그리고 창업 1년 만에 M&A", 4.2);
 
   s = content("신뢰가 쌓이면 계약의 크기가 달라진다",
     "처음에는 동네 식당 한 곳부터 시작했습니다. 결과로 신뢰가 쌓이니까 점점 금액이 큰 계약이 생겼습니다. 깡우동과 1억 2천만 원, 코이라멘과 1억 2천만 원 연간 계약을 했고, 제주맥주와는 먹스타파티 5천만 원 계약을 했습니다. 작은 계약을 제대로 해낸 것이 큰 계약으로 돌아왔습니다.");
