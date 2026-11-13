@@ -119,6 +119,21 @@ async function icon(name, color) {
       if (i < n - 1) s.addImage({ data: await icon("FaChevronRight", HEX.accent6), x: x + w + 0.06, y: y + h / 2 - 0.1, w: 0.16, h: 0.2, altText: "다음" });
     }
   };
+  // 사진 한 줄: [[파일, 가로px, 세로px, 캡션], ...] 을 높이 H에 맞춰 가운데 정렬
+  const WEB = (f) => path.join(__dirname, "img", "web", f);
+  const photoRow = (s, items, { y = 1.25, H = 2.9, maxW = 8.8, caption = true } = {}) => {
+    let ws = items.map(([, w, h]) => H * w / h);
+    let total = ws.reduce((a, b) => a + b, 0), gap = 0.25;
+    let scale = Math.min(1, (maxW - gap * (items.length - 1)) / total);
+    const h = H * scale; ws = ws.map((w) => w * scale); total = ws.reduce((a, b) => a + b, 0);
+    let x = 0.6 + (maxW - total - gap * (items.length - 1)) / 2;
+    items.forEach(([f, , , cap], i) => {
+      s.addImage({ path: f, x, y, w: ws[i], h, altText: cap || f, objectName: "photo" + i });
+      if (caption && cap) s.addText(cap, { ...T, x: x - 0.1, y: y + h + 0.06, w: ws[i] + 0.2, h: 0.35, fontSize: 11, color: C.text1, align: "center" });
+      x += ws[i] + gap;
+    });
+    return y + h;
+  };
   const sectionSlide = (num, title, subtitle, notes) => {
     section = title;
     pres.addSection({ title });
@@ -394,6 +409,18 @@ async function icon(name, color) {
   s.addText("— 여주 「엄마네」 사장님 (약 2년째 함께하는 중)", { ...T, x: 1.55, y: 3.8, w: 7.7, h: 0.4, fontSize: 13, color: C.text1 });
   takeaway(s, "마케팅은 광고가 아니라 매출을 만드는 구조 — 그들의 성공이 곧 나의 성공", 4.5);
 
+  s = content("사장님들이 직접 보내 준 메시지",
+    "실제 고객 사장님들이 단톡방에 직접 남겨 주신 메시지입니다. 꾸며 쓴 후기가 아니라 대화 화면 그대로입니다. 이름과 매장명은 가렸습니다. '다른 두 매장도 부탁드립니다' — 한 매장이 잘되니까 나머지 매장도 맡겨 주셨습니다. 이게 영업의 진짜 결과입니다.");
+  [[WEB("kakao_sales.jpg"), 600, 362, "\"광고 덕분인지 매출이 많이 올랐습니다\""], [WEB("kakao_double.jpg"), 357, 162, "\"오늘 매출이 2배로 올랐네요\""],
+   [WEB("kakao_young.jpg"), 600, 582, "\"젊은 친구들이 검색하면서 들어오네요\""], [WEB("kakao_more.jpg"), 600, 445, "\"다른 두 매장도 CMO 부탁드립니다\""]].forEach(([f, w, h, cap], i) => {
+    const cx = 0.6 + (i % 2) * 4.5, cy = 1.2 + Math.floor(i / 2) * 1.65, cw = 2.3, ch = 1.5;
+    const k = Math.min(cw / w, ch / h), iw = w * k, ih = h * k;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: cx, y: cy, w: 4.3, h: ch, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "kakaoCard" + i });
+    s.addImage({ path: f, x: cx + 0.1 + (cw - iw) / 2, y: cy + (ch - ih) / 2, w: iw - 0.0, h: ih, altText: cap, objectName: "kakao" + i });
+    s.addText(cap, { ...T, x: cx + 2.55, y: cy, w: 1.65, h: ch, fontSize: 14, bold: true, color: C.text2, valign: "middle" });
+  });
+  takeaway(s, "가장 강력한 영업 자료는 고객이 직접 보낸 한마디다", 4.55);
+
   s = content("고객은 상품보다 '사람'을 산다",
     "마케팅 상품은 회사마다 비슷해 보입니다. 블로그, 숏폼, 광고… 대표님 입장에서는 누구에게 맡겨도 비슷해 보이죠. 그래서 결정은 결국 '이 사람을 믿을 수 있나'로 내려집니다. 영업의 본질은 상품 설명이 아니라 신뢰를 쌓는 일입니다.");
   await cards(s, [
@@ -573,6 +600,15 @@ async function icon(name, color) {
   });
   takeaway(s, "스마트폰 하나로 만든 채널 — 첫 고객도 인스타그램을 보고 찾아왔다", 4.5);
 
+  s = content("실제 채널 화면: 먹스타선장 맛고양",
+    "제가 직접 운영하는 채널 화면입니다. 인스타그램, 유튜브, 틱톡 모두 스마트폰 하나로 찍고 편집했습니다. 릴스 한 편이 259만 회, 양꼬치 영상은 201만 회가 나왔습니다. 마케팅을 파는 사람이 직접 해서 보여 주면, 사장님은 설명을 길게 듣지 않아도 믿습니다.");
+  photoRow(s, [[WEB("creator_insta.jpg"), 640, 371, "인스타그램 @taste_goyang"], [WEB("creator_youtube.jpg"), 640, 384, "유튜브 먹스타선장 맛고양"], [WEB("creator_tiktok.jpg"), 640, 384, "틱톡 먹스타선장 맛고양"]], { H: 1.6, y: 1.2 });
+  photoRow(s, [[WEB("proof_reels_a.jpg"), 600, 640, "릴스 259만 회"], [WEB("proof_reels_b.jpg"), 600, 660, "양꼬치 릴스 201만 회"]], { H: 1.55, y: 3.15, maxW: 4.0 });
+  s.addText([
+    { text: "직접 해 본 사람의 말은 다르다", options: { fontSize: 18, bold: true, color: C.accent1, breakLine: true } },
+    { text: "릴스 한 편 259만 회, 201만 회 — 이 화면 하나가 긴 설명보다 강하다.", options: { fontSize: 14, color: C.text1 } },
+  ], { ...T, x: 4.9, y: 3.25, w: 4.5, h: 1.3, valign: "top" });
+
   // =================== 05 실전 프로세스 ===================
   sectionSlide("05", "첫 만남부터 재계약까지", "강사의 실제 영업 방식", "강사의 실제 영업 순서를 그대로 보여 주는 파트.");
 
@@ -638,6 +674,12 @@ async function icon(name, color) {
     { ...T, x: 0.9, y: 3.8, w: 8.3, h: 0.55, fontSize: 15, valign: "middle" });
   takeaway(s, "사장님이 묻기 전에 먼저 알려 드린다 — 그것이 2년을 만든다", 4.5);
 
+  s = content("말이 아니라 화면으로 보고한다",
+    "실제 고객사 보고서와 순위 기록 화면입니다. 메타 광고는 실제로 노출된 화면을 모아 보여 드리고, 유튜브 광고는 노출과 조회 수까지 정리합니다. 네이버 플레이스 순위는 매일 기록해서 보여 드립니다. 삼성역 맛집 299위가 1위가 되는 과정을 사장님이 직접 확인하십니다. 매장명과 주소는 가렸습니다. 매장마다 상황이 달라 같은 결과를 보증하지는 않습니다.");
+  photoRow(s, [[WEB("proof_report_meta.jpg"), 600, 734, "메타 광고 노출 보고"], [WEB("proof_report_google.jpg"), 600, 829, "구글 동영상 광고 보고"],
+    [WEB("rank_place.jpg"), 600, 331, "플레이스 299위 → 1위"], [WEB("rank_kakao.jpg"), 600, 740, "카카오맵 동네 랭킹 1위"]], { H: 3.0, y: 1.25 });
+  takeaway(s, "보고서가 쌓이면 신뢰가 쌓인다 — 숫자로 보여 주는 사람이 재계약한다", 4.65);
+
   s = content("계약이 끊겨도 관계는 끊지 않는다",
     "요즘 경기가 어려워서 매출이 안 나오면 마케팅 비용부터 줄이십니다. 그래서 계약이 중단될 때가 있습니다. 그럴 때 저는 '나중에 마케팅 궁금한 거 있으시면 언제든 연락 주세요'라고 말씀드립니다. 시간이 좀 지나면 먼저 연락합니다. '잘 지내세요? 요즘 매출은 어떠세요?' 그리고 괜찮은 상품이 있으면 '한번 진행해 보시는 건 어떠세요?' 하고 제안합니다.");
   await flow(s, [
@@ -688,6 +730,12 @@ async function icon(name, color) {
     { text: "중화객잔수 강남구청점 (검색량 110 → 1,080, 연 매출 15억) · 미친양꼬치 잠실점 (예약·주문 +416%) · 케이찹사라다 신사직영점", options: { color: C.text2 } },
   ], { ...T, x: 0.6, y: 3.3, w: 8.8, h: 0.8, fontSize: 14, valign: "top" });
   takeaway(s, "\"저희도 직접 장사합니다\" — 사장님의 마음을 아는 마케팅 회사", 4.4);
+
+  s = content("우리 가게부터 증명한다: 직영 매장",
+    "남의 가게를 맡기 전에, 먹스타가 직접 운영하는 매장부터 같은 방식으로 관리합니다. 중화객잔수 강남구청점은 진행 전후로 검색량이 110에서 1,080으로 10배가 됐고, 지금 연 매출 15억 원입니다. 미친양꼬치 잠실점은 예약·주문이 416% 늘었습니다. 영업할 때 '저희도 직접 장사합니다'라는 한마디가 가장 큰 무기입니다.");
+  photoRow(s, [[WEB("store_junghwa.jpg"), 720, 540, "중화객잔수 (검색량 10배)"], [WEB("store_yang.jpg"), 720, 540, "미친양꼬치 (예약 +416%)"], [WEB("store_kchup.jpg"), 720, 540, "케이찹사라다 신사점"]], { H: 1.6, y: 1.15 });
+  photoRow(s, [[WEB("case_junghwa_chart.jpg"), 732, 281, "중화객잔수 플레이스 통계"], [WEB("case_yang_chart.jpg"), 731, 311, "미친양꼬치 플레이스 통계"]], { H: 1.3, y: 3.2, caption: false });
+  takeaway(s, "\"저희도 직접 장사합니다\" — 직접 증명한 방법만 권한다", 4.65);
 
   s = content("같은 상권, 비슷한 메뉴 — 왜 한 곳만 줄을 설까?",
     "같은 상권, 비슷한 메뉴, 가격도 크게 차이가 없습니다. 그런데 어떤 가게는 항상 손님이 많고 예약이 계속 들어오고, 어떤 가게는 맛도 괜찮은데 손님이 점점 줄어듭니다. 차이는 '마케팅을 하는 가게냐, 안 하는 가게냐'입니다. 요즘 손님은 지나가다 들어오기보다 검색하고 옵니다. 이 과정에서 보이지 않는 가게는 존재하지 않는 가게와 같습니다. 사장님과 첫 만남에서 이 이야기로 시작하면 좋습니다.");
