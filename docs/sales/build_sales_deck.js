@@ -252,18 +252,37 @@ async function icon(name, color) {
   s.addText("좋은 상품이 있는데도 홍보를 못 해 사라지는 가게들을 돕고 싶었다.", { ...T, x: 6.3, y: 2.8, w: 2.95, h: 1.4, fontSize: 14, color: C.text1, valign: "top" });
   takeaway(s, "영업은 돈 때문에만 하는 일이 아니다 — '내가 해냈다'를 느끼는 일", 4.6);
 
-  s = content("실패도 있었다: 전업투자로 번 8억을 다 잃다",
-    "솔직하게 말씀드리겠습니다. 저는 전업투자를 2년 했습니다. 한때 8억까지 벌었지만, 다 날렸습니다. 블로그에 투자 기록만 267편을 남길 만큼 열심히 했지만, 시장은 제가 통제할 수 있는 게 아니었습니다. 그때 깨달았습니다. 운과 시장에 맡기는 돈은 언제든 사라질 수 있다. 하지만 내가 사람을 만나고 신뢰를 쌓아서 버는 돈은 내가 만든 것이고, 쌓인다. 그래서 저는 영업을 합니다.");
+  s = content("전업투자 2년: 누구보다 열심히 했다",
+    "솔직하게 말씀드리겠습니다. 전역 후 저는 2년 동안 전업투자를 했습니다. 대충 한 게 아닙니다. 네이버 공식 투자 애널리스트로 활동했고, 일산에서 300명이 모이는 주식투자 모임의 모임장이었고, 유명한 네이버 카페에 팬들도 많았습니다. 블로그에 투자 글만 267편을 썼습니다. 볼린저밴드, 이동평균선 매매법, 거미줄 매매법까지 매매법을 직접 만들어 가며 했습니다. 한때 8억까지 벌었습니다. 그리고 다 날렸습니다.");
   s.addImage({ path: IMG("invest_stock.jpg"), x: 0.6, y: 1.2, w: 1.6, h: 1.6 * 756 / 382, altText: "투자 손실 화면 (계좌 정보 가림)", objectName: "stockShot" });
   s.addImage({ path: IMG("invest_blog.jpg"), x: 2.35, y: 1.2, w: 1.6, h: 1.6 * 756 / 400, altText: "블로그 투자 기록 카테고리", objectName: "blogShot" });
-  [["시장에 맡긴 돈", "8억까지 벌었지만 다 잃었다 · 내가 통제할 수 없다 · 쌓이지 않는다", C.accent6, C.background2],
-   ["내가 만드는 돈 (영업)", "하는 만큼 돌아온다 · 신뢰는 내가 통제한다 · 고객과 소개가 쌓인다", C.accent1, SOFT_ORANGE]].forEach(([h, d, col, fill], i) => {
-    const y = 1.2 + i * 1.6;
-    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 4.5, y, w: 4.9, h: 1.4, fill: { color: fill }, rectRadius: 0.12, objectName: "moneyCard" + i });
-    s.addText(h, { ...T, x: 4.8, y: y + 0.15, w: 4.4, h: 0.45, fontSize: 18, bold: true, color: col });
-    s.addText(d, { ...T, x: 4.8, y: y + 0.65, w: 4.4, h: 0.65, fontSize: 14, color: C.text1, valign: "top" });
+  const inv = [["FaAward", "네이버 공식 투자 애널리스트"], ["FaUsers", "일산 주식투자 모임장 (300명)"], ["FaHeart", "네이버 카페 팬 다수"],
+    ["FaPenNib", "블로그 투자 기록 267편"], ["FaChartLine", "볼린저밴드·이동평균선·거미줄 매매법 개발"]];
+  for (let i = 0; i < inv.length; i++) {
+    const y = 1.2 + i * 0.5;
+    s.addImage({ data: await icon(inv[i][0], HEX.accent3), x: 4.5, y: y + 0.1, w: 0.26, h: 0.26, altText: inv[i][1] });
+    s.addText(inv[i][1], { ...T, x: 4.95, y, w: 4.45, h: 0.46, fontSize: 14, bold: i < 4, color: C.text2, valign: "middle" });
+  }
+  s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 4.5, y: 3.8, w: 4.9, h: 0.55, fill: { color: C.background2 }, rectRadius: 0.1, objectName: "investResult" });
+  s.addText([{ text: "결과  ", options: { bold: true, color: C.accent6 } }, { text: "8억까지 벌었다가, 전부 잃었다", options: { bold: true, color: C.text2 } }],
+    { ...T, x: 4.75, y: 3.8, w: 4.5, h: 0.55, fontSize: 16, valign: "middle" });
+  takeaway(s, "실력도, 공부도, 팬도 있었다 — 그래도 시장은 내 것이 아니었다", 4.55);
+
+  // 강조 슬라이드: 투자에서 얻은 깨달음
+  s = pres.addSlide({ masterName: "SECTION", sectionTitle: section });
+  s.addText("2년의 투자가 가르쳐 준 것", { ...T, x: 0.6, y: 0.5, w: 8.8, h: 0.5, fontSize: 18, bold: true, color: C.accent1 });
+  s.addText("결국, 내가 일해서\n버는 돈이 최고다", { ...T, x: 0.6, y: 1.05, w: 8.8, h: 1.6, fontSize: 44, bold: true, color: C.background1, valign: "top" });
+  const learn = [["01", "투자도 결국 노동이다", "공부하고 시간을 쏟지 않으면 절대 안 된다"],
+    ["02", "그런데 더 벌지 못했다", "그만큼 노력해도, 일해서 버는 돈보다 많이 벌지 못했다"],
+    ["03", "그래서 내 일로 번다", "하는 만큼 돌아오고, 신뢰는 쌓인다 — 그게 영업이다"]];
+  learn.forEach(([n, h, d], i) => {
+    const x = 0.6 + i * 3.0;
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 3.0, w: 2.8, h: 2.0, fill: { color: "2B3848" }, rectRadius: 0.12, objectName: "learn" + i });
+    s.addText(n, { ...T, x: x + 0.25, y: 3.15, w: 1, h: 0.5, fontSize: 22, bold: true, color: C.accent1 });
+    s.addText(h, { ...T, x: x + 0.25, y: 3.65, w: 2.4, h: 0.45, fontSize: 17, bold: true, color: C.background1 });
+    s.addText(d, { ...T, x: x + 0.25, y: 4.12, w: 2.35, h: 0.8, fontSize: 13, color: MUTED_ON_DARK, valign: "top" });
   });
-  takeaway(s, "운에 맡긴 돈은 사라졌고, 신뢰로 번 돈은 쌓였다", 4.55);
+  s.addNotes("천천히, 힘주어 말하는 장면입니다. '저는 투자로 8억을 벌어 봤고, 다 잃어 봤습니다. 2년 동안 매매법을 만들고, 300명 모임을 이끌고, 애널리스트로 활동했습니다. 그런데 깨달았습니다. 투자도 결국 노동이더라. 공부하고 시간을 쏟지 않으면 안 되더라. 그렇게 쏟아부어도, 일해서 버는 돈보다 많이 벌지 못하더라. 그래서 저는 지금 제 일로, 영업으로 법니다. 결국 내가 일해서 버는 돈이 최고입니다.'");
 
   s = content("숫자로 보는 변화",
     "전역하기 전 마지막 연봉이 약 6,200만 원이었습니다. 지금은 한 달에 약 8천만 원의 매출을 내고 있습니다. 1년 동안 벌던 것보다 많은 금액을 한 달에, 저를 믿고 대표님들이 맡겨 주고 계신 겁니다. 그리고 창업 1년 만에 회사 가치를 인정받아 M&A까지 했습니다. 자랑이 아니라, 저를 믿고 계속 유지해 주시는 대표님들 덕분입니다.");
